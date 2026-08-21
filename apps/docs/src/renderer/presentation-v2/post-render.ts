@@ -1,9 +1,15 @@
-import type { PageSlice } from '../pagination'
+import type { BlockBox, PageSlice } from '../pagination'
+import type { SectionInfo } from '@genoffice/docx-engine'
 import type {
   DiagnosticRange,
   DiagnosticRect,
   PositionDiagnosticsView,
 } from './diagnostics'
+import {
+  createPresentationGeometry,
+  snapshotPresentationGeometry,
+  type GeometrySnapshot,
+} from './geometry'
 
 /**
  * Coordinates retained by post-render diagnostics. DOM viewport coordinates are
@@ -98,6 +104,8 @@ export interface NormalizedPostRenderDiagnostics {
   floats: NormalizedPostRenderFloat[]
   caret?: NormalizedPostRenderCaret
   selection?: NormalizedPostRenderSelection
+  /** Normalized readback from the neutral Presentation Geometry API. */
+  geometry?: GeometrySnapshot
 }
 
 export interface PostRenderFloatBox {
@@ -122,6 +130,8 @@ export interface PostRenderDiagnosticSource {
   root: HTMLElement
   flowRoot: HTMLElement
   slices: readonly PageSlice[]
+  blocks?: readonly BlockBox[]
+  sections?: readonly SectionInfo[]
   zoomFactor?: number
   editorView?: PostRenderEditorView
   floatBoxes?: readonly PostRenderFloatBox[]
@@ -474,6 +484,22 @@ export function capturePostRenderDiagnostics(
     }
   }
 
+  const geometry = snapshotPresentationGeometry(
+    createPresentationGeometry({
+      root: source.root,
+      flowRoot: source.flowRoot,
+      slices: source.slices,
+      blocks: source.blocks,
+      sections: source.sections,
+      editorView: source.editorView,
+      zoomFactor: source.zoomFactor,
+    }),
+    {
+      positions: range ? (range.from === range.to ? [range.from] : [range.from, range.to]) : [],
+      selections: range ? [range] : [],
+    },
+  )
+
   return {
     coordinateSpaces: {
       document: 'page-wrap-relative-css-px',
@@ -487,5 +513,6 @@ export function capturePostRenderDiagnostics(
     floats,
     ...(caret ? { caret } : {}),
     ...(selection ? { selection } : {}),
+    geometry,
   }
 }

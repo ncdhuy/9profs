@@ -221,6 +221,16 @@ function assertRealBrowserCoverage(fixture: PresentationFixture, run: RendererRu
     Array.isArray(loaded?.pageGaps),
     `fixture=${fixture.id} renderer=${run.renderer} page-gap diagnostics`,
   ).toBe(true)
+  const geometry = loaded?.geometry as DebugValue | undefined
+  const geometryPages = geometry?.pages as unknown[] | undefined
+  expect(
+    geometry?.coordinateSpaces,
+    `fixture=${fixture.id} renderer=${run.renderer} geometry coordinate spaces`,
+  ).toBeTruthy()
+  expect(
+    Array.isArray(geometryPages) && geometryPages.length === pages?.length,
+    `fixture=${fixture.id} renderer=${run.renderer} normalized page geometry`,
+  ).toBe(true)
 
   for (const state of ['caretBeforeBoundary', 'caretAfterBoundary']) {
     const caret = run.observations[state].postRender
@@ -234,6 +244,13 @@ function assertRealBrowserCoverage(fixture: PresentationFixture, run: RendererRu
       typeof (caret?.pageRect as DebugValue | undefined)?.top,
       `fixture=${fixture.id} renderer=${run.renderer} ${state} rendered rectangle`,
     ).toBe('number')
+    const positions = (run.observations[state].postRender as DebugValue | undefined)?.geometry as
+      | DebugValue
+      | undefined
+    const positionGeometry = (positions?.positions as DebugValue[] | undefined)?.[0]
+    expect(positionGeometry?.status, `fixture=${fixture.id} renderer=${run.renderer} ${state} position mapping`).toBe(
+      'resolved',
+    )
   }
 
   for (const state of ['selectionSingleLine', 'selectionMultiLine', 'selectionPageBoundary']) {
@@ -243,6 +260,16 @@ function assertRealBrowserCoverage(fixture: PresentationFixture, run: RendererRu
     const pmRange = selection?.pmRange as DebugValue | undefined
     expect(typeof pmRange?.from, `fixture=${fixture.id} renderer=${run.renderer} ${state} PM from`).toBe('number')
     expect(typeof pmRange?.to, `fixture=${fixture.id} renderer=${run.renderer} ${state} PM to`).toBe('number')
+    const geometry = (run.observations[state].postRender as DebugValue | undefined)?.geometry as
+      | DebugValue
+      | undefined
+    const selectionGeometry = (geometry?.selections as DebugValue[] | undefined)?.[0]
+    expect(selectionGeometry?.from).toBe(pmRange?.from)
+    expect(selectionGeometry?.to).toBe(pmRange?.to)
+    if (selectionGeometry?.status === 'resolved') {
+      expect(Array.isArray(selectionGeometry.rects)).toBe(true)
+      expect(Array.isArray(selectionGeometry.pages)).toBe(true)
+    }
   }
 }
 
@@ -251,7 +278,10 @@ function unavailableGeometry(debug: PageDebugSnapshot): string[] {
   const unavailable: string[] = []
   const selection = postRender.selection as DebugValue | undefined
   if (!Array.isArray(selection?.rects)) unavailable.push('selection.rects: browser/editor did not expose deterministic client rects')
-  unavailable.push('reverse-position-mapping: EditorView hit-testing API is not exposed through __pageDebug')
+  const geometry = postRender.geometry as DebugValue | undefined
+  if (!Array.isArray(geometry?.hitTests)) {
+    unavailable.push('reverse-position-mapping: browser/editor did not expose deterministic hit-test results')
+  }
   const headers = postRender.headerFooters as DebugValue[] | undefined
   if (!headers?.some((item) => item.variant)) {
     unavailable.push('header-footer.variant: current rendered DOM exposed no variant marker')

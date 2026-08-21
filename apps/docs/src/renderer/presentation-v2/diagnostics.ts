@@ -32,6 +32,11 @@ export type DiagnosticCategory =
   | 'caret'
   | 'selection'
   | 'coordinate-mapping'
+  | 'geometry-position'
+  | 'geometry-hit-test'
+  | 'geometry-selection'
+  | 'geometry-page'
+  | 'geometry-coordinate-space'
   | 'mapping'
   | 'model'
   | 'dirty'
@@ -615,6 +620,11 @@ export function captureModelDiagnostics(input: ModelDiagnosticInput): Normalized
 function categoryForPath(path: string): DiagnosticCategory {
   if (/dirty/i.test(path)) return 'dirty'
   if (/save|reopen|savePlan|saveOutput/i.test(path)) return 'save'
+  if (/geometry.*(?:hitTests|pointToPosition|hit-test)/i.test(path)) return 'geometry-hit-test'
+  if (/geometry.*(?:selection|selections|selectionToGeometry)/i.test(path)) return 'geometry-selection'
+  if (/geometry.*(?:coordinate|coordinateSpaces)/i.test(path)) return 'geometry-coordinate-space'
+  if (/geometry.*(?:page|pages|pageGeometry)/i.test(path)) return 'geometry-page'
+  if (/geometry.*(?:position|positions|positionToGeometry|locatePosition)/i.test(path)) return 'geometry-position'
   if (/postRender.*pageGaps|pageGaps|bandRect|sizePx/i.test(path)) return 'page-gap'
   if (/postRender.*pages.*pageRect|pagePhysical|physicalPage/i.test(path)) return 'page-physical'
   if (/postRender.*headerFooters/i.test(path)) return 'header-footer'
@@ -658,6 +668,8 @@ function isGeometryPath(path: string): boolean {
 
 function coordinateSpaceForPath(path: string): string | undefined {
   if (/viewport/i.test(path)) return 'viewport'
+  if (/documentRect|physicalOrigin/i.test(path)) return 'document'
+  if (/pageLocalRect|pageLocalOrigin/i.test(path)) return 'page-local'
   if (/flowRect|flowStart|flowEnd|flowBoundary/i.test(path)) return 'flow'
   if (/pageRect|pageLocalRect|bandRect|physical/i.test(path)) return 'page-wrap'
   if (/flowToPhysical|coordinate/i.test(path)) return 'mapping'

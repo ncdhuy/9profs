@@ -2597,6 +2597,8 @@ export function App() {
             root: pageWrap,
             flowRoot: pm,
             slices,
+            blocks,
+            sections: secList ?? undefined,
             zoomFactor: factor,
             editorView: editor.view,
             floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
