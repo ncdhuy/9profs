@@ -76,8 +76,38 @@ describe('neutral Presentation Geometry API', () => {
       root,
       flowRoot,
       slices: [
-        { start: 0, end: 100, section: 0 },
-        { start: 100, end: 200, section: 1 },
+        {
+          start: 0,
+          end: 100,
+          section: 0,
+          regions: [
+            {
+              top: 0,
+              height: 100,
+              section: 0,
+              columns: [
+                { start: 0, end: 50 },
+                { start: 50, end: 100 },
+              ],
+            },
+          ],
+        },
+        {
+          start: 100,
+          end: 200,
+          section: 1,
+          regions: [
+            {
+              top: 0,
+              height: 100,
+              section: 1,
+              columns: [
+                { start: 100, end: 150 },
+                { start: 150, end: 200 },
+              ],
+            },
+          ],
+        },
       ],
       blocks: [
         { top: 0, height: 80, lineBoxes: [{ offsetInBlock: 0, height: 24 }] },
@@ -109,6 +139,8 @@ describe('neutral Presentation Geometry API', () => {
       documentRect: { space: 'document', left: 20, top: 40 },
       pageLocalRect: { space: 'page-local', left: 10, top: 20 },
       line: { index: 0, flowTop: 0 },
+      columnIndex: 0,
+      columnCount: 2,
       block: { index: 0 },
     })
     expect(second).toMatchObject({
@@ -142,7 +174,11 @@ describe('neutral Presentation Geometry API', () => {
       { space: 'flow', x: 10, y: 20 },
       { space: 'page-local', pageIndex: 1, x: 10, y: 2 },
     ]
-    for (const point of points) expect(geometry.pointToPosition(point)).toMatchObject({ status: 'resolved', pmPosition: point.space === 'page-local' ? 15 : 4 })
+    for (const point of points)
+      expect(geometry.pointToPosition(point)).toMatchObject({
+        status: 'resolved',
+        pmPosition: point.space === 'page-local' ? 15 : 4,
+      })
     expect(geometry.pointToPosition({ space: 'page-local', x: 1, y: 1 })).toEqual({
       point: { space: 'page-local', x: 1, y: 1 },
       status: 'unavailable',
@@ -161,7 +197,13 @@ describe('neutral Presentation Geometry API', () => {
       rects: [],
     })
     const selection = geometry.selectionToGeometry(4, 15)
-    expect(selection).toMatchObject({ from: 4, to: 15, status: 'resolved', pages: [0, 1], sections: [0, 1] })
+    expect(selection).toMatchObject({
+      from: 4,
+      to: 15,
+      status: 'resolved',
+      pages: [0, 1],
+      sections: [0, 1],
+    })
     expect(selection.rects).toHaveLength(2)
     expect(selection.rects?.[0]).toMatchObject({
       flowRect: { space: 'flow', top: 20 },
@@ -209,7 +251,9 @@ describe('neutral Presentation Geometry API', () => {
       'geometry-position',
       'geometry-selection',
     ])
-    expect(differences.find((difference) => difference.category === 'geometry-position')).toMatchObject({
+    expect(
+      differences.find((difference) => difference.category === 'geometry-position'),
+    ).toMatchObject({
       coordinateSpace: 'document',
       pmPosition: 4,
       delta: 2,

@@ -46,9 +46,11 @@ import { PageFootnotes, PageEndnotes } from './components/PageNoteAreas'
 import { PaginationPreview } from './components/PaginationPreview'
 import { PrintDialog } from './components/PrintDialog'
 import {
+  captureGeometryProbeDiagnostics,
   capturePostRenderDiagnostics,
   renderPresentation,
   resolvePresentationRenderer,
+  type GeometryProbe,
 } from './presentation-v2'
 import {
   appendEndnotesBlock,
@@ -2592,21 +2594,21 @@ export function App() {
         // Read-only post-render seam: capture actual DOM geometry only after all
         // existing gap, column, float, cell-clamp, cut, and annotation effects settle.
         const pageWrap = (pm.closest('.page-wrap') as HTMLElement) ?? pm
-        const captureCurrentPostRender = () =>
-          capturePostRenderDiagnostics({
-            root: pageWrap,
-            flowRoot: pm,
-            slices,
-            blocks,
-            sections: secList ?? undefined,
-            zoomFactor: factor,
-            editorView: editor.view,
-            floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
-            blockOf: (el) => {
-              const block = blocks.find((item) => item.el === el || item.el?.contains(el))
-              return block?.docxIndex
-            },
-          })
+        const postRenderSource = () => ({
+          root: pageWrap,
+          flowRoot: pm,
+          slices,
+          blocks,
+          sections: secList ?? undefined,
+          zoomFactor: factor,
+          editorView: editor.view,
+          floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
+          blockOf: (el: HTMLElement) => {
+            const block = blocks.find((item) => item.el === el || item.el?.contains(el))
+            return block?.docxIndex
+          },
+        })
+        const captureCurrentPostRender = () => capturePostRenderDiagnostics(postRenderSource())
         const postRender = captureCurrentPostRender()
         // endnote area: Word puts it right after the last body line, not at the page
         // bottom — anchor it to the flow end measured in the final display state
@@ -2658,9 +2660,12 @@ export function App() {
               })),
             })),
           postRender,
+          probeGeometry: (probes: unknown[]) =>
+            captureGeometryProbeDiagnostics(postRenderSource(), probes as GeometryProbe[]),
           refreshPostRender: () => {
             const current = captureCurrentPostRender()
-            const debug = (window as unknown as { __pageDebug?: Record<string, unknown> }).__pageDebug
+            const debug = (window as unknown as { __pageDebug?: Record<string, unknown> })
+              .__pageDebug
             if (debug) debug.postRender = current
             return current
           },

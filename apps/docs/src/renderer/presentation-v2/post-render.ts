@@ -1,15 +1,18 @@
 import type { BlockBox, PageSlice } from '../pagination'
 import type { SectionInfo } from '@genoffice/docx-engine'
-import type {
-  DiagnosticRange,
-  DiagnosticRect,
-  PositionDiagnosticsView,
-} from './diagnostics'
+import type { DiagnosticRange, DiagnosticRect, PositionDiagnosticsView } from './diagnostics'
 import {
   createPresentationGeometry,
   snapshotPresentationGeometry,
   type GeometrySnapshot,
 } from './geometry'
+import {
+  capturePresentationGeometryProbes,
+  type GeometryProbe,
+  type GeometryProbeDocument,
+  type GeometryProbePointResolver,
+  type GeometryProbeResult,
+} from './geometry-probes'
 
 /**
  * Coordinates retained by post-render diagnostics. DOM viewport coordinates are
@@ -20,11 +23,16 @@ export interface PostRenderCoordinateSpaces {
   document: 'page-wrap-relative-css-px'
   flow: 'gapless-layout-px-at-100-percent'
   viewport: 'discarded-after-normalization'
+  pageIndex: 'zero-based'
+  pageNumber: 'one-based-legacy-diagnostic'
   zoomFactor: number
 }
 
 export interface NormalizedPostRenderPage {
+  /** Legacy one-based diagnostic page number. */
   page: number
+  /** Canonical zero-based PageSlice index. */
+  pageIndex: number
   section: number
   /** Logical gapless flow range, in layout px at 100% zoom. */
   flowRect: DiagnosticRect
@@ -35,7 +43,10 @@ export interface NormalizedPostRenderPage {
 }
 
 export interface NormalizedPostRenderPageGap {
+  /** Legacy one-based diagnostic page number. */
   page: number
+  /** Canonical zero-based PageSlice index. */
+  pageIndex: number
   boundary: { fromPage: number; toPage: number }
   kind: 'block' | 'inline' | 'table' | 'cell' | 'cut'
   /** Actual decoration rectangle, relative to page-wrap. */
@@ -50,7 +61,10 @@ export interface NormalizedPostRenderPageGap {
 }
 
 export interface NormalizedPostRenderHeaderFooter {
+  /** Legacy one-based diagnostic page number. */
   page: number
+  /** Canonical zero-based PageSlice index. */
+  pageIndex: number
   section: number
   kind: 'header' | 'footer'
   variant?: 'default' | 'first' | 'even'
@@ -61,7 +75,10 @@ export interface NormalizedPostRenderHeaderFooter {
 }
 
 export interface NormalizedPostRenderFloat {
+  /** Legacy one-based diagnostic page number. */
   page?: number
+  /** Canonical zero-based page index. */
+  pageIndex?: number
   section?: number
   kind: 'body' | 'cell' | 'header-footer'
   block?: number
@@ -76,7 +93,10 @@ export interface NormalizedPostRenderFloat {
 
 export interface NormalizedPostRenderCaret {
   position: number
+  /** Legacy one-based diagnostic page number. */
   page?: number
+  /** Canonical zero-based page index. */
+  pageIndex?: number
   section?: number
   flowRect?: DiagnosticRect
   pageRect?: DiagnosticRect
@@ -86,9 +106,11 @@ export interface NormalizedPostRenderCaret {
 export interface NormalizedPostRenderSelection {
   pmRange: DiagnosticRange
   pages: number[]
+  pageIndexes: number[]
   sections: number[]
   rects?: Array<{
     page?: number
+    pageIndex?: number
     section?: number
     flowRect: DiagnosticRect
     pageRect: DiagnosticRect
@@ -122,6 +144,7 @@ export interface PostRenderEditorView extends PositionDiagnosticsView {
   dom: HTMLElement
   state?: {
     selection?: { anchor: number; head: number; from: number; to: number }
+    doc?: GeometryProbeDocument
   }
   domAtPos?: (position: number, side?: number) => { node: Node; offset: number }
 }
@@ -160,11 +183,7 @@ function rectInRoot(rect: DOMRect, rootRect: DOMRect): DiagnosticRect {
   }
 }
 
-function logicalRect(
-  rect: DOMRect,
-  flowRect: DOMRect,
-  zoom: number,
-): DiagnosticRect {
+function logicalRect(rect: DOMRect, flowRect: DOMRect, zoom: number): DiagnosticRect {
   return {
     left: (rect.left - flowRect.left) / zoom,
     top: (rect.top - flowRect.top) / zoom,
@@ -208,9 +227,7 @@ function parseShift(el: HTMLElement): number | undefined {
   return finite(parseFloat(el.dataset.pageFloatDy ?? ''))
 }
 
-function selectionRange(
-  view: PostRenderEditorView,
-): { from: number; to: number } | undefined {
+function selectionRange(view: PostRenderEditorView): { from: number; to: number } | undefined {
   const selection = view.state?.selection
   if (!selection) return undefined
   return { from: selection.from, to: selection.to }
@@ -236,7 +253,10 @@ function selectionRects(view: PostRenderEditorView, from: number, to: number): D
   }
 }
 
-function pageLocalRect(rect: DiagnosticRect, page: DiagnosticRect | undefined): DiagnosticRect | undefined {
+function pageLocalRect(
+  rect: DiagnosticRect,
+  page: DiagnosticRect | undefined,
+): DiagnosticRect | undefined {
   if (!page) return undefined
   return {
     left: rect.left - page.left,
@@ -299,6 +319,7 @@ export function capturePostRenderDiagnostics(
     const bandBottom = rect.bottom! - top * zoom
     const gap: NormalizedPostRenderPageGap = {
       page,
+      pageIndex: page - 1,
       boundary: { fromPage: Math.max(1, page - 1), toPage: page },
       kind: kindOfGap(el),
       pageRect: rect,
@@ -342,10 +363,11 @@ export function capturePostRenderDiagnostics(
             right: pageElRect.left - rootRect.left + pageWidth,
             bottom: top + pageHeight,
           }
-    const flowTop = (flowRect.top - rootRect.top) + slice.start * zoom
+    const flowTop = flowRect.top - rootRect.top + slice.start * zoom
     const flowLeft = flowRect.left - rootRect.left
     return {
       page,
+      pageIndex: index,
       section: slice.section,
       flowRect: {
         left: 0,
@@ -384,6 +406,7 @@ export function capturePostRenderDiagnostics(
         : undefined
     headerFooters.push({
       page,
+      pageIndex: page - 1,
       section: sectionFor(page, source.slices) ?? 0,
       kind,
       ...(variant ? { variant } : {}),
@@ -400,7 +423,7 @@ export function capturePostRenderDiagnostics(
     const provided = providedFloats.get(el)
     const isHeaderFloat = el.classList.contains('page-hf-float-img')
     const isCellFloat = Boolean(el.closest('.doc-cell-boxes'))
-    const kind = isHeaderFloat ? 'header-footer' : isCellFloat ? 'cell' : provided?.kind ?? 'body'
+    const kind = isHeaderFloat ? 'header-footer' : isCellFloat ? 'cell' : (provided?.kind ?? 'body')
     const pageRect = rectInRoot(rect, rootRect)
     const page = isHeaderFloat
       ? (() => {
@@ -428,6 +451,7 @@ export function capturePostRenderDiagnostics(
       provided?.anchor
     floats.push({
       ...(page !== undefined ? { page, section: sectionFor(page, source.slices) } : {}),
+      ...(page !== undefined ? { pageIndex: page - 1 } : {}),
       kind,
       ...(block !== undefined ? { block } : {}),
       ...(anchor ? { anchor } : {}),
@@ -452,9 +476,12 @@ export function capturePostRenderDiagnostics(
         caret = {
           position,
           ...(page !== undefined ? { page, section: sectionFor(page, source.slices) } : {}),
+          ...(page !== undefined ? { pageIndex: page - 1 } : {}),
           flowRect: logicalRect(rect as DOMRect, flowRect, zoom),
           pageRect,
-          ...(pageLocalRect(pageRect, physicalPage) ? { pageLocalRect: pageLocalRect(pageRect, physicalPage) } : {}),
+          ...(pageLocalRect(pageRect, physicalPage)
+            ? { pageLocalRect: pageLocalRect(pageRect, physicalPage) }
+            : {}),
         }
       } catch {
         caret = { position }
@@ -467,6 +494,7 @@ export function capturePostRenderDiagnostics(
         const physicalPage = pageRectFor(page, pages)
         return {
           ...(page !== undefined ? { page, section: sectionFor(page, source.slices) } : {}),
+          ...(page !== undefined ? { pageIndex: page - 1 } : {}),
           flowRect: logicalRect(rect, flowRect, zoom),
           pageRect,
           ...(pageLocalRect(pageRect, physicalPage)
@@ -474,11 +502,20 @@ export function capturePostRenderDiagnostics(
             : {}),
         }
       })
-      const pageSet = [...new Set(normalizedRects.map((item) => item.page).filter((p): p is number => p !== undefined))]
+      const pageSet = [
+        ...new Set(
+          normalizedRects.map((item) => item.page).filter((p): p is number => p !== undefined),
+        ),
+      ]
       selection = {
         pmRange: range,
         pages: pageSet,
-        sections: [...new Set(normalizedRects.map((item) => item.section).filter((s): s is number => s !== undefined))],
+        pageIndexes: pageSet.map((page) => page - 1),
+        sections: [
+          ...new Set(
+            normalizedRects.map((item) => item.section).filter((s): s is number => s !== undefined),
+          ),
+        ],
         ...(normalizedRects.length > 0 ? { rects: normalizedRects } : {}),
       }
     }
@@ -505,6 +542,8 @@ export function capturePostRenderDiagnostics(
       document: 'page-wrap-relative-css-px',
       flow: 'gapless-layout-px-at-100-percent',
       viewport: 'discarded-after-normalization',
+      pageIndex: 'zero-based',
+      pageNumber: 'one-based-legacy-diagnostic',
       zoomFactor: zoom,
     },
     pages,
@@ -515,4 +554,36 @@ export function capturePostRenderDiagnostics(
     ...(selection ? { selection } : {}),
     geometry,
   }
+}
+
+/** Read-only probe capture for tests and debug tooling; never mutates editor or DOM state. */
+export function captureGeometryProbeDiagnostics(
+  source: PostRenderDiagnosticSource,
+  probes: readonly GeometryProbe[],
+): GeometryProbeResult[] {
+  const geometry = createPresentationGeometry({
+    root: source.root,
+    flowRoot: source.flowRoot,
+    slices: source.slices,
+    blocks: source.blocks,
+    sections: source.sections,
+    editorView: source.editorView,
+    zoomFactor: source.zoomFactor,
+  })
+  const pointResolver: GeometryProbePointResolver | undefined = source.editorView
+    ? (pmPosition) => {
+        try {
+          const rect = source.editorView!.coordsAtPos(pmPosition, 1)
+          return [{ space: 'viewport', x: rect.left, y: rect.top }]
+        } catch {
+          return []
+        }
+      }
+    : undefined
+  return capturePresentationGeometryProbes(
+    geometry,
+    source.editorView?.state?.doc,
+    probes,
+    pointResolver,
+  )
 }

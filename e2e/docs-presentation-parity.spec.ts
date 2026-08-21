@@ -7,6 +7,11 @@ import {
   PRESENTATION_GEOMETRY_TOLERANCE_PX,
 } from '../apps/docs/src/renderer/presentation-v2/diagnostics'
 import {
+  geometryProbeDiagnostics,
+  type GeometryProbe as GeometryProbeSpec,
+  type GeometryProbeResult,
+} from '../apps/docs/src/renderer/presentation-v2/geometry-probes'
+import {
   closeAndSaveVideo,
   launchShell,
   screenshotPath,
@@ -20,6 +25,7 @@ type DebugValue = Record<string, unknown>
 interface PageDebugSnapshot extends DebugValue {
   renderer?: Renderer
   postRender?: DebugValue
+  probes?: DebugValue[]
 }
 
 interface PresentationFixture {
@@ -51,7 +57,12 @@ const FIXTURES: PresentationFixture[] = [
   {
     id: 'kitchen-sink',
     file: resolve(CORPUS, 'kitchen-sink.docx'),
-    features: ['headers/footers', 'variants when exposed', 'floats/textboxes', 'comments/revisions'],
+    features: [
+      'headers/footers',
+      'variants when exposed',
+      'floats/textboxes',
+      'comments/revisions',
+    ],
   },
   {
     id: 'two-columns',
@@ -70,6 +81,146 @@ const FIXTURES: PresentationFixture[] = [
   },
 ]
 
+const PROBES_BY_FIXTURE: Record<string, GeometryProbeSpec[]> = {
+  'simple-multi-page': [
+    {
+      id: 'paragraph-middle',
+      fixtureId: 'simple-multi-page',
+      semanticCase: 'paragraph-middle',
+      anchor: { kind: 'node', nodeType: 'docParagraph', occurrence: 0, offset: 'middle' },
+      expected: { nodeType: 'docParagraph' },
+    },
+    {
+      id: 'line-start',
+      fixtureId: 'simple-multi-page',
+      semanticCase: 'line-start',
+      anchor: { kind: 'node', nodeType: 'docParagraph', occurrence: 0, offset: 'start' },
+      expected: { nodeType: 'docParagraph' },
+    },
+    {
+      id: 'line-end',
+      fixtureId: 'simple-multi-page',
+      semanticCase: 'line-end',
+      anchor: { kind: 'node', nodeType: 'docParagraph', occurrence: 0, offset: 'end' },
+      expected: { nodeType: 'docParagraph' },
+    },
+    {
+      id: 'page-before-gap',
+      fixtureId: 'simple-multi-page',
+      semanticCase: 'page-before-gap',
+      anchor: { kind: 'page-boundary', pageIndex: 1, side: 'before-gap' },
+      expected: { pageIndex: 0 },
+    },
+    {
+      id: 'page-after-gap',
+      fixtureId: 'simple-multi-page',
+      semanticCase: 'page-after-gap',
+      anchor: { kind: 'page-boundary', pageIndex: 1, side: 'after-gap' },
+      expected: { pageIndex: 1 },
+    },
+  ],
+  'two-columns': [
+    {
+      id: 'column-1',
+      fixtureId: 'two-columns',
+      semanticCase: 'column-1',
+      anchor: { kind: 'column', columnIndex: 0, side: 'first' },
+      expected: { columnIndex: 0 },
+    },
+    {
+      id: 'column-2',
+      fixtureId: 'two-columns',
+      semanticCase: 'column-2',
+      anchor: { kind: 'column', columnIndex: 1, side: 'first' },
+      expected: { columnIndex: 1 },
+    },
+    {
+      id: 'column-transition',
+      fixtureId: 'two-columns',
+      semanticCase: 'column-transition',
+      anchor: { kind: 'column-transition', fromColumn: 0, toColumn: 1 },
+    },
+  ],
+  'table-header-repeat': [
+    {
+      id: 'table-cell',
+      fixtureId: 'table-header-repeat',
+      semanticCase: 'table-cell',
+      anchor: { kind: 'table-cell', tableOccurrence: 0, row: 0, cell: 0, offset: 'middle' },
+      expected: { nodeType: 'docTable', table: { row: 0, cell: 0 } },
+    },
+    {
+      id: 'table-row-boundary',
+      fixtureId: 'table-header-repeat',
+      semanticCase: 'table-row-boundary',
+      anchor: { kind: 'table-row-boundary', tableOccurrence: 0, row: 'last', offset: 'middle' },
+      optional: true,
+    },
+    {
+      id: 'repeated-header',
+      fixtureId: 'table-header-repeat',
+      semanticCase: 'repeated-header',
+      anchor: { kind: 'node', nodeType: 'docTableHeader', occurrence: 0, offset: 'middle' },
+      optional: true,
+    },
+  ],
+  'cjk-doc-grid': [
+    {
+      id: 'cjk-run',
+      fixtureId: 'cjk-doc-grid',
+      semanticCase: 'cjk-run',
+      anchor: { kind: 'node', nodeType: 'docParagraph', occurrence: 0, offset: 'middle' },
+      expected: { textScript: 'cjk' },
+    },
+  ],
+  'kitchen-sink': [
+    {
+      id: 'floating-object-anchor',
+      fixtureId: 'kitchen-sink',
+      semanticCase: 'floating-object-anchor',
+      anchor: { kind: 'node', nodeType: 'docProtected', occurrence: 0, offset: 'start' },
+      optional: true,
+    },
+    {
+      id: 'textbox',
+      fixtureId: 'kitchen-sink',
+      semanticCase: 'textbox',
+      anchor: { kind: 'node', nodeType: 'docProtected', occurrence: 1, offset: 'start' },
+      optional: true,
+    },
+    {
+      id: 'header',
+      fixtureId: 'kitchen-sink',
+      semanticCase: 'header',
+      anchor: { kind: 'header-footer', part: 'header' },
+      optional: true,
+    },
+    {
+      id: 'footer',
+      fixtureId: 'kitchen-sink',
+      semanticCase: 'footer',
+      anchor: { kind: 'header-footer', part: 'footer' },
+      optional: true,
+    },
+    {
+      id: 'comment-range',
+      fixtureId: 'kitchen-sink',
+      semanticCase: 'comment-range',
+      anchor: { kind: 'mark-range', markType: 'comment', occurrence: 0 },
+      expected: { markType: 'comment' },
+      optional: true,
+    },
+    {
+      id: 'revision-range',
+      fixtureId: 'kitchen-sink',
+      semanticCase: 'revision-range',
+      anchor: { kind: 'mark-range', markType: 'ins', occurrence: 0 },
+      expected: { markType: 'ins' },
+      optional: true,
+    },
+  ],
+}
+
 function editorModifier(): 'Control' | 'Meta' {
   return process.platform === 'darwin' ? 'Meta' : 'Control'
 }
@@ -83,14 +234,21 @@ async function settlePresentation(page: Page): Promise<void> {
   )
 }
 
-async function readPageDebug(page: Page): Promise<PageDebugSnapshot> {
-  const debug = await page.evaluate(() => {
+async function readPageDebug(
+  page: Page,
+  probes: readonly GeometryProbeSpec[] = [],
+): Promise<PageDebugSnapshot> {
+  const debug = await page.evaluate((probeSpecs) => {
     const value = (window as unknown as { __pageDebug?: DebugValue }).__pageDebug
     if (!value) return null
     const refresh = value.refreshPostRender
     if (typeof refresh === 'function') refresh()
-    return JSON.parse(JSON.stringify(value)) as PageDebugSnapshot
-  })
+    const snapshot = JSON.parse(JSON.stringify(value)) as PageDebugSnapshot
+    const probeGeometry = value.probeGeometry
+    if (typeof probeGeometry === 'function')
+      snapshot.probes = probeGeometry(probeSpecs) as DebugValue[]
+    return snapshot
+  }, probes)
   if (!debug) throw new Error('Docs page did not expose __pageDebug')
   return debug
 }
@@ -111,15 +269,19 @@ async function waitForPageDebug(page: Page, renderer: Renderer, fixture: string)
           },
           { expectedRenderer: renderer },
         ),
-      { message: `fixture=${fixture} renderer=${renderer} post-render diagnostics`, timeout: 45_000 },
+      {
+        message: `fixture=${fixture} renderer=${renderer} post-render diagnostics`,
+        timeout: 45_000,
+      },
     )
     .toBe(true)
 }
 
-async function focusEditorAtStart(page: Page): Promise<void> {
+async function focusEditorAtStart(page: Page, fixture: string): Promise<void> {
   const editor = page.locator('.ProseMirror').first()
   await expect(editor).toBeVisible()
-  await editor.click({ position: { x: 24, y: 24 } })
+  if (fixture === 'table-header-repeat') await editor.click({ position: { x: 24, y: 24 } })
+  else await editor.focus()
   await page.keyboard.press(`${editorModifier()}+Home`)
   await settlePresentation(page)
 }
@@ -143,33 +305,34 @@ async function captureObservations(
   renderer: Renderer,
 ): Promise<Record<string, PageDebugSnapshot>> {
   await waitForPageDebug(page, renderer, fixture)
+  const probes = PROBES_BY_FIXTURE[fixture] ?? []
   const observations: Record<string, PageDebugSnapshot> = {
-    loaded: await readPageDebug(page),
+    loaded: await readPageDebug(page, probes),
   }
-  await focusEditorAtStart(page)
-  observations.caretBeforeBoundary = await readPageDebug(page)
+  await focusEditorAtStart(page, fixture)
+  observations.caretBeforeBoundary = await readPageDebug(page, probes)
 
   await page.keyboard.press(`${editorModifier()}+End`)
   await settlePresentation(page)
-  observations.caretAfterBoundary = await readPageDebug(page)
+  observations.caretAfterBoundary = await readPageDebug(page, probes)
 
-  await focusEditorAtStart(page)
+  await focusEditorAtStart(page, fixture)
   await selectWithoutChangingDocument(page, async () => {
     for (let index = 0; index < 12; index += 1) await page.keyboard.press('ArrowRight')
   })
-  observations.selectionSingleLine = await readPageDebug(page)
+  observations.selectionSingleLine = await readPageDebug(page, probes)
 
-  await focusEditorAtStart(page)
+  await focusEditorAtStart(page, fixture)
   await selectWithoutChangingDocument(page, async () => {
-    for (let index = 0; index < 3; index += 1) await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('ArrowDown')
   })
-  observations.selectionMultiLine = await readPageDebug(page)
+  observations.selectionMultiLine = await readPageDebug(page, probes)
 
-  await focusEditorAtStart(page)
+  await focusEditorAtStart(page, fixture)
   await selectWithoutChangingDocument(page, async () => {
     await page.keyboard.press(`${editorModifier()}+End`)
   })
-  observations.selectionPageBoundary = await readPageDebug(page)
+  observations.selectionPageBoundary = await readPageDebug(page, probes)
   return observations
 }
 
@@ -192,7 +355,7 @@ async function runRenderer(fixture: PresentationFixture, renderer: Renderer): Pr
 }
 
 function comparableDebug(debug: PageDebugSnapshot): DebugValue {
-  return { postRender: debug.postRender }
+  return { postRender: debug.postRender, probes: debug.probes }
 }
 
 function parityDifferences(
@@ -212,11 +375,37 @@ function parityDifferences(
 function assertRealBrowserCoverage(fixture: PresentationFixture, run: RendererRun): void {
   const loaded = run.observations.loaded.postRender as DebugValue | undefined
   const pages = loaded?.pages as DebugValue[] | undefined
-  expect(Array.isArray(pages) && pages.length > 0, `fixture=${fixture.id} renderer=${run.renderer} pages`).toBe(true)
+  expect(
+    Array.isArray(pages) && pages.length > 0,
+    `fixture=${fixture.id} renderer=${run.renderer} pages`,
+  ).toBe(true)
   expect(
     pages?.some((page) => page.pageRect && typeof (page.pageRect as DebugValue).top === 'number'),
     `fixture=${fixture.id} renderer=${run.renderer} physical page rectangle`,
   ).toBe(true)
+
+  const probes = (run.observations.loaded.probes ?? []) as unknown as GeometryProbeResult[]
+  const expectedProbes = PROBES_BY_FIXTURE[fixture.id] ?? []
+  expect(
+    probes.length,
+    `fixture=${fixture.id} renderer=${run.renderer} deterministic probe count`,
+  ).toBe(expectedProbes.length)
+  const failures = geometryProbeDiagnostics(probes)
+  expect(
+    failures,
+    `fixture=${fixture.id} renderer=${run.renderer} deterministic geometry probes\n${formatDiagnosticDiffs(failures)}`,
+  ).toEqual([])
+  for (const probe of expectedProbes.filter((item) => !item.optional)) {
+    const result = probes.find((item) => item.probe.id === probe.id)
+    expect(
+      result?.status,
+      `fixture=${fixture.id} renderer=${run.renderer} probe=${probe.id} status`,
+    ).toBe('resolved')
+    expect(
+      result?.roundTrip?.status,
+      `fixture=${fixture.id} renderer=${run.renderer} probe=${probe.id} point-to-position round trip`,
+    ).toMatch(/^(exact|boundary-ambiguous)$/)
+  }
   expect(
     Array.isArray(loaded?.pageGaps),
     `fixture=${fixture.id} renderer=${run.renderer} page-gap diagnostics`,
@@ -234,35 +423,42 @@ function assertRealBrowserCoverage(fixture: PresentationFixture, run: RendererRu
 
   for (const state of ['caretBeforeBoundary', 'caretAfterBoundary']) {
     const caret = run.observations[state].postRender
-      ? (run.observations[state].postRender as DebugValue).caret as DebugValue | undefined
+      ? ((run.observations[state].postRender as DebugValue).caret as DebugValue | undefined)
       : undefined
-    expect(typeof caret?.position, `fixture=${fixture.id} renderer=${run.renderer} ${state} PM position`).toBe(
+    expect(
+      typeof caret?.position,
+      `fixture=${fixture.id} renderer=${run.renderer} ${state} PM position`,
+    ).toBe('number')
+    expect(typeof caret?.page, `fixture=${fixture.id} renderer=${run.renderer} ${state} page`).toBe(
       'number',
     )
-    expect(typeof caret?.page, `fixture=${fixture.id} renderer=${run.renderer} ${state} page`).toBe('number')
     expect(
       typeof (caret?.pageRect as DebugValue | undefined)?.top,
       `fixture=${fixture.id} renderer=${run.renderer} ${state} rendered rectangle`,
     ).toBe('number')
     const positions = (run.observations[state].postRender as DebugValue | undefined)?.geometry as
-      | DebugValue
-      | undefined
+      DebugValue | undefined
     const positionGeometry = (positions?.positions as DebugValue[] | undefined)?.[0]
-    expect(positionGeometry?.status, `fixture=${fixture.id} renderer=${run.renderer} ${state} position mapping`).toBe(
-      'resolved',
-    )
+    expect(
+      positionGeometry?.status,
+      `fixture=${fixture.id} renderer=${run.renderer} ${state} position mapping`,
+    ).toBe('resolved')
   }
 
   for (const state of ['selectionSingleLine', 'selectionMultiLine', 'selectionPageBoundary']) {
     const selection = (run.observations[state].postRender as DebugValue | undefined)?.selection as
-      | DebugValue
-      | undefined
+      DebugValue | undefined
     const pmRange = selection?.pmRange as DebugValue | undefined
-    expect(typeof pmRange?.from, `fixture=${fixture.id} renderer=${run.renderer} ${state} PM from`).toBe('number')
-    expect(typeof pmRange?.to, `fixture=${fixture.id} renderer=${run.renderer} ${state} PM to`).toBe('number')
+    expect(
+      typeof pmRange?.from,
+      `fixture=${fixture.id} renderer=${run.renderer} ${state} PM from`,
+    ).toBe('number')
+    expect(
+      typeof pmRange?.to,
+      `fixture=${fixture.id} renderer=${run.renderer} ${state} PM to`,
+    ).toBe('number')
     const geometry = (run.observations[state].postRender as DebugValue | undefined)?.geometry as
-      | DebugValue
-      | undefined
+      DebugValue | undefined
     const selectionGeometry = (geometry?.selections as DebugValue[] | undefined)?.[0]
     expect(selectionGeometry?.from).toBe(pmRange?.from)
     expect(selectionGeometry?.to).toBe(pmRange?.to)
@@ -277,22 +473,37 @@ function unavailableGeometry(debug: PageDebugSnapshot): string[] {
   const postRender = debug.postRender ?? {}
   const unavailable: string[] = []
   const selection = postRender.selection as DebugValue | undefined
-  if (!Array.isArray(selection?.rects)) unavailable.push('selection.rects: browser/editor did not expose deterministic client rects')
+  if (!Array.isArray(selection?.rects))
+    unavailable.push('selection.rects: browser/editor did not expose deterministic client rects')
   const geometry = postRender.geometry as DebugValue | undefined
   if (!Array.isArray(geometry?.hitTests)) {
-    unavailable.push('reverse-position-mapping: browser/editor did not expose deterministic hit-test results')
+    unavailable.push(
+      'reverse-position-mapping: browser/editor did not expose deterministic hit-test results',
+    )
   }
   const headers = postRender.headerFooters as DebugValue[] | undefined
   if (!headers?.some((item) => item.variant)) {
     unavailable.push('header-footer.variant: current rendered DOM exposed no variant marker')
   }
   if (!headers?.some((item) => item.reservedRect)) {
-    unavailable.push('header-footer.reservedRect: current rendered DOM exposed no reserved rectangle')
+    unavailable.push(
+      'header-footer.reservedRect: current rendered DOM exposed no reserved rectangle',
+    )
+  }
+  for (const probe of debug.probes ?? []) {
+    if (probe.status === 'unavailable' || probe.mappingStatus !== 'resolved')
+      unavailable.push(
+        `probe=${String((probe.probe as DebugValue | undefined)?.id)} case=${String((probe.probe as DebugValue | undefined)?.semanticCase)}: ${String(probe.reason ?? probe.mappingStatus ?? 'unavailable')}`,
+      )
   }
   return unavailable
 }
 
-async function attachUnavailableGeometry(testInfo: TestInfo, fixture: string, values: string[]): Promise<void> {
+async function attachUnavailableGeometry(
+  testInfo: TestInfo,
+  fixture: string,
+  values: string[],
+): Promise<void> {
   const unique = [...new Set(values)]
   if (unique.length === 0) return
   await testInfo.attach(`${fixture}-unavailable-geometry.json`, {
@@ -312,8 +523,12 @@ for (const fixture of FIXTURES) {
       const actual = runs.find((run) => run.renderer === 'v2')!
       assertRealBrowserCoverage(fixture, expected)
       assertRealBrowserCoverage(fixture, actual)
-      expect(expected.observations.loaded.renderer, `fixture=${fixture.id} V1 debug renderer`).toBe('v1')
-      expect(actual.observations.loaded.renderer, `fixture=${fixture.id} V2 debug renderer`).toBe('v2')
+      expect(expected.observations.loaded.renderer, `fixture=${fixture.id} V1 debug renderer`).toBe(
+        'v1',
+      )
+      expect(actual.observations.loaded.renderer, `fixture=${fixture.id} V2 debug renderer`).toBe(
+        'v2',
+      )
 
       const unavailable = [
         ...Object.values(expected.observations).flatMap(unavailableGeometry),
@@ -327,8 +542,12 @@ for (const fixture of FIXTURES) {
         if (differences.length === 0) continue
 
         await mkdir(resolve(__dirname, 'artifacts/screenshots'), { recursive: true })
-        await expected.editorPage.screenshot({ path: screenshotPath(`docs-presentation-${fixture.id}-v1`) })
-        await actual.editorPage.screenshot({ path: screenshotPath(`docs-presentation-${fixture.id}-v2`) })
+        await expected.editorPage.screenshot({
+          path: screenshotPath(`docs-presentation-${fixture.id}-v1`),
+        })
+        await actual.editorPage.screenshot({
+          path: screenshotPath(`docs-presentation-${fixture.id}-v2`),
+        })
         throw new Error(
           [
             `DOCX presentation E2E parity failed: fixture=${fixture.id}`,

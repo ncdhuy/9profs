@@ -61,6 +61,9 @@ export interface PositionGeometry {
   /** Zero-based `PageSlice[]` index. */
   pageIndex?: number
   sectionIndex?: number
+  /** Zero-based column within the page region, when PageSlice regions expose it. */
+  columnIndex?: number
+  columnCount?: number
   flowRect?: GeometryRect
   documentRect?: GeometryRect
   pageLocalRect?: GeometryRect
@@ -194,11 +197,7 @@ function rectFromValues(
   return { space, left, top, width, height, right: left + width, bottom: top + height }
 }
 
-function flowRectFromViewport(
-  rect: DOMRect,
-  flowRootRect: DOMRect,
-  zoom: number,
-): GeometryRect {
+function flowRectFromViewport(rect: DOMRect, flowRootRect: DOMRect, zoom: number): GeometryRect {
   return rectFromValues(
     'flow',
     (rect.left - flowRootRect.left) / zoom,
@@ -258,7 +257,9 @@ function normalizePageIndex(pageIndex: number, count: number): number | undefine
   return Number.isInteger(pageIndex) && pageIndex >= 0 && pageIndex < count ? pageIndex : undefined
 }
 
-export function createPresentationGeometry(source: PresentationGeometrySource): PresentationGeometry {
+export function createPresentationGeometry(
+  source: PresentationGeometrySource,
+): PresentationGeometry {
   const zoom = source.zoomFactor ?? 1
   const rootRect = source.root.getBoundingClientRect()
   const flowRootRect = source.flowRoot.getBoundingClientRect()
@@ -283,7 +284,15 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
       boundary: { fromPageIndex: Math.max(0, pageIndex - 1), toPageIndex: pageIndex },
       documentRect,
       ...(bandBottom > bandTop
-        ? { bandRect: rectFromValues('document', documentRect.left, bandTop, documentRect.width, bandBottom - bandTop) }
+        ? {
+            bandRect: rectFromValues(
+              'document',
+              documentRect.left,
+              bandTop,
+              documentRect.width,
+              bandBottom - bandTop,
+            ),
+          }
         : {}),
       margins: { top, bottom },
     })
@@ -295,7 +304,8 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
       ? sectionPageBox(source.sections[slice.section].settings)
       : undefined
     const renderedPageWidth = sectionBox?.width !== undefined ? sectionBox.width * zoom : pageWidth
-    const renderedPageHeight = sectionBox?.height !== undefined ? sectionBox.height * zoom : pageHeight
+    const renderedPageHeight =
+      sectionBox?.height !== undefined ? sectionBox.height * zoom : pageHeight
     const pageTop =
       pageIndex === 0
         ? firstPageRect.top - rootRect.top
@@ -326,7 +336,11 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
       ...(renderedPageHeight !== undefined ? { pageHeight: renderedPageHeight } : {}),
       ...(documentRect
         ? {
-            physicalOrigin: { space: 'document' as const, x: documentRect.left, y: documentRect.top },
+            physicalOrigin: {
+              space: 'document' as const,
+              x: documentRect.left,
+              y: documentRect.top,
+            },
             documentRect,
           }
         : {}),
@@ -352,6 +366,21 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
   const sectionForPage = (pageIndex: number | undefined): number | undefined =>
     pageIndex === undefined ? undefined : pages[pageIndex]?.sectionIndex
 
+  const columnForFlowY = (
+    y: number,
+    pageIndex: number | undefined,
+  ): { index: number; count: number } | undefined => {
+    if (pageIndex === undefined) return undefined
+    const regions = source.slices[pageIndex]?.regions ?? []
+    for (const region of regions) {
+      const column = region.columns.findIndex(
+        (item) => y >= item.start - 0.01 && y <= item.end + 0.01,
+      )
+      if (column >= 0) return { index: column, count: region.columns.length }
+    }
+    return undefined
+  }
+
   const blockForFlowY = (y: number): { index: number; block: BlockBox } | undefined => {
     if (!source.blocks) return undefined
     for (const [index, block] of source.blocks.entries()) {
@@ -374,33 +403,42 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
     return undefined
   }
 
-  const pageFromGeometry = (flowRect: GeometryRect, documentRect: GeometryRect): number | undefined =>
-    pageForFlowY(flowRect.top) ?? pageForDocumentY(documentRect.top)
+  const pageFromGeometry = (
+    flowRect: GeometryRect,
+    documentRect: GeometryRect,
+  ): number | undefined => pageForFlowY(flowRect.top) ?? pageForDocumentY(documentRect.top)
 
   const positionToGeometry = (pmPos: number, side = 1): PositionGeometry => {
-    if (!source.editorView) return { position: pmPos, status: 'unavailable', reason: 'editor-coordinates-unavailable' }
+    if (!source.editorView)
+      return { position: pmPos, status: 'unavailable', reason: 'editor-coordinates-unavailable' }
     try {
       const viewportRect = source.editorView.coordsAtPos(pmPos, side)
       const documentRect = pageRectFromViewport(viewportRect as DOMRect, rootRect)
       const flowRect = flowRectFromViewport(viewportRect as DOMRect, flowRootRect, zoom)
       const pageIndex = pageFromGeometry(flowRect, documentRect)
       const page = pageIndex === undefined ? undefined : pages[pageIndex]
+      const column = columnForFlowY(flowRect.top, pageIndex)
       const block = blockForFlowY(flowRect.top)
       const line = lineForFlowY(flowRect.top, block)
       return {
         position: pmPos,
         status: 'resolved',
         ...(pageIndex !== undefined ? { pageIndex, sectionIndex: sectionForPage(pageIndex) } : {}),
+        ...(column ? { columnIndex: column.index, columnCount: column.count } : {}),
         flowRect,
         documentRect,
-        ...(page?.documentRect ? { pageLocalRect: pageLocalRect(documentRect, page.documentRect) } : {}),
+        ...(page?.documentRect
+          ? { pageLocalRect: pageLocalRect(documentRect, page.documentRect) }
+          : {}),
         caretRect: documentRect,
         ...(line ? { line } : {}),
         ...(block
           ? {
               block: {
                 index: block.index,
-                ...(block.block.docxIndex !== undefined ? { docxIndex: block.block.docxIndex } : {}),
+                ...(block.block.docxIndex !== undefined
+                  ? { docxIndex: block.block.docxIndex }
+                  : {}),
                 flowRect: rectFromValues(
                   'flow',
                   0,
@@ -426,7 +464,10 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
     const pageIndex = normalizePageIndex(point.pageIndex ?? -1, pages.length)
     const page = pageIndex === undefined ? undefined : pages[pageIndex]
     if (!page?.documentRect) return undefined
-    return { x: rootRect.left + page.documentRect.left + point.x, y: rootRect.top + page.documentRect.top + point.y }
+    return {
+      x: rootRect.left + page.documentRect.left + point.x,
+      y: rootRect.top + page.documentRect.top + point.y,
+    }
   }
 
   const pointToPosition = (point: GeometryPoint): PointToPositionResult => {
@@ -448,8 +489,7 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
           : normalizePageIndex(point.pageIndex ?? -1, pages.length)
     try {
       const hit = source.editorView.posAtCoords({ left: viewport.x, top: viewport.y }) as
-        | ({ pos: number; inside?: number; affinity?: string; bias?: number } | null)
-        | null
+        ({ pos: number; inside?: number; affinity?: string; bias?: number } | null) | null
       if (!hit || typeof hit.pos !== 'number')
         return { point, status: 'unavailable', reason: 'editor-hit-test-unavailable' }
       return {
@@ -468,7 +508,15 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
 
   const selectionToGeometry = (from: number, to: number): SelectionGeometry => {
     if (from === to) return { from, to, status: 'empty', pages: [], sections: [], rects: [] }
-    if (from > to) return { from, to, status: 'unavailable', pages: [], sections: [], reason: 'editor-selection-unavailable' }
+    if (from > to)
+      return {
+        from,
+        to,
+        status: 'unavailable',
+        pages: [],
+        sections: [],
+        reason: 'editor-selection-unavailable',
+      }
     const rects = rangeRects(source.editorView, from, to).map((viewportRect) => {
       const documentRect = pageRectFromViewport(viewportRect, rootRect)
       const flowRect = flowRectFromViewport(viewportRect, flowRootRect, zoom)
@@ -478,14 +526,33 @@ export function createPresentationGeometry(source: PresentationGeometrySource): 
         ...(pageIndex !== undefined ? { pageIndex, sectionIndex: sectionForPage(pageIndex) } : {}),
         flowRect,
         documentRect,
-        ...(page?.documentRect ? { pageLocalRect: pageLocalRect(documentRect, page.documentRect) } : {}),
+        ...(page?.documentRect
+          ? { pageLocalRect: pageLocalRect(documentRect, page.documentRect) }
+          : {}),
       }
     })
-    const pagesForRects = [...new Set(rects.map((rect) => rect.pageIndex).filter((value): value is number => value !== undefined))]
-    const sectionsForRects = [...new Set(rects.map((rect) => rect.sectionIndex).filter((value): value is number => value !== undefined))]
+    const pagesForRects = [
+      ...new Set(
+        rects.map((rect) => rect.pageIndex).filter((value): value is number => value !== undefined),
+      ),
+    ]
+    const sectionsForRects = [
+      ...new Set(
+        rects
+          .map((rect) => rect.sectionIndex)
+          .filter((value): value is number => value !== undefined),
+      ),
+    ]
     return rects.length > 0
       ? { from, to, status: 'resolved', pages: pagesForRects, sections: sectionsForRects, rects }
-      : { from, to, status: 'unavailable', pages: [], sections: [], reason: 'editor-selection-unavailable' }
+      : {
+          from,
+          to,
+          status: 'unavailable',
+          pages: [],
+          sections: [],
+          reason: 'editor-selection-unavailable',
+        }
   }
 
   const api: PresentationGeometry = {
@@ -513,7 +580,9 @@ export function snapshotPresentationGeometry(
   geometry: PresentationGeometry,
   probes: GeometrySnapshotProbes = {},
 ): GeometrySnapshot {
-  const positions = (probes.positions ?? []).map((position) => geometry.positionToGeometry(position))
+  const positions = (probes.positions ?? []).map((position) =>
+    geometry.positionToGeometry(position),
+  )
   const hitTests = [
     ...(probes.points ?? []).map((point) => geometry.pointToPosition(point)),
     ...positions
@@ -528,9 +597,13 @@ export function snapshotPresentationGeometry(
   ]
   return {
     coordinateSpaces: geometry.coordinateSpaces,
-    pages: Array.from({ length: geometry.pageCount }, (_, pageIndex) => geometry.pageGeometry(pageIndex)!),
+    pages: Array.from({ length: geometry.pageCount }, (_, pageIndex) =>
+      geometry.pageGeometry(pageIndex)!,
+    ),
     positions,
     hitTests,
-    selections: (probes.selections ?? []).map(({ from, to }) => geometry.selectionToGeometry(from, to)),
+    selections: (probes.selections ?? []).map(({ from, to }) =>
+      geometry.selectionToGeometry(from, to),
+    ),
   }
 }

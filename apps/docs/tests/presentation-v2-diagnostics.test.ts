@@ -467,7 +467,10 @@ describe('DOCX V1/V2 presentation diagnostics harness', () => {
         domAtPos: () => ({ node: pm, offset: 0 }),
       }
       const parityInput = {
-        blocks: [{ top: 0, height: 90 }, { top: 90, height: 90 }],
+        blocks: [
+          { top: 0, height: 90 },
+          { top: 90, height: 90 },
+        ],
         sectionGeoms: [{ contentHeight: 90, forceBreak: false }],
         totalHeight: 180,
         zoomFactor: 1,
@@ -503,16 +506,27 @@ describe('DOCX V1/V2 presentation diagnostics harness', () => {
 
       expect(parity).toEqual([])
       expect(observed.pages[0].pageRect).toMatchObject({ top: 0, width: 200, height: 100 })
+      expect(observed.pages[0]).toMatchObject({ page: 1, pageIndex: 0 })
       expect(observed.pages[1].pageRect).toMatchObject({ top: 128, width: 200, height: 100 })
+      expect(observed.pages[1]).toMatchObject({ page: 2, pageIndex: 1 })
       expect(observed.pageGaps[0]).toMatchObject({
         page: 2,
+        pageIndex: 1,
         sizePx: 50,
         bandRect: { top: 100, height: 28 },
       })
-      expect(observed.headerFooters[0]).toMatchObject({ page: 2, kind: 'header' })
+      expect(observed.headerFooters[0]).toMatchObject({ page: 2, pageIndex: 1, kind: 'header' })
       expect(observed.floats[0]).toMatchObject({ page: 1, block: 7, domShiftY: 4 })
-      expect(caretObserved.caret).toMatchObject({ position: 1, page: 1 })
-      expect(observed.selection).toMatchObject({ pmRange: { from: 2, to: 5 }, pages: [1, 2] })
+      expect(caretObserved.caret).toMatchObject({ position: 1, page: 1, pageIndex: 0 })
+      expect(observed.selection).toMatchObject({
+        pmRange: { from: 2, to: 5 },
+        pages: [1, 2],
+        pageIndexes: [0, 1],
+      })
+      expect(observed.coordinateSpaces).toMatchObject({
+        pageIndex: 'zero-based',
+        pageNumber: 'one-based-legacy-diagnostic',
+      })
       expect(observed.selection?.rects).toHaveLength(2)
     } finally {
       Object.defineProperty(Range.prototype, 'getClientRects', {

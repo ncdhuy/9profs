@@ -20,6 +20,18 @@ import type { NormalizedPostRenderDiagnostics } from './post-render'
  */
 export const PRESENTATION_GEOMETRY_TOLERANCE_PX = 0.01
 
+/** Geometry API uses zero-based page indexes; legacy diagnostics retain one-based page numbers. */
+export const PRESENTATION_PAGE_INDEX_CONVENTION = 'zero-based' as const
+export const PRESENTATION_PAGE_NUMBER_CONVENTION = 'one-based' as const
+
+export function pageNumberFromPageIndex(pageIndex: number): number {
+  return pageIndex + 1
+}
+
+export function pageIndexFromPageNumber(pageNumber: number): number | undefined {
+  return Number.isInteger(pageNumber) && pageNumber >= 1 ? pageNumber - 1 : undefined
+}
+
 export type DiagnosticCategory =
   | 'page'
   | 'page-physical'
@@ -57,7 +69,10 @@ export interface DiagnosticRange {
 }
 
 export interface NormalizedPageSlice {
+  /** Legacy one-based diagnostic page number. */
   page: number
+  /** Canonical zero-based PageSlice index. */
+  pageIndex: number
   start: number
   end: number
   section: number
@@ -74,6 +89,7 @@ export interface NormalizedPageSlice {
 export interface NormalizedSectionGeometry extends SectionGeom {
   section: number
   firstPage?: number
+  firstPageIndex?: number
   flowOffsetY?: number
   pageBox?: {
     width: number
@@ -85,7 +101,10 @@ export interface NormalizedSectionGeometry extends SectionGeom {
 }
 
 export interface NormalizedPageGeometry {
+  /** Legacy one-based diagnostic page number. */
   page: number
+  /** Canonical zero-based PageSlice index. */
+  pageIndex: number
   section: number
   flowStart: number
   flowEnd: number
@@ -128,7 +147,10 @@ export interface NormalizedColumnPlacement {
 }
 
 export interface PageGapDiagnosticInput {
+  /** Legacy one-based diagnostic page number. */
   page?: number
+  /** Canonical zero-based page index, when page is known. */
+  pageIndex?: number
   block?: number
   pos?: number
   kind?: 'block' | 'inline' | 'table' | 'cut' | 'cell'
@@ -146,7 +168,10 @@ export interface NormalizedPageGap extends PageGapDiagnosticInput {
 }
 
 export interface HeaderFooterDiagnosticInput {
+  /** Legacy one-based diagnostic page number. */
   page: number
+  /** Canonical zero-based page index. */
+  pageIndex?: number
   kind: 'header' | 'footer'
   variant?: 'default' | 'first' | 'even'
   rect?: DiagnosticRect
@@ -157,7 +182,10 @@ export interface HeaderFooterDiagnosticInput {
 export interface NormalizedHeaderFooterPlacement extends HeaderFooterDiagnosticInput {}
 
 export interface FloatShiftDiagnosticInput {
+  /** Legacy one-based diagnostic page number. */
   page?: number
+  /** Canonical zero-based page index, when page is known. */
+  pageIndex?: number
   block?: number
   dx?: number
   dy: number
@@ -248,13 +276,18 @@ export interface DiagnosticParityDifference {
   category: DiagnosticCategory
   path: string
   page?: number
+  pageIndex?: number
+  pageNumber?: number
   block?: number
   pmPosition?: number
   pmRange?: DiagnosticRange
+  probeId?: string
+  semanticCase?: string
   coordinateSpace?: string
   expected: unknown
   actual: unknown
   delta?: number
+  mappingStatus?: string
 }
 
 export interface DiagnosticParityOptions {
@@ -305,7 +338,8 @@ function rangeOf(value: { from: number; to: number } | undefined): DiagnosticRan
 
 function normalizeSlice(slice: PageSlice, pageIndex: number): NormalizedPageSlice {
   return {
-    page: pageIndex + 1,
+    page: pageNumberFromPageIndex(pageIndex),
+    pageIndex,
     start: slice.start,
     end: slice.end,
     section: slice.section,
@@ -344,6 +378,7 @@ function normalizeSection(
     ...(geom.colWidths ? { colWidths: [...geom.colWidths] } : {}),
     ...(geom.colBreakStart !== undefined ? { colBreakStart: geom.colBreakStart } : {}),
     ...(firstPage !== undefined ? { firstPage } : {}),
+    ...(firstPage !== undefined ? { firstPageIndex: pageIndexFromPageNumber(firstPage) } : {}),
     ...(flowOffsetY !== undefined ? { flowOffsetY } : {}),
     ...(settings ? { pageBox: sectionPageBox(settings) } : {}),
   }
@@ -358,6 +393,7 @@ function normalizePage(
   const box = settings ? sectionPageBox(settings) : undefined
   return {
     page,
+    pageIndex: pageIndexFromPageNumber(page) ?? 0,
     section: slice.section,
     flowStart: slice.start,
     flowEnd: slice.end,
@@ -378,6 +414,9 @@ function normalizePageGap(input: PageGapDiagnosticInput): NormalizedPageGap {
   const kind = input.kind ?? 'block'
   return {
     ...input,
+    ...(input.page !== undefined && input.pageIndex === undefined
+      ? { pageIndex: pageIndexFromPageNumber(input.page) }
+      : {}),
     kind,
     metrics: { ...input.metrics },
     height: kind === 'cut' ? 0 : input.metrics.marginBottom + GAP_BAND + input.metrics.marginTop,
@@ -504,7 +543,8 @@ export function capturePresentationDiagnostics(
 
   const starts = pageStartBlocks([...source.blocks], [...source.slices])
   const pageStarts = starts.map((index, page) => ({
-    page: page + 1,
+    page: pageNumberFromPageIndex(page),
+    pageIndex: page,
     block: blockKey(source.blocks[index], index),
   }))
 
@@ -520,10 +560,14 @@ export function capturePresentationDiagnostics(
     pageGaps: (source.pageGaps ?? []).map(normalizePageGap),
     headerFooters: (source.headerFooters ?? []).map((item) => ({
       ...item,
+      ...(item.pageIndex === undefined ? { pageIndex: pageIndexFromPageNumber(item.page) } : {}),
       ...(item.rect ? { rect: rectOf(item.rect) } : {}),
     })),
     floats: (source.floatShifts ?? []).map((item) => ({
       ...item,
+      ...(item.page !== undefined && item.pageIndex === undefined
+        ? { pageIndex: pageIndexFromPageNumber(item.page) }
+        : {}),
       ...(item.rect ? { rect: rectOf(item.rect) } : {}),
     })),
     notes: (source.notes ?? []).map((item) => ({ ...item })),
@@ -621,10 +665,12 @@ function categoryForPath(path: string): DiagnosticCategory {
   if (/dirty/i.test(path)) return 'dirty'
   if (/save|reopen|savePlan|saveOutput/i.test(path)) return 'save'
   if (/geometry.*(?:hitTests|pointToPosition|hit-test)/i.test(path)) return 'geometry-hit-test'
-  if (/geometry.*(?:selection|selections|selectionToGeometry)/i.test(path)) return 'geometry-selection'
+  if (/geometry.*(?:selection|selections|selectionToGeometry)/i.test(path))
+    return 'geometry-selection'
   if (/geometry.*(?:coordinate|coordinateSpaces)/i.test(path)) return 'geometry-coordinate-space'
   if (/geometry.*(?:page|pages|pageGeometry)/i.test(path)) return 'geometry-page'
-  if (/geometry.*(?:position|positions|positionToGeometry|locatePosition)/i.test(path)) return 'geometry-position'
+  if (/geometry.*(?:position|positions|positionToGeometry|locatePosition)/i.test(path))
+    return 'geometry-position'
   if (/postRender.*pageGaps|pageGaps|bandRect|sizePx/i.test(path)) return 'page-gap'
   if (/postRender.*pages.*pageRect|pagePhysical|physicalPage/i.test(path)) return 'page-physical'
   if (/postRender.*headerFooters/i.test(path)) return 'header-footer'
@@ -645,23 +691,40 @@ function categoryForPath(path: string): DiagnosticCategory {
 
 function contextOf(
   value: unknown,
-  parent: { page?: number; block?: number; pmPosition?: number; pmRange?: DiagnosticRange },
+  parent: {
+    page?: number
+    pageIndex?: number
+    pageNumber?: number
+    block?: number
+    pmPosition?: number
+    pmRange?: DiagnosticRange
+    probeId?: string
+    semanticCase?: string
+    mappingStatus?: string
+  },
 ) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return parent
   const object = value as Record<string, unknown>
   return {
     page: typeof object.page === 'number' ? object.page : parent.page,
+    pageIndex: typeof object.pageIndex === 'number' ? object.pageIndex : parent.pageIndex,
+    pageNumber: typeof object.pageNumber === 'number' ? object.pageNumber : parent.pageNumber,
     block: typeof object.block === 'number' ? object.block : parent.block,
     pmPosition: typeof object.position === 'number' ? object.position : parent.pmPosition,
     pmRange:
       object.pmRange && typeof object.pmRange === 'object'
         ? (object.pmRange as DiagnosticRange)
         : parent.pmRange,
+    probeId: typeof object.probeId === 'string' ? object.probeId : parent.probeId,
+    semanticCase:
+      typeof object.semanticCase === 'string' ? object.semanticCase : parent.semanticCase,
+    mappingStatus:
+      typeof object.mappingStatus === 'string' ? object.mappingStatus : parent.mappingStatus,
   }
 }
 
 function isGeometryPath(path: string): boolean {
-  return /(?:\.top|\.bottom|\.left|\.right|\.width|\.height|\.dx|\.dy|OffsetY|flowStart|flowEnd|flowBoundary|offsetInBlock|cutYs|contentBottom|physHeight|sizePx|flowToPhysical|pageRect|flowRect|pageLocalRect|(?:^|\.)(?:start|end)$)/i.test(
+  return /(?:\.top|\.bottom|\.left|\.right|\.width|\.height|\.x|\.y|\.dx|\.dy|OffsetY|flowStart|flowEnd|flowBoundary|flowTop|offsetInBlock|cutYs|contentBottom|physHeight|sizePx|flowToPhysical|pageRect|flowRect|pageLocalRect|(?:^|\.)(?:start|end)$)/i.test(
     path,
   )
 }
@@ -677,7 +740,7 @@ function coordinateSpaceForPath(path: string): string | undefined {
 }
 
 function display(value: unknown): string {
-  const text = JSON.stringify(value)
+  const text = JSON.stringify(value) ?? String(value)
   return text.length > 240 ? `${text.slice(0, 237)}...` : text
 }
 
@@ -695,7 +758,17 @@ export function compareDiagnosticParity(
     left: unknown,
     right: unknown,
     path: string,
-    parent: { page?: number; block?: number; pmPosition?: number; pmRange?: DiagnosticRange },
+    parent: {
+      page?: number
+      pageIndex?: number
+      pageNumber?: number
+      block?: number
+      pmPosition?: number
+      pmRange?: DiagnosticRange
+      probeId?: string
+      semanticCase?: string
+      mappingStatus?: string
+    },
   ): void => {
     if (differences.length >= max) return
     const context = contextOf(right ?? left, parent)
@@ -709,9 +782,7 @@ export function compareDiagnosticParity(
         category: categoryForPath(path),
         path,
         ...context,
-        ...(coordinateSpaceForPath(path)
-          ? { coordinateSpace: coordinateSpaceForPath(path) }
-          : {}),
+        ...(coordinateSpaceForPath(path) ? { coordinateSpace: coordinateSpaceForPath(path) } : {}),
         expected: left,
         actual: right,
         delta,
@@ -741,9 +812,7 @@ export function compareDiagnosticParity(
       category: categoryForPath(path),
       path,
       ...context,
-      ...(coordinateSpaceForPath(path)
-        ? { coordinateSpace: coordinateSpaceForPath(path) }
-        : {}),
+      ...(coordinateSpaceForPath(path) ? { coordinateSpace: coordinateSpaceForPath(path) } : {}),
       expected: left,
       actual: right,
     })
@@ -762,10 +831,15 @@ export function formatDiagnosticDiffs(differences: readonly DiagnosticParityDiff
         difference.renderer ? `renderer=${difference.renderer}` : undefined,
         `category=${difference.category}`,
         difference.page !== undefined ? `page=${difference.page}` : undefined,
+        difference.pageIndex !== undefined ? `pageIndex=${difference.pageIndex}` : undefined,
+        difference.pageNumber !== undefined ? `pageNumber=${difference.pageNumber}` : undefined,
         difference.block !== undefined ? `block=${difference.block}` : undefined,
+        difference.probeId ? `probe=${difference.probeId}` : undefined,
+        difference.semanticCase ? `case=${difference.semanticCase}` : undefined,
         difference.pmPosition !== undefined ? `pmPosition=${difference.pmPosition}` : undefined,
         difference.pmRange ? `pm=${difference.pmRange.from}-${difference.pmRange.to}` : undefined,
         difference.coordinateSpace ? `space=${difference.coordinateSpace}` : undefined,
+        difference.mappingStatus ? `mapping=${difference.mappingStatus}` : undefined,
       ]
         .filter(Boolean)
         .join(' ')

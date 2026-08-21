@@ -9,6 +9,7 @@ import {
 export * from './diagnostics'
 export * from './geometry'
 export * from './post-render'
+export * from './geometry-probes'
 
 export type PresentationRenderer = 'v1' | 'v2'
 
