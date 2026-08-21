@@ -48,9 +48,12 @@ import { PrintDialog } from './components/PrintDialog'
 import {
   captureGeometryProbeDiagnostics,
   capturePostRenderDiagnostics,
+  createPresentationGeometry,
   renderPresentation,
   resolvePresentationRenderer,
   type GeometryProbe,
+  type PresentationGeometry,
+  type PresentationGeometrySource,
 } from './presentation-v2'
 import {
   appendEndnotesBlock,
@@ -659,6 +662,8 @@ export function App() {
   const saveIncompleteRef = useRef(false)
 
   const editorRef = useRef<Editor | null>(null)
+  const presentationGeometryRef = useRef<PresentationGeometry | null>(null)
+  const presentationGeometrySourceRef = useRef<(() => PresentationGeometrySource) | null>(null)
   const editor = useEditor({
     extensions: editorExtensions,
     content: { type: 'doc', content: [{ type: 'docParagraph' }] },
@@ -2608,6 +2613,13 @@ export function App() {
             return block?.docxIndex
           },
         })
+        presentationGeometrySourceRef.current = postRenderSource
+        try {
+          presentationGeometryRef.current = createPresentationGeometry(postRenderSource())
+        } catch {
+          // Geometry is presentation-only; keep pagination alive if a transient DOM read fails.
+          presentationGeometryRef.current = null
+        }
         const captureCurrentPostRender = () => capturePostRenderDiagnostics(postRenderSource())
         const postRender = captureCurrentPostRender()
         // endnote area: Word puts it right after the last body line, not at the page
@@ -2690,6 +2702,10 @@ export function App() {
       locate()
     }
     const onUpdate = () => {
+      // Do not use a geometry snapshot across a document/layout change. The existing
+      // ProseMirror hit test remains the explicit fallback until post-render readback settles.
+      presentationGeometryRef.current = null
+      presentationGeometrySourceRef.current = null
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(remeasure, 300)
     }
@@ -2706,6 +2722,8 @@ export function App() {
     editor?.on('update', onUpdate)
     return () => {
       if (timer) window.clearTimeout(timer)
+      presentationGeometryRef.current = null
+      presentationGeometrySourceRef.current = null
       document.fonts.removeEventListener('loadingdone', onFontsChanged)
       scroller.removeEventListener('scroll', locate)
       editor?.off('update', onUpdate)
@@ -3096,6 +3114,54 @@ export function App() {
   // Word: TOC entries jump on ⌘/Ctrl+click only; a plain click just places the
   // caret. Resolve the bookmark anchor against the original block XML, fall
   // back to matching the heading text.
+  const onDocMouseDownCapture = useCallback(
+    (e: ReactMouseEvent) => {
+      if (e.button !== 0 || readMode || isProtected || !editor?.isEditable) return
+      const target = e.target
+      if (!(target instanceof Element) || !editor.view.dom.contains(target)) return
+      // Presentation-only and nested editing surfaces retain their existing interaction owners.
+      if (
+        target.closest(
+          '.doc-protected, .doc-textbox-editor, .doc-nested-table, .doc-move-handle, .box-resize-handle, .doc-formula-edit',
+        )
+      )
+        return
+
+      const source = presentationGeometrySourceRef.current
+      if (!source) return
+      let geometry = presentationGeometryRef.current
+      try {
+        // Shared post-render source serves both V1 and V2; renderer selection stays pagination-only.
+        // Refresh viewport origins at click time so scroll cannot make a readback stale.
+        geometry = createPresentationGeometry(source())
+        presentationGeometryRef.current = geometry
+      } catch {
+        presentationGeometryRef.current = null
+        return
+      }
+      const hit = geometry.pointToPosition({
+        space: 'viewport',
+        x: e.clientX,
+        y: e.clientY,
+      })
+      if (hit.status !== 'resolved' || hit.pmPosition === undefined) return
+
+      let handled = false
+      try {
+        handled = editor.chain().focus().setTextSelection(hit.pmPosition).run()
+      } catch {
+        handled = false
+      }
+      if (!handled) return
+
+      // A resolved Geometry hit is authoritative for this supported surface. Stop the
+      // browser/ProseMirror legacy coordinate hit test from running a second mapping.
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [editor, isProtected, readMode],
+  )
+
   const onDocClick = useCallback(
     (e: ReactMouseEvent) => {
       const commentSpan = (e.target as HTMLElement).closest('.doc-comment') as HTMLElement | null
@@ -3501,6 +3567,7 @@ export function App() {
                 {doc ? (
                   <div
                     className={docZoomClass}
+                    onMouseDownCapture={onDocMouseDownCapture}
                     onClick={onDocClick}
                     onContextMenu={onDocContextMenu}
                     style={docZoomStyle}
