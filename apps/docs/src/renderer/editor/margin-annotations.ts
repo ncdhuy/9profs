@@ -18,6 +18,7 @@
 import type { CommentInfo } from '@genoffice/docx-engine'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Mark as PmMark } from '@tiptap/pm/model'
+import type { PresentationGeometry } from '../presentation-v2/geometry'
 import { t } from '../i18n/locale'
 
 export const MARKUP_AREA_W = 200
@@ -33,6 +34,14 @@ const REV_SELECTOR =
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 type Seg = { top: number; bottom: number }
+
+export interface MarginAnnotationAnchorRect {
+  top: number
+  bottom: number
+  left: number
+  right: number
+  height: number
+}
 
 function mergeSegs(segs: Seg[]): Seg[] {
   segs.sort((a, b) => a.top - b.top)
@@ -191,21 +200,85 @@ function visibleRectNear(el: HTMLElement | null, pm: HTMLElement): DOMRect | nul
   return null
 }
 
+function viewportRectFromGeometry(
+  documentRect: {
+    top: number
+    bottom: number
+    left: number
+    right: number
+    height: number
+  },
+  rootRect: Pick<DOMRect, 'top' | 'left'>,
+): MarginAnnotationAnchorRect {
+  return {
+    top: rootRect.top + documentRect.top,
+    bottom: rootRect.top + documentRect.bottom,
+    left: rootRect.left + documentRect.left,
+    right: rootRect.left + documentRect.right,
+    height: documentRect.height,
+  }
+}
+
+/** Preserve existing first-line annotation anchoring while Geometry retains every selection rect. */
+export function selectionAnchorRectFromGeometry(
+  geometry: PresentationGeometry,
+  rootRect: Pick<DOMRect, 'top' | 'left'>,
+  from: number,
+  to: number,
+): MarginAnnotationAnchorRect | undefined {
+  const selection = geometry.selectionToGeometry(from, to)
+  const selectionRect =
+    selection.status === 'resolved' ? selection.rects?.[0]?.documentRect : undefined
+  const documentRect =
+    selectionRect ??
+    (() => {
+      const position = geometry.positionToGeometry(from, 1)
+      return position.status === 'resolved' ? position.documentRect : undefined
+    })()
+  return documentRect ? viewportRectFromGeometry(documentRect, rootRect) : undefined
+}
+
+function pmRangeForElement(
+  view: EditorView,
+  element: HTMLElement,
+): { from: number; to: number } | undefined {
+  try {
+    const from = view.posAtDOM(element, 0)
+    const to = view.posAtDOM(element, element.childNodes.length)
+    return from <= to ? { from, to } : { from: to, to: from }
+  } catch {
+    return undefined
+  }
+}
+
+function anchorRectForElement(
+  view: EditorView | undefined,
+  geometry: PresentationGeometry | undefined,
+  rootRect: Pick<DOMRect, 'top' | 'left'>,
+  element: HTMLElement,
+): MarginAnnotationAnchorRect | undefined {
+  const range = view && geometry ? pmRangeForElement(view, element) : undefined
+  const geometryRect =
+    range && geometry
+      ? selectionAnchorRectFromGeometry(geometry, rootRect, range.from, range.to)
+      : undefined
+  return geometryRect ?? [...element.getClientRects()].find((rect) => rect.height > 0)
+}
+
 function anchorPointFor(
   view: EditorView,
   pm: HTMLElement,
-  pos: number,
+  wrapRect: DOMRect,
+  geometry: PresentationGeometry | undefined,
+  from: number,
+  to: number,
 ): { top: number; bottom: number; left: number } | null {
-  const clamped = Math.max(0, Math.min(pos, view.state.doc.content.size))
-  try {
-    const c = view.coordsAtPos(clamped)
-    if (c && (c.top !== 0 || c.left !== 0 || c.bottom !== 0)) {
-      return { top: c.top, bottom: c.bottom, left: c.left }
-    }
-  } catch {
-    /* position renders inside hidden (balloon-collapsed) content */
+  if (geometry) {
+    const rect = selectionAnchorRectFromGeometry(geometry, wrapRect, from, to)
+    if (rect) return { top: rect.top, bottom: rect.bottom, left: rect.left }
   }
   try {
+    const clamped = Math.max(0, Math.min(from, view.state.doc.content.size))
     const { node } = view.domAtPos(clamped)
     const el = (node instanceof HTMLElement ? node : node.parentElement) as HTMLElement | null
     const rect = visibleRectNear(el, pm)
@@ -251,6 +324,7 @@ export function syncMarginAnnotations(
   zoomFactor: number,
   blocks?: AnchorBlock[],
   view?: EditorView,
+  geometry?: PresentationGeometry,
 ): void {
   const f = zoomFactor
   const wrapRect = wrap.getBoundingClientRect()
@@ -282,7 +356,11 @@ export function syncMarginAnnotations(
     make: () => HTMLElement
   }
   const placed: Placed[] = []
-  const localThread = (c: CommentInfo, rect: DOMRect, blockAnchor: HTMLElement | null): Placed => ({
+  const localThread = (
+    c: CommentInfo,
+    rect: MarginAnnotationAnchorRect,
+    blockAnchor: HTMLElement | null,
+  ): Placed => ({
     sticky: true,
     top: (rect.top - wrapRect.top) / f,
     // leader start: end of the marked range, or start of the anchor paragraph's
@@ -302,7 +380,7 @@ export function syncMarginAnnotations(
   for (const c of comments) {
     if (c.parentId || c.done) continue
     const el = anchorOf.get(c.id)
-    const rect = el ? [...el.getClientRects()].find((r) => r.height > 0) : undefined
+    const rect = el ? anchorRectForElement(view, geometry, wrapRect, el) : undefined
     if (rect) {
       placed.push(localThread(c, rect, null))
       continue
@@ -316,7 +394,7 @@ export function syncMarginAnnotations(
     )
     const blockEl =
       block && (pm.querySelector(`[data-idx="${block.docxIndex}"]`) as HTMLElement | null)
-    const blockRect = blockEl && [...blockEl.getClientRects()].find((r) => r.height > 0)
+    const blockRect = blockEl ? anchorRectForElement(view, geometry, wrapRect, blockEl) : undefined
     if (blockEl && blockRect) placed.push(localThread(c, blockRect, blockEl))
   }
 
@@ -324,7 +402,7 @@ export function syncMarginAnnotations(
   // deleted text / format chips have left the flow
   if (view && wrap.closest('.rev-balloon')) {
     for (const g of revGroupsOf(view)) {
-      const p = anchorPointFor(view, pm, g.from)
+      const p = anchorPointFor(view, pm, wrapRect, geometry, g.from, g.to)
       if (!p) continue
       // hidden deletions have no rects for the bar pass above: mark their anchor
       // line (the sibling-fallback anchor is a point — give it one line of bar)

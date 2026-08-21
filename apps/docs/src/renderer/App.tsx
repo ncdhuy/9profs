@@ -2566,13 +2566,35 @@ export function App() {
         // paper top by a negative anchor offset are pushed back down
         clampCellBoxTops(pm, pm.getBoundingClientRect().top, factor)
         syncCutOverlays((pm.closest('.page-wrap') as HTMLElement) ?? pm, overlayCutAnchors, factor)
+        const pageWrap = (pm.closest('.page-wrap') as HTMLElement) ?? pm
+        const postRenderSource = () => ({
+          root: pageWrap,
+          flowRoot: pm,
+          slices,
+          blocks,
+          sections: secList ?? undefined,
+          zoomFactor: factor,
+          editorView: editor.view,
+          floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
+          blockOf: (el: HTMLElement) => {
+            const block = blocks.find((item) => item.el === el || item.el?.contains(el))
+            return block?.docxIndex
+          },
+        })
+        let annotationGeometry: PresentationGeometry | undefined
+        try {
+          annotationGeometry = createPresentationGeometry(postRenderSource())
+        } catch {
+          // Geometry is presentation-only; keep pagination alive if a transient DOM read fails.
+        }
         syncMarginAnnotations(
-          (pm.closest('.page-wrap') as HTMLElement) ?? pm,
+          pageWrap,
           pm,
           comments,
           factor,
           doc.parsed.blocks,
           editor.view,
+          annotationGeometry,
         )
         tSetGaps = performance.now() - tSet0
         // suppression collapses the DOM after this pass sliced; one follow-up remeasure re-syncs (sig goes stable, no loop)
@@ -2598,21 +2620,6 @@ export function App() {
         }
         // Read-only post-render seam: capture actual DOM geometry only after all
         // existing gap, column, float, cell-clamp, cut, and annotation effects settle.
-        const pageWrap = (pm.closest('.page-wrap') as HTMLElement) ?? pm
-        const postRenderSource = () => ({
-          root: pageWrap,
-          flowRoot: pm,
-          slices,
-          blocks,
-          sections: secList ?? undefined,
-          zoomFactor: factor,
-          editorView: editor.view,
-          floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
-          blockOf: (el: HTMLElement) => {
-            const block = blocks.find((item) => item.el === el || item.el?.contains(el))
-            return block?.docxIndex
-          },
-        })
         presentationGeometrySourceRef.current = postRenderSource
         try {
           presentationGeometryRef.current = createPresentationGeometry(postRenderSource())
