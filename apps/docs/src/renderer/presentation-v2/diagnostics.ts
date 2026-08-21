@@ -12,6 +12,7 @@ import {
   type PageSlice,
   type SectionGeom,
 } from '../pagination'
+import type { NormalizedPostRenderDiagnostics } from './post-render'
 
 /**
  * Diagnostics-only geometry tolerance. It is intentionally much smaller than a
@@ -21,11 +22,16 @@ export const PRESENTATION_GEOMETRY_TOLERANCE_PX = 0.01
 
 export type DiagnosticCategory =
   | 'page'
+  | 'page-physical'
+  | 'page-gap'
   | 'line'
   | 'table'
   | 'column'
   | 'header-footer'
   | 'float'
+  | 'caret'
+  | 'selection'
+  | 'coordinate-mapping'
   | 'mapping'
   | 'model'
   | 'dirty'
@@ -185,6 +191,8 @@ export interface PresentationDiagnosticSource {
   positionMappings?: readonly NormalizedPositionMapping[]
   caret?: DiagnosticRect
   selection?: DiagnosticRect[]
+  /** Read-only geometry captured after live DOM presentation effects. */
+  postRender?: NormalizedPostRenderDiagnostics
 }
 
 export interface NormalizedPresentationDiagnostics {
@@ -203,6 +211,7 @@ export interface NormalizedPresentationDiagnostics {
   positionMappings: NormalizedPositionMapping[]
   caret?: DiagnosticRect
   selection?: DiagnosticRect[]
+  postRender?: NormalizedPostRenderDiagnostics
 }
 
 export interface ModelDiagnosticInput {
@@ -230,11 +239,13 @@ export interface NormalizedModelDiagnostics {
 
 export interface DiagnosticParityDifference {
   fixture?: string
+  renderer?: string
   category: DiagnosticCategory
   path: string
   page?: number
   block?: number
   pmRange?: DiagnosticRange
+  coordinateSpace?: string
   expected: unknown
   actual: unknown
   delta?: number
@@ -242,6 +253,7 @@ export interface DiagnosticParityDifference {
 
 export interface DiagnosticParityOptions {
   fixture?: string
+  renderer?: string
   geometryTolerancePx?: number
   maxDifferences?: number
 }
@@ -515,6 +527,7 @@ export function capturePresentationDiagnostics(
     })),
     ...(source.caret ? { caret: rectOf(source.caret) } : {}),
     ...(source.selection ? { selection: source.selection.map((rect) => rectOf(rect)!) } : {}),
+    ...(source.postRender ? { postRender: source.postRender } : {}),
   }
 }
 
@@ -601,6 +614,14 @@ export function captureModelDiagnostics(input: ModelDiagnosticInput): Normalized
 function categoryForPath(path: string): DiagnosticCategory {
   if (/dirty/i.test(path)) return 'dirty'
   if (/save|reopen|savePlan|saveOutput/i.test(path)) return 'save'
+  if (/postRender.*pageGaps|pageGaps|bandRect|sizePx/i.test(path)) return 'page-gap'
+  if (/postRender.*pages.*pageRect|pagePhysical|physicalPage/i.test(path)) return 'page-physical'
+  if (/postRender.*headerFooters/i.test(path)) return 'header-footer'
+  if (/postRender.*floats/i.test(path)) return 'float'
+  if (/postRender.*caret/i.test(path)) return 'caret'
+  if (/postRender.*selection/i.test(path)) return 'selection'
+  if (/flowToPhysical|flowRect|pageLocalRect|coordinateSpace/i.test(path))
+    return 'coordinate-mapping'
   if (/pmJson|selection|reopened/i.test(path)) return /selection/i.test(path) ? 'mapping' : 'model'
   if (/line/i.test(path)) return 'line'
   if (/table/i.test(path)) return 'table'
@@ -628,9 +649,17 @@ function contextOf(
 }
 
 function isGeometryPath(path: string): boolean {
-  return /(?:\.top|\.bottom|\.left|\.right|\.width|\.height|\.dx|\.dy|OffsetY|flowStart|flowEnd|offsetInBlock|cutYs|contentBottom|physHeight)/i.test(
+  return /(?:\.top|\.bottom|\.left|\.right|\.width|\.height|\.dx|\.dy|OffsetY|flowStart|flowEnd|offsetInBlock|cutYs|contentBottom|physHeight|sizePx|flowToPhysical|pageRect|flowRect|pageLocalRect)/i.test(
     path,
   )
+}
+
+function coordinateSpaceForPath(path: string): string | undefined {
+  if (/viewport/i.test(path)) return 'viewport'
+  if (/flowRect|flowStart|flowEnd|flowBoundary/i.test(path)) return 'flow'
+  if (/pageRect|pageLocalRect|bandRect|physical/i.test(path)) return 'page-wrap'
+  if (/flowToPhysical|coordinate/i.test(path)) return 'mapping'
+  return undefined
 }
 
 function display(value: unknown): string {
@@ -662,9 +691,13 @@ export function compareDiagnosticParity(
       if (Object.is(left, right)) return
       differences.push({
         ...(options.fixture ? { fixture: options.fixture } : {}),
+        ...(options.renderer ? { renderer: options.renderer } : {}),
         category: categoryForPath(path),
         path,
         ...context,
+        ...(coordinateSpaceForPath(path)
+          ? { coordinateSpace: coordinateSpaceForPath(path) }
+          : {}),
         expected: left,
         actual: right,
         delta,
@@ -690,9 +723,13 @@ export function compareDiagnosticParity(
     }
     differences.push({
       ...(options.fixture ? { fixture: options.fixture } : {}),
+      ...(options.renderer ? { renderer: options.renderer } : {}),
       category: categoryForPath(path),
       path,
       ...context,
+      ...(coordinateSpaceForPath(path)
+        ? { coordinateSpace: coordinateSpaceForPath(path) }
+        : {}),
       expected: left,
       actual: right,
     })
@@ -708,10 +745,12 @@ export function formatDiagnosticDiffs(differences: readonly DiagnosticParityDiff
     .map((difference) => {
       const location = [
         difference.fixture ? `fixture=${difference.fixture}` : undefined,
+        difference.renderer ? `renderer=${difference.renderer}` : undefined,
         `category=${difference.category}`,
         difference.page !== undefined ? `page=${difference.page}` : undefined,
         difference.block !== undefined ? `block=${difference.block}` : undefined,
         difference.pmRange ? `pm=${difference.pmRange.from}-${difference.pmRange.to}` : undefined,
+        difference.coordinateSpace ? `space=${difference.coordinateSpace}` : undefined,
       ]
         .filter(Boolean)
         .join(' ')

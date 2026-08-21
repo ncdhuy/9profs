@@ -21,6 +21,7 @@ import {
 import {
   captureEditorPositionDiagnostics,
   captureModelDiagnostics,
+  capturePostRenderDiagnostics,
   capturePresentationDiagnostics,
   compareDiagnosticParity,
   formatDiagnosticDiffs,
@@ -399,5 +400,126 @@ describe('DOCX V1/V2 presentation diagnostics harness', () => {
     expect(
       compareDiagnosticParity({ pages: [{ top: 10 }] }, { pages: [{ top: 10.02 }] }),
     ).toHaveLength(1)
+  })
+
+  it('observes rendered page, gap, header/footer, float, caret, and multi-rect selection geometry', () => {
+    const rect = (left: number, top: number, width: number, height: number) =>
+      ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+      }) as DOMRect
+    const setRect = (el: HTMLElement, value: DOMRect) => {
+      Object.defineProperty(el, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => value,
+      })
+    }
+
+    const root = document.createElement('div')
+    root.className = 'page-wrap'
+    const page = document.createElement('div')
+    page.className = 'doc-page'
+    page.style.setProperty('--page-h', '100px')
+    const pm = document.createElement('div')
+    pm.className = 'ProseMirror'
+    const gap = document.createElement('div')
+    gap.className = 'page-gap'
+    gap.style.height = '50px'
+    gap.style.setProperty('--gap-mb', '10px')
+    gap.style.setProperty('--gap-mt', '12px')
+    const header = document.createElement('div')
+    header.className = 'page-hf page-hf-header page-gap-hf'
+    gap.append(header)
+    const float = document.createElement('div')
+    float.className = 'doc-textbox'
+    float.dataset.pageFloatDy = '4'
+    const floatHost = document.createElement('div')
+    floatHost.className = 'doc-protected-floating'
+    floatHost.append(float)
+    pm.append(floatHost, gap)
+    page.append(pm)
+    root.append(page)
+    document.body.append(root)
+
+    setRect(root, rect(100, 200, 200, 500))
+    setRect(page, rect(100, 200, 200, 300))
+    setRect(pm, rect(110, 210, 180, 200))
+    setRect(gap, rect(100, 290, 200, 50))
+    setRect(header, rect(110, 318, 180, 12))
+    setRect(float, rect(120, 230, 40, 20))
+
+    const selectionRects = [rect(115, 225, 20, 14), rect(115, 345, 30, 14)]
+    const originalClientRects = Range.prototype.getClientRects
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => selectionRects,
+    })
+    try {
+      const view = {
+        dom: pm,
+        state: { selection: { anchor: 2, head: 5, from: 2, to: 5 } },
+        coordsAtPos: () => rect(116, 225, 1, 14),
+        posAtCoords: () => ({ pos: 2 }),
+        domAtPos: () => ({ node: pm, offset: 0 }),
+      }
+      const parityInput = {
+        blocks: [{ top: 0, height: 90 }, { top: 90, height: 90 }],
+        sectionGeoms: [{ contentHeight: 90, forceBreak: false }],
+        totalHeight: 180,
+        zoomFactor: 1,
+      }
+      const v1Slices = renderPresentation('v1', parityInput)
+      const v2Slices = renderPresentation('v2', parityInput)
+      expect(v1Slices).toEqual(v2Slices)
+      const source = {
+        root,
+        flowRoot: pm,
+        slices: [
+          { start: 0, end: 90, section: 0 },
+          { start: 90, end: 180, section: 0 },
+        ],
+        zoomFactor: 1,
+        editorView: view,
+        floatBoxes: [{ el: float, top: 10, height: 20 }],
+        blockOf: () => 7,
+      } as const
+      const observed = capturePostRenderDiagnostics(source)
+      const caretObserved = capturePostRenderDiagnostics({
+        ...source,
+        editorView: {
+          ...view,
+          state: { selection: { anchor: 1, head: 1, from: 1, to: 1 } },
+        },
+      })
+      const parity = compareDiagnosticParity(
+        { postRender: observed },
+        { postRender: capturePostRenderDiagnostics(source) },
+        { fixture: 'post-render-dom' },
+      )
+
+      expect(parity).toEqual([])
+      expect(observed.pages[0].pageRect).toMatchObject({ top: 0, width: 200, height: 100 })
+      expect(observed.pages[1].pageRect).toMatchObject({ top: 128, width: 200, height: 100 })
+      expect(observed.pageGaps[0]).toMatchObject({
+        page: 2,
+        sizePx: 50,
+        bandRect: { top: 100, height: 28 },
+      })
+      expect(observed.headerFooters[0]).toMatchObject({ page: 2, kind: 'header' })
+      expect(observed.floats[0]).toMatchObject({ page: 1, block: 7, domShiftY: 4 })
+      expect(caretObserved.caret).toMatchObject({ position: 1, page: 1 })
+      expect(observed.selection).toMatchObject({ pmRange: { from: 2, to: 5 }, pages: [1, 2] })
+      expect(observed.selection?.rects).toHaveLength(2)
+    } finally {
+      Object.defineProperty(Range.prototype, 'getClientRects', {
+        configurable: true,
+        value: originalClientRects,
+      })
+      root.remove()
+    }
   })
 })

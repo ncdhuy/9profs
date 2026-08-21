@@ -7,6 +7,7 @@ import {
 } from '../pagination'
 
 export * from './diagnostics'
+export * from './post-render'
 
 export type PresentationRenderer = 'v1' | 'v2'
 

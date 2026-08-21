@@ -45,7 +45,11 @@ import { HeaderFooterArea } from './components/HeaderFooterArea'
 import { PageFootnotes, PageEndnotes } from './components/PageNoteAreas'
 import { PaginationPreview } from './components/PaginationPreview'
 import { PrintDialog } from './components/PrintDialog'
-import { renderPresentation, resolvePresentationRenderer } from './presentation-v2'
+import {
+  capturePostRenderDiagnostics,
+  renderPresentation,
+  resolvePresentationRenderer,
+} from './presentation-v2'
 import {
   appendEndnotesBlock,
   appendFloatSpillBlock,
@@ -2585,6 +2589,21 @@ export function App() {
         } else {
           pm.style.removeProperty('min-height')
         }
+        // Read-only post-render seam: capture actual DOM geometry only after all
+        // existing gap, column, float, cell-clamp, cut, and annotation effects settle.
+        const pageWrap = (pm.closest('.page-wrap') as HTMLElement) ?? pm
+        const postRender = capturePostRenderDiagnostics({
+          root: pageWrap,
+          flowRoot: pm,
+          slices,
+          zoomFactor: factor,
+          editorView: editor.view,
+          floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
+          blockOf: (el) => {
+            const block = blocks.find((item) => item.el === el || item.el?.contains(el))
+            return block?.docxIndex
+          },
+        })
         // endnote area: Word puts it right after the last body line, not at the page
         // bottom — anchor it to the flow end measured in the final display state
         setEndnotesAreaTop(
@@ -2598,6 +2617,7 @@ export function App() {
         )
         // for real-device verification/troubleshooting: current slices and block geometry (read-only snapshot, no functional dependency)
         ;(window as unknown as Record<string, unknown>).__pageDebug = {
+          renderer: presentationRenderer,
           slices,
           colMode,
           colSpecs: colSpecs.map((s) => ({
@@ -2633,6 +2653,7 @@ export function App() {
                 cuts: r.cutYs?.map((c) => Math.round(c)) ?? null,
               })),
             })),
+          postRender,
           remeasureMs: performance.now() - tStart,
           measureMs: tMeasure,
           sliceMs: tSlice,
