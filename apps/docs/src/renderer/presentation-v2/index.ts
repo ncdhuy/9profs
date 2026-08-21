@@ -6,6 +6,8 @@ import {
   type SectionGeom,
 } from '../pagination'
 
+export * from './diagnostics'
+
 export type PresentationRenderer = 'v1' | 'v2'
 
 export const DEFAULT_PRESENTATION_RENDERER: PresentationRenderer = 'v1'
