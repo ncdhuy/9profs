@@ -45,6 +45,7 @@ import { HeaderFooterArea } from './components/HeaderFooterArea'
 import { PageFootnotes, PageEndnotes } from './components/PageNoteAreas'
 import { PaginationPreview } from './components/PaginationPreview'
 import { PrintDialog } from './components/PrintDialog'
+import { renderPresentation, resolvePresentationRenderer } from './presentation-v2'
 import {
   appendEndnotesBlock,
   appendFloatSpillBlock,
@@ -60,7 +61,6 @@ import {
   docGridPitchPt,
   type LineAnchor,
   pageNumbers,
-  sliceWithLineSplit,
   tableRowFlags,
   type BlockBox,
   type BlockMeta,
@@ -343,6 +343,7 @@ const DEFAULT_SETTINGS: AiSettings = {
 }
 
 export function App() {
+  const presentationRenderer = resolvePresentationRenderer()
   // subscribe to language switches for re-render; strings all go through module-level t, so memoized callbacks never capture stale closures
   const { lang } = useI18n()
   const [doc, setDoc] = useState<DocState | null>(null)
@@ -1875,22 +1876,22 @@ export function App() {
       let s: PageSlice[]
       if (live.length > 0) {
         assignSections(blocks, live)
-        s = sliceWithLineSplit(
+        s = renderPresentation(presentationRenderer, {
           blocks,
-          colGeomsFor(sectionGeoms(live, hfHeightsOf(live))),
+          sectionGeoms: colGeomsFor(sectionGeoms(live, hfHeightsOf(live))),
           totalHeight,
-          factor,
-          blockMetaOf,
-        )
+          zoomFactor: factor,
+          metaOf: blockMetaOf,
+        })
       } else {
         const contentH = twipsToPx(section.pageHeight) - effTopSingle - effBottomSingle
-        s = sliceWithLineSplit(
+        s = renderPresentation(presentationRenderer, {
           blocks,
-          [{ contentHeight: contentH, forceBreak: false }],
+          sectionGeoms: [{ contentHeight: contentH, forceBreak: false }],
           totalHeight,
-          factor,
-          blockMetaOf,
-        )
+          zoomFactor: factor,
+          metaOf: blockMetaOf,
+        })
       }
       return { mBlocks: blocks, slices: s, secs: live }
     })
@@ -1917,6 +1918,7 @@ export function App() {
     hfHeightsOf,
     measureSingleFlow,
     colGeomsFor,
+    presentationRenderer,
   ])
 
   // status-bar page number: real page slicing (same algorithm as the pagination preview). Edits remeasure with debounce; scrolling only relocates
@@ -1994,20 +1996,20 @@ export function App() {
         const hfHs = secList ? hfHeightsOf(secList) : null
         const t1 = performance.now()
         const s = secList
-          ? sliceWithLineSplit(
+          ? renderPresentation(presentationRenderer, {
               blocks,
-              colGeomsFor(sectionGeoms(secList, hfHs!)),
-              flowH,
-              factor,
-              blockMetaOf,
-            )
-          : sliceWithLineSplit(
+              sectionGeoms: colGeomsFor(sectionGeoms(secList, hfHs!)),
+              totalHeight: flowH,
+              zoomFactor: factor,
+              metaOf: blockMetaOf,
+            })
+          : renderPresentation(presentationRenderer, {
               blocks,
-              [{ contentHeight: contentH, forceBreak: false }],
-              flowH,
-              factor,
-              blockMetaOf,
-            )
+              sectionGeoms: [{ contentHeight: contentH, forceBreak: false }],
+              totalHeight: flowH,
+              zoomFactor: factor,
+              metaOf: blockMetaOf,
+            })
         tSlice = performance.now() - t1
         return { blocks, secList, hfHs, s, floats }
       })
@@ -2690,6 +2692,7 @@ export function App() {
     hfHeightsOf,
     measureSingleFlow,
     colGeomsFor,
+    presentationRenderer,
     header,
     footer,
     hfVariants,
@@ -3772,6 +3775,7 @@ export function App() {
 
       {doc && showPagePreview && section && (
         <PaginationPreview
+          presentationRenderer={presentationRenderer}
           section={section}
           sections={sections}
           delSectBreaks={delSectBreaks}

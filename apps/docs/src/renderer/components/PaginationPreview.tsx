@@ -22,7 +22,6 @@ import {
   sectionFirstPages,
   sectionGeoms,
   sectionPageBox,
-  sliceWithLineSplit,
   type BlockBox,
   type BlockMetaOf,
   type PageNoteItem,
@@ -33,6 +32,7 @@ import { estimateHfHeight, hfHeaderGeom, FOOTNOTE_SEPARATOR_H } from '../line-me
 import { toRoman } from '../note-format'
 import { useI18n } from '../i18n/locale'
 import { hfFloatPagePos } from '../editor/hf-dom'
+import { renderPresentation, type PresentationRenderer } from '../presentation-v2'
 import { HeaderFooterArea } from './HeaderFooterArea'
 
 const twipsToPx = (twips: number) => (twips / 1440) * 96
@@ -138,6 +138,7 @@ export interface HfSet {
  * odd-even), with real page numbers.
  */
 export function PaginationPreview({
+  presentationRenderer,
   section,
   sections,
   delSectBreaks,
@@ -156,6 +157,7 @@ export function PaginationPreview({
   onClose,
   suppressEscape,
 }: {
+  presentationRenderer: PresentationRenderer
   /** Canvas geometry (final section): for the measurement origin / clone width */
   section: SectionSettings
   /** All sections: for per-page paper geometry (empty array = single section per `section`) */
@@ -282,7 +284,13 @@ export function PaginationPreview({
         const geoms = sectionGeoms(live, hfHs)
         // when the canvas column layout is inactive, measure as full-width single flow; the geometry drops column flow to match
         if (colMode === 'none') for (const g of geoms) if (g.cols) g.cols = undefined
-        computed = sliceWithLineSplit(blocks, geoms, flowH, factor, blockMetaOf)
+        computed = renderPresentation(presentationRenderer, {
+          blocks,
+          sectionGeoms: geoms,
+          totalHeight: flowH,
+          zoomFactor: factor,
+          metaOf: blockMetaOf,
+        })
       } else {
         const contentH =
           twipsToPx(section.pageHeight) -
@@ -291,19 +299,19 @@ export function PaginationPreview({
             estimateHfHeight(hf.header, canvasContentW, hf.images?.header, hfHeaderGeom(section)),
           ) -
           effectiveBottomPx(section, estimateHfHeight(hf.footer, canvasContentW, hf.images?.footer))
-        computed = sliceWithLineSplit(
+        computed = renderPresentation(presentationRenderer, {
           blocks,
-          [
+          sectionGeoms: [
             {
               contentHeight: contentH,
               forceBreak: false,
               ...(colFlow ? { cols: colFlow.cols } : {}),
             },
           ],
-          flowH,
-          factor,
-          blockMetaOf,
-        )
+          totalHeight: flowH,
+          zoomFactor: factor,
+          metaOf: blockMetaOf,
+        })
       }
       setSlices(computed)
       setPageNotes(pageFootnotesOf ? pageFootnotesOf(blocks, computed) : [])
