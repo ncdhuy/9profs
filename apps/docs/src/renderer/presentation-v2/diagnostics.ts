@@ -244,6 +244,7 @@ export interface DiagnosticParityDifference {
   path: string
   page?: number
   block?: number
+  pmPosition?: number
   pmRange?: DiagnosticRange
   coordinateSpace?: string
   expected: unknown
@@ -634,13 +635,14 @@ function categoryForPath(path: string): DiagnosticCategory {
 
 function contextOf(
   value: unknown,
-  parent: { page?: number; block?: number; pmRange?: DiagnosticRange },
+  parent: { page?: number; block?: number; pmPosition?: number; pmRange?: DiagnosticRange },
 ) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return parent
   const object = value as Record<string, unknown>
   return {
     page: typeof object.page === 'number' ? object.page : parent.page,
     block: typeof object.block === 'number' ? object.block : parent.block,
+    pmPosition: typeof object.position === 'number' ? object.position : parent.pmPosition,
     pmRange:
       object.pmRange && typeof object.pmRange === 'object'
         ? (object.pmRange as DiagnosticRange)
@@ -649,7 +651,7 @@ function contextOf(
 }
 
 function isGeometryPath(path: string): boolean {
-  return /(?:\.top|\.bottom|\.left|\.right|\.width|\.height|\.dx|\.dy|OffsetY|flowStart|flowEnd|offsetInBlock|cutYs|contentBottom|physHeight|sizePx|flowToPhysical|pageRect|flowRect|pageLocalRect)/i.test(
+  return /(?:\.top|\.bottom|\.left|\.right|\.width|\.height|\.dx|\.dy|OffsetY|flowStart|flowEnd|flowBoundary|offsetInBlock|cutYs|contentBottom|physHeight|sizePx|flowToPhysical|pageRect|flowRect|pageLocalRect|(?:^|\.)(?:start|end)$)/i.test(
     path,
   )
 }
@@ -681,7 +683,7 @@ export function compareDiagnosticParity(
     left: unknown,
     right: unknown,
     path: string,
-    parent: { page?: number; block?: number; pmRange?: DiagnosticRange },
+    parent: { page?: number; block?: number; pmPosition?: number; pmRange?: DiagnosticRange },
   ): void => {
     if (differences.length >= max) return
     const context = contextOf(right ?? left, parent)
@@ -749,6 +751,7 @@ export function formatDiagnosticDiffs(differences: readonly DiagnosticParityDiff
         `category=${difference.category}`,
         difference.page !== undefined ? `page=${difference.page}` : undefined,
         difference.block !== undefined ? `block=${difference.block}` : undefined,
+        difference.pmPosition !== undefined ? `pmPosition=${difference.pmPosition}` : undefined,
         difference.pmRange ? `pm=${difference.pmRange.from}-${difference.pmRange.to}` : undefined,
         difference.coordinateSpace ? `space=${difference.coordinateSpace}` : undefined,
       ]

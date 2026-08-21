@@ -13,6 +13,14 @@ import { installScreenTips } from '@genoffice/ui'
 
 installScreenTips()
 
+const requestedPresentationRenderer = new URLSearchParams(window.location.search).get(
+  'presentationRenderer',
+)
+if (requestedPresentationRenderer === 'v1' || requestedPresentationRenderer === 'v2') {
+  ;(globalThis as typeof globalThis & { __9profsDocsPresentationRenderer?: unknown }).__9profsDocsPresentationRenderer =
+    requestedPresentationRenderer
+}
+
 function applyTheme(theme: UiTheme): void {
   if (theme === 'system') document.documentElement.removeAttribute('data-theme')
   else document.documentElement.setAttribute('data-theme', theme)

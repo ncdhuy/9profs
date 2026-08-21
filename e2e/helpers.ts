@@ -29,6 +29,8 @@ interface LaunchOptions {
   videoDir: string
   /** absolute document path passed as argv, opened in an editor tab on launch */
   openFile?: string
+  /** test-only Docs presentation seam selector; omitted keeps V1 default */
+  presentationRenderer?: 'v1' | 'v2'
 }
 
 export interface LaunchedApp {
@@ -69,6 +71,9 @@ export async function launchShell(options: LaunchOptions): Promise<LaunchedApp> 
       ...hostEnv,
       GENOFFICE_USER_DATA: userDataDir,
       GENOFFICE_LANG: options.lang ?? 'en',
+      ...(options.presentationRenderer
+        ? { GENOFFICE_E2E_PRESENTATION_RENDERER: options.presentationRenderer }
+        : {}),
       ...(process.platform === 'linux' ? { ELECTRON_DISABLE_SANDBOX: '1' } : {}),
     },
     // Playwright's Electron screencast wedges the page CDP session on Linux

@@ -3980,13 +3980,23 @@ export function createDocsView(openPath?: string): WebContentsView {
 
   // mode=tab: the shell's tab strip owns the traffic lights / caption buttons,
   // so the ribbon must not reserve space for them
+  const requestedPresentationRenderer = process.env.GENOFFICE_E2E_PRESENTATION_RENDERER
+  const presentationQuery: Record<string, string> =
+    requestedPresentationRenderer === 'v1' || requestedPresentationRenderer === 'v2'
+      ? { presentationRenderer: requestedPresentationRenderer }
+      : {}
   if (runtime.rendererUrl) {
     // append via URL so a dev URL that already carries query params stays valid
     const devUrl = new URL(runtime.rendererUrl)
     devUrl.searchParams.set('mode', 'tab')
+    if (presentationQuery.presentationRenderer) {
+      devUrl.searchParams.set('presentationRenderer', presentationQuery.presentationRenderer)
+    }
     void view.webContents.loadURL(devUrl.toString())
   } else {
-    void view.webContents.loadFile(runtime.rendererFile, { query: { mode: 'tab' } })
+    void view.webContents.loadFile(runtime.rendererFile, {
+      query: { mode: 'tab', ...presentationQuery },
+    })
   }
   // view.webContents becomes undefined after destroy, so grab the id beforehand
   const wcId = view.webContents.id

@@ -2592,18 +2592,20 @@ export function App() {
         // Read-only post-render seam: capture actual DOM geometry only after all
         // existing gap, column, float, cell-clamp, cut, and annotation effects settle.
         const pageWrap = (pm.closest('.page-wrap') as HTMLElement) ?? pm
-        const postRender = capturePostRenderDiagnostics({
-          root: pageWrap,
-          flowRoot: pm,
-          slices,
-          zoomFactor: factor,
-          editorView: editor.view,
-          floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
-          blockOf: (el) => {
-            const block = blocks.find((item) => item.el === el || item.el?.contains(el))
-            return block?.docxIndex
-          },
-        })
+        const captureCurrentPostRender = () =>
+          capturePostRenderDiagnostics({
+            root: pageWrap,
+            flowRoot: pm,
+            slices,
+            zoomFactor: factor,
+            editorView: editor.view,
+            floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
+            blockOf: (el) => {
+              const block = blocks.find((item) => item.el === el || item.el?.contains(el))
+              return block?.docxIndex
+            },
+          })
+        const postRender = captureCurrentPostRender()
         // endnote area: Word puts it right after the last body line, not at the page
         // bottom — anchor it to the flow end measured in the final display state
         setEndnotesAreaTop(
@@ -2654,6 +2656,12 @@ export function App() {
               })),
             })),
           postRender,
+          refreshPostRender: () => {
+            const current = captureCurrentPostRender()
+            const debug = (window as unknown as { __pageDebug?: Record<string, unknown> }).__pageDebug
+            if (debug) debug.postRender = current
+            return current
+          },
           remeasureMs: performance.now() - tStart,
           measureMs: tMeasure,
           sliceMs: tSlice,

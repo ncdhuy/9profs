@@ -31,7 +31,13 @@ export function resolvePresentationRenderer(requested?: unknown): PresentationRe
       __9profsDocsPresentationRenderer?: unknown
     }
   ).__9profsDocsPresentationRenderer
-  return (requested ?? globalRenderer) === 'v2' ? 'v2' : DEFAULT_PRESENTATION_RENDERER
+  const queryRenderer =
+    typeof location === 'undefined'
+      ? undefined
+      : new URLSearchParams(location.search).get('presentationRenderer')
+  return (requested ?? globalRenderer ?? queryRenderer) === 'v2'
+    ? 'v2'
+    : DEFAULT_PRESENTATION_RENDERER
 }
 
 export function renderPresentation(
