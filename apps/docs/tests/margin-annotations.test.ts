@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { selectionAnchorRectFromGeometry } from '../src/renderer/editor/margin-annotations'
+import type { EditorView } from '@tiptap/pm/view'
+import {
+  revisionChangeBarSegments,
+  revisionGeometryRangesOf,
+  selectionAnchorRectFromGeometry,
+  syncMarginAnnotations,
+} from '../src/renderer/editor/margin-annotations'
 import type { PresentationGeometry } from '../src/renderer/presentation-v2/geometry'
 
 const rootRect = { top: 100, left: 50 }
@@ -24,6 +30,125 @@ function geometryWith(selection: unknown, position: unknown): PresentationGeomet
 }
 
 describe('margin annotation geometry readback', () => {
+  it('maps visible revision ranges through multi-rect geometry without bridging a page gap', () => {
+    const result = revisionChangeBarSegments(
+      [{ from: 10, to: 30 }],
+      geometryWith(
+        {
+          status: 'resolved',
+          rects: [
+            { documentRect: documentRect(20, 8, 30, 14) },
+            { documentRect: documentRect(44, 8, 30, 14) },
+            { documentRect: documentRect(140, 8, 30, 14) },
+          ],
+        },
+        { status: 'unavailable' },
+      ),
+      2,
+    )
+
+    expect(result).toEqual([
+      { top: 10, bottom: 17 },
+      { top: 22, bottom: 29 },
+      { top: 70, bottom: 77 },
+    ])
+  })
+
+  it('uses line geometry for a collapsed visible revision decoration', () => {
+    const result = revisionChangeBarSegments(
+      [{ from: 7, to: 7 }],
+      geometryWith(
+        { status: 'empty', rects: [] },
+        { status: 'resolved', documentRect: documentRect(30, 12, 1, 16) },
+      ),
+      1,
+    )
+
+    expect(result).toEqual([{ top: 30, bottom: 46 }])
+  })
+
+  it('skips a non-collapsed revision range when geometry is unavailable', () => {
+    const result = revisionChangeBarSegments(
+      [{ from: 15, to: 24 }],
+      geometryWith({ status: 'unavailable', rects: [] }, { status: 'unavailable' }),
+      1,
+    )
+
+    expect(result).toEqual([])
+  })
+
+  it('collects visible inline and paragraph revision decorations from PM ranges', () => {
+    const view = {
+      state: {
+        doc: {
+          descendants(callback: (node: unknown, pos: number) => boolean) {
+            callback(
+              {
+                isText: true,
+                nodeSize: 5,
+                marks: [{ type: { name: 'ins' } }],
+                attrs: {},
+              },
+              3,
+            )
+            callback(
+              {
+                isText: false,
+                nodeSize: 12,
+                marks: [],
+                attrs: { pPrChange: 'format' },
+              },
+              20,
+            )
+            callback(
+              {
+                isText: false,
+                nodeSize: 10,
+                marks: [],
+                attrs: { moveRevision: 'to' },
+              },
+              40,
+            )
+            return true
+          },
+        },
+      },
+    } as unknown as EditorView
+
+    expect(revisionGeometryRangesOf(view)).toEqual([
+      { from: 3, to: 8 },
+      { from: 21, to: 31 },
+      { from: 41, to: 49 },
+    ])
+  })
+
+  it('uses the DOM bar fallback only when PresentationGeometry is unavailable', () => {
+    const wrap = document.createElement('div')
+    const pm = document.createElement('div')
+    const revision = document.createElement('span')
+    revision.className = 'doc-ins'
+    pm.appendChild(revision)
+    wrap.appendChild(pm)
+    document.body.appendChild(wrap)
+
+    Object.defineProperty(wrap, 'getBoundingClientRect', {
+      value: () => ({ top: 100, left: 50, right: 450, bottom: 500, height: 400 }),
+    })
+    Object.defineProperty(pm, 'getBoundingClientRect', {
+      value: () => ({ top: 100, left: 70, right: 430, bottom: 500, height: 400 }),
+    })
+    Object.defineProperty(revision, 'getClientRects', {
+      value: () => [{ top: 110, bottom: 126, height: 16 }],
+    })
+
+    syncMarginAnnotations(wrap, pm, [], 2)
+
+    const bar = wrap.querySelector('.change-bar') as HTMLElement | null
+    expect(bar?.style.top).toBe('5px')
+    expect(bar?.style.height).toBe('8px')
+    wrap.remove()
+  })
+
   it('keeps multi-rect selections intact and anchors existing bubbles to first line', () => {
     const result = selectionAnchorRectFromGeometry(
       geometryWith(

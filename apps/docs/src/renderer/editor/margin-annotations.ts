@@ -33,7 +33,8 @@ const REV_SELECTOR =
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
-type Seg = { top: number; bottom: number }
+export type MarginAnnotationSegment = { top: number; bottom: number }
+type Seg = MarginAnnotationSegment
 
 export interface MarginAnnotationAnchorRect {
   top: number
@@ -52,6 +53,65 @@ function mergeSegs(segs: Seg[]): Seg[] {
     else out.push({ ...s })
   }
   return out
+}
+
+export interface RevisionGeometryRange {
+  from: number
+  to: number
+}
+
+/** PM ranges corresponding to the visible revision decorations used by REV_SELECTOR. */
+export function revisionGeometryRangesOf(view: EditorView): RevisionGeometryRange[] {
+  const ranges: RevisionGeometryRange[] = []
+  view.state.doc.descendants((node, pos) => {
+    if (node.isText) {
+      if (node.marks.some((mark) => ['ins', 'del', 'rprChange'].includes(mark.type.name))) {
+        ranges.push({ from: pos, to: pos + node.nodeSize })
+      }
+      return true
+    }
+    if (node.attrs?.pPrChange || node.attrs?.moveRevision) {
+      ranges.push({ from: pos + 1, to: pos + node.nodeSize - 1 })
+    }
+    return true
+  })
+  return ranges
+}
+
+/**
+ * Read visible revision segments from PresentationGeometry. The caller still
+ * applies the shared margin segment aggregation with hidden revision anchors.
+ */
+export function revisionChangeBarSegments(
+  ranges: readonly RevisionGeometryRange[],
+  geometry: PresentationGeometry,
+  zoomFactor: number,
+): MarginAnnotationSegment[] {
+  const segs: Seg[] = []
+  for (const range of ranges) {
+    const selection = geometry.selectionToGeometry(range.from, range.to)
+    const rects = selection.status === 'resolved' ? (selection.rects ?? []) : []
+    for (const rect of rects) {
+      if (rect.documentRect.height > 0) {
+        segs.push({
+          top: rect.documentRect.top / zoomFactor,
+          bottom: rect.documentRect.bottom / zoomFactor,
+        })
+      }
+    }
+    if (range.from !== range.to || rects.length > 0) continue
+
+    // A collapsed paragraph decoration has no selection rect; its line geometry
+    // is the semantically correct readback for the visible change bar.
+    const position = geometry.positionToGeometry(range.from, 1)
+    if (position.status === 'resolved' && position.documentRect?.height) {
+      segs.push({
+        top: position.documentRect.top / zoomFactor,
+        bottom: position.documentRect.bottom / zoomFactor,
+      })
+    }
+  }
+  return mergeSegs(segs)
 }
 
 function flashEls(targets: HTMLElement[]): void {
@@ -333,10 +393,16 @@ export function syncMarginAnnotations(
   // change bars only in All Markup view (Word hides them in No Markup / Original)
   const segs: Seg[] = []
   if (!wrap.closest('.rev-display-none, .rev-display-original')) {
-    for (const el of pm.querySelectorAll<HTMLElement>(REV_SELECTOR)) {
-      for (const r of el.getClientRects()) {
-        if (r.height > 0)
-          segs.push({ top: (r.top - wrapRect.top) / f, bottom: (r.bottom - wrapRect.top) / f })
+    if (geometry && view) {
+      segs.push(...revisionChangeBarSegments(revisionGeometryRangesOf(view), geometry, f))
+    } else if (!geometry) {
+      // Compatibility fallback only while the presentation geometry source is
+      // unavailable. Supported PM ranges never combine this path with Geometry.
+      for (const el of pm.querySelectorAll<HTMLElement>(REV_SELECTOR)) {
+        for (const r of el.getClientRects()) {
+          if (r.height > 0)
+            segs.push({ top: (r.top - wrapRect.top) / f, bottom: (r.bottom - wrapRect.top) / f })
+        }
       }
     }
   }
