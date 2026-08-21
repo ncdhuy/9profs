@@ -243,8 +243,10 @@ function revGroupsOf(view: EditorView): RevItem[] {
   return groups
 }
 
-/** Nearest on-screen box before a hidden position: previous visible sibling, walking up. */
-function visibleRectNear(el: HTMLElement | null, pm: HTMLElement): DOMRect | null {
+type NearbyRect = { rect: DOMRect; direction: 'previous' | 'next' }
+
+/** Nearest on-screen box around a hidden position, walking local siblings first. */
+function visibleRectNear(el: HTMLElement | null, pm: HTMLElement): NearbyRect | null {
   let cur: HTMLElement | null = el
   while (cur && cur !== pm) {
     for (
@@ -253,7 +255,20 @@ function visibleRectNear(el: HTMLElement | null, pm: HTMLElement): DOMRect | nul
       sib = sib.previousElementSibling as HTMLElement | null
     ) {
       const rects = sib.getClientRects()
-      if (rects.length > 0) return rects[rects.length - 1]
+      if (rects.length > 0) return { rect: rects[rects.length - 1], direction: 'previous' }
+    }
+    cur = cur.parentElement
+  }
+
+  cur = el
+  while (cur && cur !== pm) {
+    for (
+      let sib = cur.nextElementSibling as HTMLElement | null;
+      sib;
+      sib = sib.nextElementSibling as HTMLElement | null
+    ) {
+      const rects = sib.getClientRects()
+      if (rects.length > 0) return { rect: rects[0], direction: 'next' }
     }
     cur = cur.parentElement
   }
@@ -341,8 +356,12 @@ function anchorPointFor(
     const clamped = Math.max(0, Math.min(from, view.state.doc.content.size))
     const { node } = view.domAtPos(clamped)
     const el = (node instanceof HTMLElement ? node : node.parentElement) as HTMLElement | null
-    const rect = visibleRectNear(el, pm)
-    if (rect) return { top: rect.bottom, bottom: rect.bottom, left: rect.right }
+    const nearby = visibleRectNear(el, pm)
+    if (nearby) {
+      const top = nearby.direction === 'previous' ? nearby.rect.bottom : nearby.rect.top
+      const left = nearby.direction === 'previous' ? nearby.rect.right : nearby.rect.left
+      return { top, bottom: top, left }
+    }
   } catch {
     /* fall through */
   }

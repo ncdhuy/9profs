@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { Editor } from '@tiptap/core'
 import type { EditorView } from '@tiptap/pm/view'
+import { editorExtensions } from '../src/renderer/editor/extensions'
 import {
   revisionChangeBarSegments,
   revisionGeometryRangesOf,
@@ -29,7 +31,88 @@ function geometryWith(selection: unknown, position: unknown): PresentationGeomet
   } as unknown as PresentationGeometry
 }
 
+function viewportBox(top: number, left: number, width: number, height: number) {
+  return {
+    top,
+    left,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  } as DOMRect
+}
+
 describe('margin annotation geometry readback', () => {
+  it('shows one deleted paragraph balloon when consecutive hidden paragraphs start document', () => {
+    const pm = document.createElement('div')
+    const wrap = document.createElement('div')
+    wrap.className = 'page-wrap rev-balloon'
+    wrap.appendChild(pm)
+    document.body.appendChild(wrap)
+    const editor = new Editor({
+      element: pm,
+      extensions: editorExtensions,
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'docParagraph',
+            attrs: { docxIndex: null, paraMarkDel: '{"author":"Bob"}' },
+            content: [
+              {
+                type: 'text',
+                text: 'deleted',
+                marks: [{ type: 'del', attrs: { author: 'Bob' } }],
+              },
+            ],
+          },
+          {
+            type: 'docParagraph',
+            attrs: { docxIndex: null, paraMarkDel: '{"author":"Bob"}' },
+            content: [
+              {
+                type: 'text',
+                text: 'deleted again',
+                marks: [{ type: 'del', attrs: { author: 'Bob' } }],
+              },
+            ],
+          },
+          {
+            type: 'docParagraph',
+            attrs: { docxIndex: null },
+            content: [{ type: 'text', text: 'visible next paragraph' }],
+          },
+        ],
+      },
+    })
+    const nextParagraph = pm.querySelectorAll('p')[2] as HTMLElement
+    Object.defineProperty(wrap, 'getBoundingClientRect', {
+      value: () => viewportBox(0, 0, 600, 1000),
+    })
+    Object.defineProperty(pm, 'getBoundingClientRect', {
+      value: () => viewportBox(0, 0, 400, 1000),
+    })
+    Object.defineProperty(nextParagraph, 'getClientRects', {
+      value: () => [viewportBox(40, 80, 200, 16)],
+    })
+
+    syncMarginAnnotations(
+      wrap,
+      pm,
+      [],
+      1,
+      undefined,
+      editor.view,
+      geometryWith({ status: 'unavailable', rects: [] }, { status: 'unavailable' }),
+    )
+
+    const bubble = wrap.querySelector('.rev-bubble') as HTMLElement | null
+    expect(bubble).not.toBeNull()
+    expect(bubble?.style.top).toBe('40px')
+    editor.destroy()
+    wrap.remove()
+  })
+
   it('maps visible revision ranges through multi-rect geometry without bridging a page gap', () => {
     const result = revisionChangeBarSegments(
       [{ from: 10, to: 30 }],
