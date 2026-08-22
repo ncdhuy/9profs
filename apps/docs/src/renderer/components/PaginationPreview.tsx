@@ -33,6 +33,7 @@ import { toRoman } from '../note-format'
 import { useI18n } from '../i18n/locale'
 import { hfFloatPagePos } from '../editor/hf-dom'
 import {
+  headerFooterPagePlacement,
   renderPresentationSnapshot,
   type PresentationLayoutSnapshot,
   type PresentationRenderer,
@@ -295,15 +296,24 @@ export function PaginationPreview({
           totalHeight: flowH,
           zoomFactor: factor,
           metaOf: blockMetaOf,
+          sectionHfHeights: hfHs,
         })
       } else {
+        const sectionHfHeights: SectionHfHeights[] = [
+          {
+            headerPx: estimateHfHeight(
+              hf.header,
+              canvasContentW,
+              hf.images?.header,
+              hfHeaderGeom(section),
+            ),
+            footerPx: estimateHfHeight(hf.footer, canvasContentW, hf.images?.footer),
+          },
+        ]
         const contentH =
           twipsToPx(section.pageHeight) -
-          effectiveTopPx(
-            section,
-            estimateHfHeight(hf.header, canvasContentW, hf.images?.header, hfHeaderGeom(section)),
-          ) -
-          effectiveBottomPx(section, estimateHfHeight(hf.footer, canvasContentW, hf.images?.footer))
+          effectiveTopPx(section, sectionHfHeights[0].headerPx) -
+          effectiveBottomPx(section, sectionHfHeights[0].footerPx)
         computed = renderPresentationSnapshot(presentationRenderer, {
           blocks,
           sectionGeoms: [
@@ -316,6 +326,7 @@ export function PaginationPreview({
           totalHeight: flowH,
           zoomFactor: factor,
           metaOf: blockMetaOf,
+          sectionHfHeights,
         })
       }
       setLayout(computed)
@@ -477,19 +488,24 @@ export function PaginationPreview({
         {slices.map((slice, i) => {
           const parts = hfFor(i)
           const s = settingsOf(slice)
-          const pageBox = sectionPageBox(s)
+          const pagePlacement = headerFooterPagePlacement(layout!, i, s, {
+            headerPx: estimateHfHeight(
+              parts.header,
+              sectionPageBox(s).contentWidth,
+              parts.headerImages,
+              hfHeaderGeom(s),
+            ),
+            footerPx: estimateHfHeight(
+              parts.footer,
+              sectionPageBox(s).contentWidth,
+              parts.footerImages,
+            ),
+          })
+          if (!pagePlacement) return null
+          const { pageBox, marginTop: mTop, marginBottom: mBottom } = pagePlacement
           const pageW = pageBox.width
           const pageH = pageBox.height
           const secContentW = pageBox.contentWidth
-          // effective margins after this page's variant header/footer push-down (an over-tall header pushes the body down)
-          const mTop = effectiveTopPx(
-            s,
-            estimateHfHeight(parts.header, secContentW, parts.headerImages, hfHeaderGeom(s)),
-          )
-          const mBottom = effectiveBottomPx(
-            s,
-            estimateHfHeight(parts.footer, secContentW, parts.footerImages),
-          )
           const contentH = pageH - mTop - mBottom
           // page vertical alignment (sectPr w:vAlign): content of non-full pages shifts down as a whole
           const usedH = Math.min(slice.end - slice.start, contentH)
@@ -514,9 +530,9 @@ export function PaginationPreview({
                   '--section-content-w': `${secContentW}px`,
                   '--header-dist': `${pageBox.headerDist}px`,
                   '--footer-dist': `${pageBox.footerDist}px`,
-                  '--pv-mr': `${twipsToPx(s.marginRight)}px`,
-                  '--pv-ml': `${twipsToPx(s.marginLeft)}px`,
-                  padding: `${mTop}px ${twipsToPx(s.marginRight)}px ${mBottom}px ${twipsToPx(s.marginLeft)}px`,
+                  '--pv-mr': `${pageBox.marginRight}px`,
+                  '--pv-ml': `${pageBox.marginLeft}px`,
+                  padding: `${mTop}px ${pageBox.marginRight}px ${mBottom}px ${pageBox.marginLeft}px`,
                 } as React.CSSProperties
               }
             >
@@ -530,16 +546,7 @@ export function PaginationPreview({
                 .map((img, k) => {
                   // picture watermark (anchored image in the header): drawn once
                   // per page behind the body (negative z-index; .pv-page isolates)
-                  const pos = hfFloatPagePos(img, {
-                    pageW,
-                    pageH,
-                    marginLeft: twipsToPx(s.marginLeft),
-                    marginRight: twipsToPx(s.marginRight),
-                    marginTop: mTop,
-                    marginBottom: mBottom,
-                    headerDist: pageBox.headerDist,
-                    sectMarginTop: twipsToPx(s.marginTop),
-                  })
+                  const pos = hfFloatPagePos(img, pagePlacement.floatBox)
                   return (
                     <img
                       key={`wm${k}`}

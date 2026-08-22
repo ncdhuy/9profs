@@ -1,11 +1,17 @@
+import type { SectionSettings } from '@genoffice/docx-engine'
 import {
+  effectiveBottomPx,
+  effectiveTopPx,
+  sectionPageBox,
   sliceWithLineSplit,
   type BlockBox,
   type BlockMetaOf,
   type FloatBox,
   type PageSlice,
   type SectionGeom,
+  type SectionHfHeights,
 } from '../pagination'
+import type { HfFloatBox } from '../editor/hf-dom'
 
 export * from './diagnostics'
 export * from './geometry'
@@ -24,6 +30,8 @@ export interface PresentationInput {
   metaOf?: BlockMetaOf
   /** Existing measured body floating boxes; omitted by consumers without live DOM measurement. */
   floats?: FloatBox[]
+  /** Existing measured default-variant header/footer heights used for body push-down. */
+  sectionHfHeights?: SectionHfHeights[]
 }
 
 /**
@@ -39,6 +47,56 @@ export interface PresentationLayoutSnapshot {
   readonly totalHeight: number
   readonly zoomFactor: number
   readonly floats: FloatBox[]
+  /** Existing derived header/footer measurements, indexed by page section. */
+  readonly sectionHfHeights: SectionHfHeights[]
+}
+
+export interface HeaderFooterPagePlacement {
+  readonly pageIndex: number
+  readonly sectionIndex: number
+  readonly pageBox: ReturnType<typeof sectionPageBox>
+  readonly marginTop: number
+  readonly marginBottom: number
+  readonly floatBox: HfFloatBox
+}
+
+const EMPTY_HF_HEIGHTS: SectionHfHeights = { headerPx: 0, footerPx: 0 }
+
+/**
+ * Derive physical header/footer placement from the shared page result plus
+ * section configuration. Content, variants, and section references remain
+ * outside the snapshot; this helper only exposes render-time placement facts.
+ */
+export function headerFooterPagePlacement(
+  snapshot: Pick<PresentationLayoutSnapshot, 'pages' | 'sectionHfHeights'>,
+  pageIndex: number,
+  settings: SectionSettings,
+  variantHeights?: SectionHfHeights,
+  fallbackHeights: SectionHfHeights = EMPTY_HF_HEIGHTS,
+): HeaderFooterPagePlacement | null {
+  const page = snapshot.pages[pageIndex]
+  if (!page) return null
+  const hf = variantHeights ?? snapshot.sectionHfHeights[page.section] ?? fallbackHeights
+  const pageBox = sectionPageBox(settings)
+  const marginTop = effectiveTopPx(settings, hf.headerPx)
+  const marginBottom = effectiveBottomPx(settings, hf.footerPx)
+  return {
+    pageIndex,
+    sectionIndex: page.section,
+    pageBox,
+    marginTop,
+    marginBottom,
+    floatBox: {
+      pageW: pageBox.width,
+      pageH: pageBox.height,
+      marginLeft: pageBox.marginLeft,
+      marginRight: pageBox.marginRight,
+      marginTop,
+      marginBottom,
+      headerDist: pageBox.headerDist,
+      sectMarginTop: pageBox.marginTop,
+    },
+  }
 }
 
 /**
@@ -81,6 +139,7 @@ export function renderPresentationSnapshot(
     totalHeight: input.totalHeight,
     zoomFactor: input.zoomFactor,
     floats: input.floats ?? [],
+    sectionHfHeights: input.sectionHfHeights ?? [],
   }
 }
 

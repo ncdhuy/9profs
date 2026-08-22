@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { blocksToPmDoc, pmDocToSavePlan, type PmNode } from '../src/renderer/editor/convert'
 import { isDocDirty, type DocDirtyState } from '../src/renderer/doc-dirty'
 import {
+  headerFooterPagePlacement,
   renderPresentation,
   renderPresentationSnapshot,
   renderPresentationV1,
@@ -12,13 +13,15 @@ import {
   type PresentationRenderer,
 } from '../src/renderer/presentation-v2'
 import { parseDocx, readSections, saveDocx, type Block } from '@genoffice/docx-engine'
-import type { BlockBox, FloatBox, PageSlice } from '../src/renderer/pagination'
+import type { BlockBox, FloatBox, PageSlice, SectionHfHeights } from '../src/renderer/pagination'
+import type { SectionSettings } from '@genoffice/docx-engine'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SIMPLE_FIXTURE = join(__dirname, 'pagination-corpus/docx/fixture-simple.docx')
 
 function presentationInput() {
   const floats: FloatBox[] = [{ el: {} as HTMLElement, top: 900, height: 120 }]
+  const sectionHfHeights: SectionHfHeights[] = [{ headerPx: 20, footerPx: 30 }]
   const blocks: BlockBox[] = [
     {
       top: 0,
@@ -45,6 +48,7 @@ function presentationInput() {
     totalHeight: 1340,
     zoomFactor: 1,
     floats,
+    sectionHfHeights,
   }
 }
 
@@ -134,10 +138,41 @@ describe('DOCX presentation-v2 seam', () => {
     expect(v1.sectionGeoms).toBe(input.sectionGeoms)
     expect(v1.floats).toBe(input.floats)
     expect(v2.floats).toBe(input.floats)
+    expect(v1.sectionHfHeights).toBe(input.sectionHfHeights)
+    expect(v2.sectionHfHeights).toBe(input.sectionHfHeights)
     expect(v1.blocks.map((block) => block.docxIndex)).toEqual([3, 7])
-    expect(v1.pages.every((page) => v1.sectionGeoms[page.section] === input.sectionGeoms[page.section])).toBe(
-      true,
-    )
+    expect(
+      v1.pages.every((page) => v1.sectionGeoms[page.section] === input.sectionGeoms[page.section]),
+    ).toBe(true)
+  })
+
+  it('derives header/footer page placement from snapshot pages and measured heights', () => {
+    const input = presentationInput()
+    const snapshot = renderPresentationSnapshot('v1', input)
+    const v2Snapshot = renderPresentationSnapshot('v2', input)
+    const settings = {
+      pageWidth: 12240,
+      pageHeight: 15840,
+      marginLeft: 1440,
+      marginRight: 1440,
+      marginTop: 720,
+      marginBottom: 720,
+      headerDist: 720,
+      footerDist: 720,
+    } as SectionSettings
+
+    const placement = headerFooterPagePlacement(snapshot, 0, settings)
+    const v2Placement = headerFooterPagePlacement(v2Snapshot, 0, settings)
+
+    expect(placement).toMatchObject({
+      pageIndex: 0,
+      sectionIndex: 0,
+      marginTop: 68,
+      marginBottom: 78,
+      pageBox: { width: 816, height: 1056, contentWidth: 624, marginLeft: 96, marginRight: 96 },
+      floatBox: { pageW: 816, pageH: 1056, marginTop: 68, marginBottom: 78 },
+    })
+    expect(v2Placement).toEqual(placement)
   })
 
   it('keeps page-gap boundary inputs equivalent through the shared snapshot', () => {

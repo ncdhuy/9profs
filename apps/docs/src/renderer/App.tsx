@@ -49,6 +49,7 @@ import {
   captureGeometryProbeDiagnostics,
   capturePostRenderDiagnostics,
   createPresentationGeometry,
+  headerFooterPagePlacement,
   renderPresentation,
   renderPresentationSnapshot,
   resolvePresentationRenderer,
@@ -108,12 +109,7 @@ import {
   clearMarginAnnotations,
   syncMarginAnnotations,
 } from './editor/margin-annotations'
-import {
-  hfHasVisibleContent,
-  makeGapHfEl,
-  makeHfFloatImgEl,
-  type HfFloatBox,
-} from './editor/hf-dom'
+import { hfHasVisibleContent, makeGapHfEl, makeHfFloatImgEl } from './editor/hf-dom'
 import {
   estimateFootnoteHeight,
   estimateHfHeight,
@@ -2005,16 +2001,17 @@ export function App() {
           floats,
         )
         const flowH = flowWithFloats ?? withEndnotes?.totalHeight ?? totalHeight
-        const hfHs = secList ? hfHeightsOf(secList) : null
+        const sectionHfHeights = secList ? hfHeightsOf(secList) : [singleHfPx]
         const t1 = performance.now()
         const snapshot = secList
           ? renderPresentationSnapshot(presentationRenderer, {
               blocks,
-              sectionGeoms: colGeomsFor(sectionGeoms(secList, hfHs!)),
+              sectionGeoms: colGeomsFor(sectionGeoms(secList, sectionHfHeights)),
               totalHeight: flowH,
               zoomFactor: factor,
               metaOf: blockMetaOf,
               floats,
+              sectionHfHeights,
             })
           : renderPresentationSnapshot(presentationRenderer, {
               blocks,
@@ -2023,11 +2020,12 @@ export function App() {
               zoomFactor: factor,
               metaOf: blockMetaOf,
               floats,
+              sectionHfHeights,
             })
         tSlice = performance.now() - t1
-        return { snapshot, secList, hfHs }
+        return { snapshot, secList }
       })
-      const { snapshot, secList, hfHs } = measured
+      const { snapshot, secList } = measured
       // Page-gap presentation consumes one coherent layout result; DOM decoration
       // remains the responsibility of setPageGaps below.
       const { blocks } = snapshot
@@ -2134,20 +2132,10 @@ export function App() {
               ...split(rId ? parsed.hfParts?.[rId]?.images : undefined),
             }
           }
-          /** page geometry a page's floating header images position against */
-          const floatBoxOf = (pageIdx: number): HfFloatBox => {
+          /** page placement for a page's header/footer visuals */
+          const pagePlacementOf = (pageIdx: number) => {
             const s = secList?.[slices[pageIdx].section]?.settings ?? section
-            const hfH = hfHs?.[slices[pageIdx].section] ?? singleHfPx
-            return {
-              pageW: twipsToPx(s.pageWidth),
-              pageH: twipsToPx(s.pageHeight),
-              marginLeft: twipsToPx(s.marginLeft),
-              marginRight: twipsToPx(s.marginRight),
-              marginTop: effectiveTopPx(s, hfH.headerPx),
-              marginBottom: effectiveBottomPx(s, hfH.footerPx),
-              headerDist: twipsToPx(s.headerDist ?? 720),
-              sectMarginTop: twipsToPx(s.marginTop),
-            }
+            return headerFooterPagePlacement(snapshot, pageIdx, s, undefined, singleHfPx)
           }
           const pageNoTextOf = (pageIdx: number) =>
             formatPageNumber(
@@ -2179,15 +2167,14 @@ export function App() {
             if (slice.start === slices[k].start && slices[k].end > slices[k].start) return
             // gap = previous page's (its section's) bottom margin + inter-page band + this page's (its section's) top margin
             const prevSec = secList?.[slices[k].section]?.settings ?? section
-            const nextSec = secList?.[slice.section]?.settings ?? section
-            // effective margins after header/footer push-down (an over-tall header pushes the body down)
-            const nextHf = hfHs?.[slice.section] ?? singleHfPx
-            const prevHf = hfHs?.[slices[k].section] ?? singleHfPx
+            const prevPlacement = pagePlacementOf(k)
+            const nextPlacement = pagePlacementOf(k + 1)
+            if (!prevPlacement || !nextPlacement) return
             const metrics = {
-              marginTop: effectiveTopPx(nextSec, nextHf.headerPx),
-              marginBottom: effectiveBottomPx(prevSec, prevHf.footerPx),
-              marginLeft: twipsToPx(nextSec.marginLeft),
-              marginRight: twipsToPx(nextSec.marginRight),
+              marginTop: nextPlacement.marginTop,
+              marginBottom: prevPlacement.marginBottom,
+              marginLeft: nextPlacement.pageBox.marginLeft,
+              marginRight: nextPlacement.pageBox.marginRight,
             }
             // a page ended early (explicit break / section break / keepNext) leaves unused
             // content height; pad the gap so the canvas paints the full paper height and the
@@ -2195,9 +2182,7 @@ export function App() {
             // height with the browser compressing the flow, skip; mixed-column pages use the
             // engine's physical height and pull the gap up over the vacated stacked space.
             const prevContentH =
-              twipsToPx(prevSec.pageHeight) -
-              effectiveTopPx(prevSec, prevHf.headerPx) -
-              metrics.marginBottom
+              twipsToPx(prevSec.pageHeight) - prevPlacement.marginTop - metrics.marginBottom
             const used = slices[k].end - slices[k].start + (slices[k].repeatHeader?.height ?? 0)
             const items = pageNotes[k] ?? []
             const fnH =
@@ -2219,7 +2204,7 @@ export function App() {
             const gapHeader = pageHfOf(k + 1, 'header')
             const hfEls: HTMLElement[] = []
             if (hfHasVisibleContent(gapFooter.value, gapFooter.images)) {
-              const box = sectionPageBox(prevSec)
+              const box = prevPlacement.pageBox
               const el = makeGapHfEl({
                 kind: 'footer',
                 value: gapFooter.value ?? { text: '' },
@@ -2233,7 +2218,7 @@ export function App() {
               hfEls.push(el)
             }
             if (hfHasVisibleContent(gapHeader.value, gapHeader.images)) {
-              const box = sectionPageBox(nextSec)
+              const box = nextPlacement.pageBox
               const el = makeGapHfEl({
                 kind: 'header',
                 value: gapHeader.value ?? { text: '' },
@@ -2250,7 +2235,7 @@ export function App() {
             // positioned from that page's origin (the gap's bottom edge is marginTop
             // above it), like PaginationPreview's per-page watermark layer
             for (const img of gapHeader.floats) {
-              hfEls.push(makeHfFloatImgEl(img, floatBoxOf(k + 1), 'gap'))
+              hfEls.push(makeHfFloatImgEl(img, nextPlacement.floatBox, 'gap'))
             }
             const hfProps =
               hfEls.length > 0
@@ -2512,11 +2497,11 @@ export function App() {
           // dedicated zero-height widget at the document start
           if (slices.length > 0) {
             const floats = pageHfOf(0, 'header').floats
-            if (floats.length > 0) {
-              const box = floatBoxOf(0)
+            const placement = pagePlacementOf(0)
+            if (floats.length > 0 && placement) {
               firstPageFloats = {
-                els: floats.map((img) => makeHfFloatImgEl(img, box, 'lead')),
-                key: `${floatSig(floats)}·${Math.round(box.pageW)}x${Math.round(box.pageH)}·${Math.round(box.marginTop)}·${Math.round(box.sectMarginTop)}`,
+                els: floats.map((img) => makeHfFloatImgEl(img, placement.floatBox, 'lead')),
+                key: `${floatSig(floats)}·${Math.round(placement.floatBox.pageW)}x${Math.round(placement.floatBox.pageH)}·${Math.round(placement.floatBox.marginTop)}·${Math.round(placement.floatBox.sectMarginTop)}`,
               }
             }
           }
@@ -2562,7 +2547,7 @@ export function App() {
             : []
         // sectPr w:vAlign pages ride the same visual-translate channel
         const vaSpecs =
-          viewMode === 'print' && !readMode && secList && hfHs
+          viewMode === 'print' && !readMode && secList
             ? vAlignShiftSpecs(snapshot.blocks, snapshot.pages, secList, snapshot.sectionGeoms)
             : []
         setColumnLayout(editor.view, [...colSpecs, ...vaSpecs])
@@ -2625,10 +2610,11 @@ export function App() {
         if (lastGapEl && slices.length > 1) {
           const last = slices[slices.length - 1]
           const lastSec = secList?.[last.section]?.settings ?? section
-          const lastHf = hfHs?.[last.section] ?? singleHfPx
+          const lastPlacement = headerFooterPagePlacement(snapshot, slices.length - 1, lastSec)
+          if (!lastPlacement) return
           const paperTop =
             (lastGapEl.getBoundingClientRect().bottom - pm.getBoundingClientRect().top) / factor -
-            effectiveTopPx(lastSec, lastHf.headerPx)
+            lastPlacement.marginTop
           pm.style.minHeight = `${Math.round(paperTop + twipsToPx(lastSec.pageHeight))}px`
         } else {
           pm.style.removeProperty('min-height')
@@ -2671,9 +2657,7 @@ export function App() {
             cols: sectionColumns(s),
             first: s.firstBlockIndex,
             last: s.lastBlockIndex,
-            contentH: hfHs
-              ? Math.round(sectionGeoms(secList, hfHs)[i]?.contentHeight ?? -1)
-              : undefined,
+            contentH: Math.round(snapshot.sectionGeoms[i]?.contentHeight ?? -1),
           })),
           blocks: blocks.map((b) => ({
             top: b.top,

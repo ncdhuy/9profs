@@ -252,6 +252,10 @@ export function sectionPageBox(set: SectionSettings): {
   width: number
   height: number
   contentWidth: number
+  marginLeft: number
+  marginRight: number
+  marginTop: number
+  marginBottom: number
   headerDist: number
   footerDist: number
 } {
@@ -259,6 +263,10 @@ export function sectionPageBox(set: SectionSettings): {
     width: twipsToPx(set.pageWidth),
     height: twipsToPx(set.pageHeight),
     contentWidth: twipsToPx(set.pageWidth - set.marginLeft - set.marginRight),
+    marginLeft: twipsToPx(set.marginLeft),
+    marginRight: twipsToPx(set.marginRight),
+    marginTop: twipsToPx(set.marginTop),
+    marginBottom: twipsToPx(set.marginBottom),
     headerDist: twipsToPx(set.headerDist ?? 720),
     footerDist: twipsToPx(set.footerDist ?? 720),
   }
