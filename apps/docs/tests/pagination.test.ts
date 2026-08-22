@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SectionInfo } from '@genoffice/docx-engine'
+import type { PresentationLayoutSnapshot } from '../src/renderer/presentation-v2'
 import {
   appendEndnotesBlock,
   assignSections,
@@ -1818,7 +1819,15 @@ describe('computeSectionedSlicesF2 — multi-column flow', () => {
       sec({ columns: 3, colSpace: 720 }, { startType: 'continuous' }),
       sec({}, { startType: 'continuous' }),
     ]
-    const specs = columnLayoutSpecs(blocks, slices, secs)
+    const snapshot: PresentationLayoutSnapshot = {
+      renderer: 'v1',
+      blocks,
+      pages: slices,
+      sectionGeoms: [],
+      totalHeight: 110,
+      zoomFactor: 1,
+    }
+    const specs = columnLayoutSpecs(snapshot.blocks, snapshot.pages, secs)
     const g = sectionColGeom(secs[1])
     expect(specs).toHaveLength(4)
     expect(specs[0]).toMatchObject({ el: els[0], widthPx: g.colWidthPx, dx: 0, dy: 0 })

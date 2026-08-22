@@ -2007,7 +2007,7 @@ export function App() {
         const flowH = flowWithFloats ?? withEndnotes?.totalHeight ?? totalHeight
         const hfHs = secList ? hfHeightsOf(secList) : null
         const t1 = performance.now()
-        const layout = secList
+        const snapshot = secList
           ? renderPresentationSnapshot(presentationRenderer, {
               blocks,
               sectionGeoms: colGeomsFor(sectionGeoms(secList, hfHs!)),
@@ -2023,13 +2023,13 @@ export function App() {
               metaOf: blockMetaOf,
             })
         tSlice = performance.now() - t1
-        return { layout, secList, hfHs, floats }
+        return { snapshot, secList, hfHs, floats }
       })
-      const { layout, secList, hfHs, floats } = measured
+      const { snapshot, secList, hfHs, floats } = measured
       // Page-gap presentation consumes one coherent layout result; DOM decoration
       // remains the responsibility of setPageGaps below.
-      const { blocks } = layout
-      slices = layout.pages
+      const { blocks } = snapshot
+      slices = snapshot.pages
       // document-end footer shows the last page's displayed number, not the physical count
       if (slices.length > 0) {
         const lastIdx = slices.length - 1
@@ -2556,12 +2556,12 @@ export function App() {
         // mixed-column canvas: paint the engine's regions via per-block width/translate decorations
         const colSpecs =
           viewMode === 'print' && !readMode && colMode === 'mixed' && secList
-            ? columnLayoutSpecs(blocks, slices, secList)
+            ? columnLayoutSpecs(snapshot.blocks, snapshot.pages, secList)
             : []
         // sectPr w:vAlign pages ride the same visual-translate channel
         const vaSpecs =
           viewMode === 'print' && !readMode && secList && hfHs
-            ? vAlignShiftSpecs(blocks, slices, secList, sectionGeoms(secList, hfHs))
+            ? vAlignShiftSpecs(snapshot.blocks, snapshot.pages, secList, snapshot.sectionGeoms)
             : []
         setColumnLayout(editor.view, [...colSpecs, ...vaSpecs])
         // after setPageGaps: widget insertion is synchronous, so anchor rects are final
