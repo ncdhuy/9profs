@@ -226,6 +226,7 @@ export function PaginationPreview({
   useEffect(() => {
     const pm = document.querySelector('.editor-scroll .ProseMirror') as HTMLElement | null
     if (!pm) return
+    const previewStartedAt = performance.now()
     clearPageGaps?.()
     const factor = zoom / 100
     // switch the columned canvas to the single-flow measuring state (uniform: CSS columns
@@ -259,6 +260,7 @@ export function PaginationPreview({
       )
       const flowH = flowWithFloats ?? withEndnotes?.totalHeight ?? totalHeight
       setEndnotesTop(withEndnotes?.top ?? null)
+      const paginationStartedAt = performance.now()
       let computed: PresentationLayoutSnapshot
       if (live.length > 0) {
         // each section's default-variant header/footer estimated heights → body push-down (matching the canvas)
@@ -329,13 +331,17 @@ export function PaginationPreview({
           sectionHfHeights,
         })
       }
+      const paginationMs = performance.now() - paginationStartedAt
       setLayout(computed)
       setPageNotes(pageFootnotesOf ? pageFootnotesOf(computed.blocks, computed.pages) : [])
       // Per-page full clones explode on large documents (pages × doc DOM →
       // renderer OOM / "Promise was collected" during printToPDF). Past the
       // budget, snapshot per-block geometry and render pruned windows instead.
       const kidEls = Array.from(pm.children) as HTMLElement[]
-      if (computed.pages.length * kidEls.length >= CLONE_PRUNE_BUDGET) {
+      const pruned = computed.pages.length * kidEls.length >= CLONE_PRUNE_BUDGET
+      const cloneStartedAt = performance.now()
+      let clonePayloadChars = 0
+      if (pruned) {
         const metas: CloneChild[] = []
         let gapAccum = 0
         for (const el of kidEls) {
@@ -362,9 +368,25 @@ export function PaginationPreview({
         }
         setCloneKids(metas)
         setHtml('')
+        clonePayloadChars = metas.reduce((sum, item) => sum + item.html.length, 0)
       } else {
         setCloneKids(null)
-        setHtml(Array.from(pm.children, (c) => cloneBlockHtml(c as HTMLElement)).join(''))
+        const fullHtml = Array.from(pm.children, (c) => cloneBlockHtml(c as HTMLElement)).join('')
+        clonePayloadChars = fullHtml.length
+        setHtml(fullHtml)
+      }
+      const debug = (window as unknown as { __pageDebug?: Record<string, unknown> }).__pageDebug
+      if (debug) {
+        debug.paginationPreview = {
+          pages: computed.pages.length,
+          blocks: kidEls.length,
+          clonePairs: computed.pages.length * kidEls.length,
+          mode: pruned ? 'pruned' : 'full',
+          paginationMs,
+          cloneBuildMs: performance.now() - cloneStartedAt,
+          clonePayloadChars,
+          totalMs: performance.now() - previewStartedAt,
+        }
       }
     } finally {
       if (measureNeutralize) pm.classList.remove('measuring-columns')

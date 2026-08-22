@@ -9,6 +9,7 @@ import {
   shouldInvalidateMeasurementV2,
   type PresentationMeasurementContextV2,
 } from './measurement-context'
+import type { PresentationV2PerformanceSink } from './performance'
 
 export type PresentationV2MeasurementInput = Pick<
   PresentationInput,
@@ -16,6 +17,7 @@ export type PresentationV2MeasurementInput = Pick<
 > & {
   pages: PageSlice[]
   measurementContext?: PresentationMeasurementContextV2
+  performance?: PresentationV2PerformanceSink
 }
 
 /**
@@ -31,8 +33,22 @@ export function refinePresentationMeasurementsV2(input: PresentationV2Measuremen
       : createPresentationMeasurementContextV2(input.zoomFactor)
   let changed = false
   const candidates = paginationMeasurementCandidates(input.blocks, input.sectionGeoms, input.pages)
+  input.performance?.onMeasurementCandidates?.(candidates.length)
   for (const { block, contentHeight } of candidates) {
-    if (samplePaginationBlock(block, contentHeight, measurementContext.zoomFactor, input.metaOf))
+    if (
+      samplePaginationBlock(
+        block,
+        contentHeight,
+        measurementContext.zoomFactor,
+        input.metaOf,
+        input.performance
+          ? {
+              onSample: (kind, cacheHit) =>
+                input.performance?.onMeasurementSample?.(kind, cacheHit),
+            }
+          : undefined,
+      )
+    )
       changed = true
   }
   return changed

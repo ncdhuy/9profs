@@ -13,11 +13,13 @@ import {
 } from '../pagination'
 import type { HfFloatBox } from '../editor/hf-dom'
 import { paginatePresentationV2 } from './page-slicer'
+import type { PresentationV2PerformanceSink } from './performance'
 
 export * from './diagnostics'
 export * from './geometry'
 export * from './post-render'
 export * from './geometry-probes'
+export * from './performance'
 
 export type PresentationRenderer = 'v1' | 'v2'
 
@@ -33,6 +35,8 @@ export interface PresentationInput {
   floats?: FloatBox[]
   /** Existing measured default-variant header/footer heights used for body push-down. */
   sectionHfHeights?: SectionHfHeights[]
+  /** Opt-in read-only V2 phase/caching counters; ignored by the V1 path. */
+  performance?: PresentationV2PerformanceSink
 }
 
 /**

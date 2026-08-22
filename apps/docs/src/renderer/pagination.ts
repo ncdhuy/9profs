@@ -2027,6 +2027,11 @@ export interface PaginationMeasurementCandidate {
   contentHeight: number
 }
 
+/** Optional read-only observer for callers that need to profile the shared sampler. */
+export interface PaginationMeasurementInstrumentation {
+  onSample?: (kind: 'line' | 'table', cacheHit: boolean) => void
+}
+
 /**
  * Select the blocks that need line/row sampling for a pagination pass. This is
  * shared by V1 and V2 so candidate semantics cannot drift between renderers.
@@ -2082,6 +2087,7 @@ export function samplePaginationBlock(
   contentHeight: number,
   zoomFactor: number,
   metaOf?: BlockMetaOf,
+  instrumentation?: PaginationMeasurementInstrumentation,
 ): boolean {
   // line boxes tile only the text area (block height includes the merged-in
   // space-after and any folded-in leading space-before, which lines must not cover)
@@ -2089,8 +2095,10 @@ export function samplePaginationBlock(
   const sig = lineSampleSig(block.el!, textH, zoomFactor)
   const cached = lineSampleCache.get(block.el!)
   const hit = cached?.sig === sig ? cached : null
+  const kind = block.el!.querySelector('tr') ? 'table' : 'line'
+  instrumentation?.onSample?.(kind, Boolean(hit))
 
-  if (block.el!.querySelector('tr')) {
+  if (kind === 'table') {
     // flags mutate the rows, so cached rows are cloned per use
     const rows = hit?.rows
       ? hit.rows.map((r) => ({ ...r }))

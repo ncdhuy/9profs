@@ -48,6 +48,7 @@ import { PrintDialog } from './components/PrintDialog'
 import {
   captureGeometryProbeDiagnostics,
   capturePostRenderDiagnostics,
+  createPresentationV2PerformanceRecorder,
   createPresentationGeometry,
   headerFooterPagePlacement,
   renderPresentation,
@@ -373,6 +374,7 @@ export function App() {
     errorKey: '' | 'appDocPwdWrong'
   } | null>(null)
   const [_recent, setRecent] = useState<string[]>([])
+  const paginationRunRef = useRef(0)
   const [settings, setSettings] = useState<AiSettings>(DEFAULT_SETTINGS)
   const [showAi, setShowAi] = useState(() => localStorage.getItem('aidocs.showAi') !== '0')
   /** Increments on every open/new document: AiPanel remounts by key to reset the conversation and history (save path changes don't bump it, so the session continues) */
@@ -1972,6 +1974,11 @@ export function App() {
       const pm = pmEl()
       if (!pm) return
       const tStart = performance.now()
+      const paginationRunId = ++paginationRunRef.current
+      // V2 is still an explicit seam/test path. Its recorder is opt-in to the
+      // V2 run and remains absent from the normal V1 production path.
+      const v2Performance =
+        presentationRenderer === 'v2' ? createPresentationV2PerformanceRecorder() : undefined
       let tMeasure = 0
       let tSlice = 0
       // a columned canvas measures + slices in the single-flow measuring state (fillLineBoxes
@@ -2012,6 +2019,7 @@ export function App() {
               metaOf: blockMetaOf,
               floats,
               sectionHfHeights,
+              performance: v2Performance?.sink,
             })
           : renderPresentationSnapshot(presentationRenderer, {
               blocks,
@@ -2021,6 +2029,7 @@ export function App() {
               metaOf: blockMetaOf,
               floats,
               sectionHfHeights,
+              performance: v2Performance?.sink,
             })
         tSlice = performance.now() - t1
         return { snapshot, secList }
@@ -2073,6 +2082,11 @@ export function App() {
       // slice results are gap-independent and refresh is idempotent)
       let tGapsBuild: number | undefined
       let tSetGaps: number | undefined
+      let tColumns: number | undefined
+      let tFloatShifts: number | undefined
+      let tGeometry: number | undefined
+      let tAnnotations: number | undefined
+      let tPostRender: number | undefined
       const tGaps0 = performance.now()
       if (editor) {
         const gaps: PageGapSpec[] = []
@@ -2541,6 +2555,7 @@ export function App() {
         const tSet0 = performance.now()
         setPageGaps(editor.view, gaps, firstPageFloats)
         // mixed-column canvas: paint the engine's regions via per-block width/translate decorations
+        const tColumns0 = performance.now()
         const colSpecs =
           viewMode === 'print' && !readMode && colMode === 'mixed' && secList
             ? columnLayoutSpecs(snapshot.blocks, snapshot.pages, secList)
@@ -2551,7 +2566,9 @@ export function App() {
             ? vAlignShiftSpecs(snapshot.blocks, snapshot.pages, secList, snapshot.sectionGeoms)
             : []
         setColumnLayout(editor.view, [...colSpecs, ...vaSpecs])
+        tColumns = performance.now() - tColumns0
         // after setPageGaps: widget insertion is synchronous, so anchor rects are final
+        const tFloat0 = performance.now()
         syncFloatShifts(
           pm,
           snapshot.floats,
@@ -2562,6 +2579,7 @@ export function App() {
         // paper top by a negative anchor offset are pushed back down
         clampCellBoxTops(pm, pm.getBoundingClientRect().top, factor)
         syncCutOverlays((pm.closest('.page-wrap') as HTMLElement) ?? pm, overlayCutAnchors, factor)
+        tFloatShifts = performance.now() - tFloat0
         const pageWrap = (pm.closest('.page-wrap') as HTMLElement) ?? pm
         const postRenderSource = () => ({
           root: pageWrap,
@@ -2582,11 +2600,14 @@ export function App() {
           },
         })
         let annotationGeometry: PresentationGeometry | undefined
+        const tGeometry0 = performance.now()
         try {
           annotationGeometry = createPresentationGeometry(postRenderSource())
         } catch {
           // Geometry is presentation-only; keep pagination alive if a transient DOM read fails.
         }
+        tGeometry = performance.now() - tGeometry0
+        const tAnnotations0 = performance.now()
         syncMarginAnnotations(
           pageWrap,
           pm,
@@ -2596,6 +2617,7 @@ export function App() {
           editor.view,
           annotationGeometry,
         )
+        tAnnotations = performance.now() - tAnnotations0
         tSetGaps = performance.now() - tSet0
         // suppression collapses the DOM after this pass sliced; one follow-up remeasure re-syncs (sig goes stable, no loop)
         const sig = gaps.reduce((s, g, n) => (g.suppressLeadMt ? `${s},${n}` : s), '')
@@ -2622,14 +2644,18 @@ export function App() {
         // Read-only post-render seam: capture actual DOM geometry only after all
         // existing gap, column, float, cell-clamp, cut, and annotation effects settle.
         presentationGeometrySourceRef.current = postRenderSource
+        const tGeometryFinal0 = performance.now()
         try {
           presentationGeometryRef.current = createPresentationGeometry(postRenderSource())
         } catch {
           // Geometry is presentation-only; keep pagination alive if a transient DOM read fails.
           presentationGeometryRef.current = null
         }
+        tGeometry = (tGeometry ?? 0) + performance.now() - tGeometryFinal0
         const captureCurrentPostRender = () => capturePostRenderDiagnostics(postRenderSource())
+        const tPostRender0 = performance.now()
         const postRender = captureCurrentPostRender()
+        tPostRender = performance.now() - tPostRender0
         // endnote area: Word puts it right after the last body line, not at the page
         // bottom — anchor it to the flow end measured in the final display state
         setEndnotesAreaTop(
@@ -2644,6 +2670,7 @@ export function App() {
         // for real-device verification/troubleshooting: current slices and block geometry (read-only snapshot, no functional dependency)
         ;(window as unknown as Record<string, unknown>).__pageDebug = {
           renderer: presentationRenderer,
+          paginationRunId,
           slices,
           colMode,
           colSpecs: colSpecs.map((s) => ({
@@ -2687,11 +2714,18 @@ export function App() {
             if (debug) debug.postRender = current
             return current
           },
+          remeasure: () => remeasure(),
           remeasureMs: performance.now() - tStart,
           measureMs: tMeasure,
           sliceMs: tSlice,
           gapsBuildMs: tGapsBuild,
           setGapsMs: tSetGaps,
+          columnsMs: tColumns,
+          floatShiftsMs: tFloatShifts,
+          geometryMs: tGeometry,
+          annotationsMs: tAnnotations,
+          postRenderMs: tPostRender,
+          v2Performance: v2Performance?.snapshot(),
         }
         requestAnimationFrame(() => {
           const tf = performance.now()
@@ -3260,6 +3294,8 @@ export function App() {
       editor,
       openPath: (path: string) => openRecent(path),
       save: () => save(false),
+      pagePreview: () => setShowPagePreview(true),
+      closePagePreview: () => setShowPagePreview(false),
       getStatus: () => status,
       exportPdfTo: (path: string) => exportPdf(path),
     }

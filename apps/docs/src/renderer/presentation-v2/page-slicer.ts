@@ -11,12 +11,15 @@ import {
   shouldInvalidateMeasurementV2,
   type PresentationMeasurementContextV2,
 } from './measurement-context'
+import type { PresentationV2PerformanceSink } from './performance'
 import { normalizePresentationSectionsV2, type PresentationSectionInputsV2 } from './sections'
 
 export type PresentationV2PaginationInput = Pick<
   PresentationInput,
   'blocks' | 'sectionGeoms' | 'totalHeight' | 'zoomFactor' | 'metaOf'
->
+> & {
+  performance?: PresentationV2PerformanceSink
+}
 
 const MAX_LINE_REFINEMENT_PASSES = 3
 
@@ -39,9 +42,11 @@ function refineMeasuredPageFlow(
   initialSlices: PageSlice[],
   sections: PresentationSectionInputsV2,
   initialMeasurementContext: PresentationMeasurementContextV2,
+  performance?: PresentationV2PerformanceSink,
 ): PageSlice[] {
   let slices = initialSlices
   let measurementContext = initialMeasurementContext
+  const refinementStartedAt = performance ? globalThis.performance.now() : 0
   // Keep the existing bounded fixed-point behavior: line/table measurement can
   // expose a new page candidate, which requires one more GenOffice re-slice.
   for (let pass = 0; pass < MAX_LINE_REFINEMENT_PASSES; pass++) {
@@ -55,9 +60,18 @@ function refineMeasuredPageFlow(
       zoomFactor: input.zoomFactor,
       metaOf: input.metaOf,
       measurementContext,
+      performance,
     })
+    performance?.onRefinementPass?.(changed)
     if (!changed) break
+    performance?.onResolve?.()
     slices = solveInitialPageFlow(input, sections)
+  }
+  if (performance) {
+    performance.onPhase?.(
+      'measurementRefinement',
+      globalThis.performance.now() - refinementStartedAt,
+    )
   }
   return slices
 }
@@ -75,10 +89,37 @@ function finalizePhysicalParity(
  * all page, line, table, section, column, and parity decisions.
  */
 export function paginatePresentationV2(input: PresentationV2PaginationInput): PageSlice[] {
+  const startedAt = input.performance ? globalThis.performance.now() : 0
   prepareSemanticPagination(input)
   const measurementContext = createPresentationMeasurementContextV2(input.zoomFactor)
+  const sectionStartedAt = input.performance ? globalThis.performance.now() : 0
   const sections = normalizePresentationSectionsV2(input.sectionGeoms)
+  if (input.performance) {
+    input.performance.onPhase?.(
+      'sectionNormalization',
+      globalThis.performance.now() - sectionStartedAt,
+    )
+  }
+  const solveStartedAt = input.performance ? globalThis.performance.now() : 0
   const initialSlices = solveInitialPageFlow(input, sections)
-  const refinedSlices = refineMeasuredPageFlow(input, initialSlices, sections, measurementContext)
-  return finalizePhysicalParity(refinedSlices, sections)
+  if (input.performance) {
+    input.performance.onPhase?.('initialPageSolve', globalThis.performance.now() - solveStartedAt)
+  }
+  const refinedSlices = refineMeasuredPageFlow(
+    input,
+    initialSlices,
+    sections,
+    measurementContext,
+    input.performance,
+  )
+  const parityStartedAt = input.performance ? globalThis.performance.now() : 0
+  const result = finalizePhysicalParity(refinedSlices, sections)
+  if (input.performance) {
+    input.performance.onPhase?.(
+      'parityFinalization',
+      globalThis.performance.now() - parityStartedAt,
+    )
+    input.performance.onTotal?.(globalThis.performance.now() - startedAt)
+  }
+  return result
 }
