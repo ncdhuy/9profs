@@ -12,6 +12,7 @@ import {
   type SectionHfHeights,
 } from '../pagination'
 import type { HfFloatBox } from '../editor/hf-dom'
+import { paginatePresentationV2 } from './page-slicer'
 
 export * from './diagnostics'
 export * from './geometry'
@@ -154,9 +155,6 @@ export function renderPresentationV1(input: PresentationInput): PageSlice[] {
   )
 }
 
-/**
- * First V2 proof only. Keep this adapter narrow until a real V2 layout implementation is proven.
- */
 export function renderPresentationV2(input: PresentationInput): PageSlice[] {
-  return renderPresentationV1(input)
+  return paginatePresentationV2(input)
 }

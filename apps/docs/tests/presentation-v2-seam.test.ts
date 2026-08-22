@@ -9,9 +9,11 @@ import {
   renderPresentation,
   renderPresentationSnapshot,
   renderPresentationV1,
+  renderPresentationV2,
   resolvePresentationRenderer,
   type PresentationRenderer,
 } from '../src/renderer/presentation-v2'
+import { paginatePresentationV2 } from '../src/renderer/presentation-v2/page-slicer'
 import { parseDocx, readSections, saveDocx, type Block } from '@genoffice/docx-engine'
 import type { BlockBox, FloatBox, PageSlice, SectionHfHeights } from '../src/renderer/pagination'
 import type { SectionSettings } from '@genoffice/docx-engine'
@@ -124,6 +126,18 @@ describe('DOCX presentation-v2 seam', () => {
       renderPresentation(renderer, presentationInput())
 
     expect(render('v2')).toEqual(render('v1'))
+  })
+
+  it('runs the V2 slicer directly and preserves complete PageSlice output', () => {
+    const v1Input = { ...presentationInput(), metaOf: () => ({ footnoteExtraPx: 1 }) }
+    const v2Input = { ...presentationInput(), metaOf: () => ({ footnoteExtraPx: 1 }) }
+
+    expect(paginatePresentationV2(v2Input)).toEqual(renderPresentationV1(v1Input))
+    expect(
+      renderPresentationV2({ ...presentationInput(), metaOf: () => ({ footnoteExtraPx: 1 }) }),
+    ).toEqual(
+      renderPresentationV1({ ...presentationInput(), metaOf: () => ({ footnoteExtraPx: 1 }) }),
+    )
   })
 
   it('exposes equivalent V1/V2 layout snapshots without changing existing identities', () => {
