@@ -44,6 +44,13 @@ interface RendererRun {
 
 const CORPUS = resolve(__dirname, '../apps/docs/tests/pagination-corpus/docx')
 
+const MIXED_CONTENT_FIXTURE: PresentationFixture = {
+  id: 'mixed-content-ordering',
+  file: resolve(CORPUS, '15-mixed-content.docx'),
+  features: ['CJK', 'document grid', 'headings', 'tables'],
+  expectedPageCount: 4,
+}
+
 const FIXTURES: PresentationFixture[] = [
   {
     id: 'simple-multi-page',
@@ -580,3 +587,31 @@ for (const fixture of FIXTURES) {
     }
   })
 }
+
+test('DOCX fidelity: mixed-content page starts at the following section heading', async () => {
+  const launched = await launchShell({
+    onboardingSeen: true,
+    openFile: MIXED_CONTENT_FIXTURE.file,
+    presentationRenderer: 'v1',
+    videoDir: `docs-fidelity-${MIXED_CONTENT_FIXTURE.id}`,
+  })
+  try {
+    const page = await waitForPageWithUrl(launched.app, 'docs/out')
+    await expect(page.locator('.ProseMirror').first()).toBeVisible()
+    await waitForPageDebug(page, 'v1', MIXED_CONTENT_FIXTURE.id)
+    const debug = await readPageDebug(page)
+    const slices = (debug.slices as DebugValue[] | undefined) ?? []
+    const blocks = (debug.blocks as DebugValue[] | undefined) ?? []
+    const pageStarts = slices.map((slice) => {
+      const start = typeof slice.start === 'number' ? slice.start : NaN
+      return blocks.find((block) => {
+        const top = typeof block.top === 'number' ? block.top : NaN
+        return Number.isFinite(start) && Number.isFinite(top) && Math.abs(top - start) < 0.5
+      })?.docxIndex
+    })
+    expect(pageStarts.length, 'mixed-content page count').toBe(4)
+    expect(pageStarts.slice(0, 2), 'mixed-content first page-start anchors').toEqual([0, 19])
+  } finally {
+    await closeAndSaveVideo(launched, `docs-fidelity-${MIXED_CONTENT_FIXTURE.id}`)
+  }
+})

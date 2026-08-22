@@ -3676,7 +3676,7 @@ th.cell-rev-del {
 
 /* Native ProseMirror tables */
 .doc-page > .doc-table {
-  margin: 2px 0;
+  margin: 0;
 }
 
 .doc-protected[data-doc-protected='table'] {

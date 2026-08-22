@@ -453,6 +453,12 @@ export function computeSectionedSlicesF2(
 
   // whether height h fits in the current column (runaway degrade: everything fits)
   const fits = (h: number): boolean => runaway || usedInCol + h <= colH + 0.01
+  // CSS page boxes and DOM block rects are quantized independently. Word keeps a
+  // paragraph text line when its rounded layout bottom remains in the rounded page
+  // content pixel; keep this tolerance on paragraph placement only so table rows
+  // and explicit keep constraints retain their exact capacity checks.
+  const fitsParagraph = (h: number): boolean =>
+    runaway || Math.ceil(usedInCol + h) <= Math.ceil(colH)
   // whether the current column is empty (just changed columns or at column top)
   const colEmpty = () => usedInCol <= 0.01
   // whether the current page is entirely blank (guards forced breaks against empty pages)
@@ -706,7 +712,7 @@ export function computeSectionedSlicesF2(
           spaceBeforePx,
           spaceAfterPx,
           colH,
-          fits,
+          fitsParagraph,
           place,
           colEmpty,
           advance,
@@ -771,7 +777,7 @@ export function computeSectionedSlicesF2(
       spaceBeforePx,
       spaceAfterPx,
       colH,
-      fits,
+      fitsParagraph,
       place,
       colEmpty,
       advance,
