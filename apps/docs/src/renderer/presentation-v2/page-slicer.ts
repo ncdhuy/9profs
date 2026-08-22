@@ -2,10 +2,10 @@ import type { PresentationInput } from './index'
 import {
   applyBlockMeta,
   computeSectionedSlicesF2,
-  fillLineBoxes,
   insertParityBlanks,
   type PageSlice,
 } from '../pagination'
+import { refinePresentationMeasurementsV2 } from './measurement'
 
 export type PresentationV2PaginationInput = Pick<
   PresentationInput,
@@ -30,13 +30,13 @@ function refineMeasuredPageFlow(
   // Keep the existing bounded fixed-point behavior: line/table measurement can
   // expose a new page candidate, which requires one more GenOffice re-slice.
   for (let pass = 0; pass < MAX_LINE_REFINEMENT_PASSES; pass++) {
-    const changed = fillLineBoxes(
-      input.blocks,
-      input.sectionGeoms,
-      input.zoomFactor,
-      slices,
-      input.metaOf,
-    )
+    const changed = refinePresentationMeasurementsV2({
+      blocks: input.blocks,
+      sectionGeoms: input.sectionGeoms,
+      pages: slices,
+      zoomFactor: input.zoomFactor,
+      metaOf: input.metaOf,
+    })
     if (!changed) break
     slices = solveInitialPageFlow(input)
   }

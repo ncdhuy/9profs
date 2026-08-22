@@ -1967,13 +1967,6 @@ export function sliceWithLineSplit(
 }
 
 /**
- * Collect DOM line-box data for pagination candidate blocks (F2 model): blocks that
- * cross a page bound, exceed one page, or were pushed wholesale to a page top (the
- * second pass may pull lines back to the previous page). Other blocks are skipped, so cost is negligible.
- * Table blocks → tableRows (tr boundaries; never cuts into text lines inside cells); text blocks → lineBoxes.
- * Returns whether any block was filled (true means the caller must re-slice).
- */
-/**
  * DOM line/row sampling is the hot path of repeated repagination: the set of
  * page-crossing blocks is stable across edits, so raw samples are cached by
  * element identity plus a cheap content/geometry signature. Entries drop with
@@ -2005,13 +1998,20 @@ function lineSampleSig(el: HTMLElement, textH: number): string {
   return `${lineSampleFontEpoch}:${Math.round(textH * 4)}:${Math.round(w * 4)}:${nodes}:${h}`
 }
 
-export function fillLineBoxes(
+export interface PaginationMeasurementCandidate {
+  block: BlockBox
+  contentHeight: number
+}
+
+/**
+ * Select the blocks that need line/row sampling for a pagination pass. This is
+ * shared by V1 and V2 so candidate semantics cannot drift between renderers.
+ */
+export function paginationMeasurementCandidates(
   blocks: BlockBox[],
   geoms: SectionGeom[],
-  zoomFactor: number,
   slices?: PageSlice[],
-  metaOf?: BlockMetaOf,
-): boolean {
+): PaginationMeasurementCandidate[] {
   const geomOf = (s: number) => geoms[Math.max(0, Math.min(s, geoms.length - 1))]
   // cut bounds = page bounds + column bounds of multi-column pages (blocks crossing within a column also need line-level splits)
   const breaks: number[] = []
@@ -2023,7 +2023,7 @@ export function fillLineBoxes(
       }
     }
   })
-  let changed = false
+  const candidates: PaginationMeasurementCandidate[] = []
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]
     if (!block.el || block.lineBoxes || block.tableRows) continue
@@ -2047,45 +2047,71 @@ export function fillLineBoxes(
     )
       continue
 
-    // line boxes tile only the text area (block height includes the merged-in
-    // space-after and any folded-in leading space-before, which lines must not cover)
-    const textH = block.height - (block.spaceAfterPx ?? 0) - (block.spaceBeforePx ?? 0)
-    const sig = lineSampleSig(block.el, textH)
-    const cached = lineSampleCache.get(block.el)
-    const hit = cached?.sig === sig ? cached : null
+    candidates.push({ block, contentHeight: contentH })
+  }
+  return candidates
+}
 
-    if (block.el.querySelector('tr')) {
-      // flags mutate the rows, so cached rows are cloned per use
-      const rows = hit?.rows
-        ? hit.rows.map((r) => ({ ...r }))
-        : domTableRows(block.el, textH, zoomFactor)
-      if (!hit?.rows) lineSampleCache.set(block.el, { sig, rows: rows.map((r) => ({ ...r })) })
-      if (rows.length > 0) {
-        const flags =
-          block.docxIndex !== undefined ? metaOf?.(block.docxIndex)?.tableRowFlags : undefined
-        if (flags)
-          rows.forEach((r, i) => {
-            if (flags[i]?.isHeader) r.isHeader = true
-            if (flags[i]?.cantSplit) r.cantSplit = true
-          })
-        block.tableRows = rows
-        changed = true
-      }
-      continue
+/** Sample one already-selected pagination block using the shared DOM/cache path. */
+export function samplePaginationBlock(
+  block: BlockBox,
+  contentHeight: number,
+  zoomFactor: number,
+  metaOf?: BlockMetaOf,
+): boolean {
+  // line boxes tile only the text area (block height includes the merged-in
+  // space-after and any folded-in leading space-before, which lines must not cover)
+  const textH = block.height - (block.spaceAfterPx ?? 0) - (block.spaceBeforePx ?? 0)
+  const sig = lineSampleSig(block.el!, textH)
+  const cached = lineSampleCache.get(block.el!)
+  const hit = cached?.sig === sig ? cached : null
+
+  if (block.el!.querySelector('tr')) {
+    // flags mutate the rows, so cached rows are cloned per use
+    const rows = hit?.rows
+      ? hit.rows.map((r) => ({ ...r }))
+      : domTableRows(block.el!, textH, zoomFactor)
+    if (!hit?.rows) lineSampleCache.set(block.el!, { sig, rows: rows.map((r) => ({ ...r })) })
+    if (rows.length > 0) {
+      const flags =
+        block.docxIndex !== undefined ? metaOf?.(block.docxIndex)?.tableRowFlags : undefined
+      if (flags)
+        rows.forEach((r, i) => {
+          if (flags[i]?.isHeader) r.isHeader = true
+          if (flags[i]?.cantSplit) r.cantSplit = true
+        })
+      block.tableRows = rows
+      return true
     }
-    // synthesized over-page cuts below mutate the list, so cached entries are copied out
-    const boundaries = hit?.boundaries
-      ? [...hit.boundaries]
-      : domLineBoundaries(block.el, zoomFactor)
-    if (!hit?.boundaries) lineSampleCache.set(block.el, { sig, boundaries: [...boundaries] })
-    if (boundaries.length === 0 && block.height > contentH) {
-      // over-page block with no text lines (e.g. a large image): synthesize cut points at page height, equivalent to hard pixel cuts
-      for (let y = contentH; y < block.height; y += contentH) boundaries.push(y)
-    }
-    if (boundaries.length > 0) {
-      block.lineBoxes = tileBoxes(boundaries, textH)
-      changed = true
-    }
+    return false
+  }
+
+  // synthesized over-page cuts below mutate the list, so cached entries are copied out
+  const boundaries = hit?.boundaries
+    ? [...hit.boundaries]
+    : domLineBoundaries(block.el!, zoomFactor)
+  if (!hit?.boundaries) lineSampleCache.set(block.el!, { sig, boundaries: [...boundaries] })
+  if (boundaries.length === 0 && block.height > contentHeight) {
+    // over-page block with no text lines (e.g. a large image): synthesize cut points at page height, equivalent to hard pixel cuts
+    for (let y = contentHeight; y < block.height; y += contentHeight) boundaries.push(y)
+  }
+  if (boundaries.length > 0) {
+    block.lineBoxes = tileBoxes(boundaries, textH)
+    return true
+  }
+  return false
+}
+
+export function fillLineBoxes(
+  blocks: BlockBox[],
+  geoms: SectionGeom[],
+  zoomFactor: number,
+  slices?: PageSlice[],
+  metaOf?: BlockMetaOf,
+): boolean {
+  let changed = false
+  for (const { block, contentHeight } of paginationMeasurementCandidates(blocks, geoms, slices)) {
+    if (samplePaginationBlock(block, contentHeight, zoomFactor, metaOf)) changed = true
   }
   return changed
 }
