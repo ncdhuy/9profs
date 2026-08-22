@@ -9,6 +9,10 @@ import {
   type SectionGeom,
 } from '../src/renderer/pagination'
 import { refinePresentationMeasurementsV2 } from '../src/renderer/presentation-v2/measurement'
+import {
+  createPresentationMeasurementContextV2,
+  shouldInvalidateMeasurementV2,
+} from '../src/renderer/presentation-v2/measurement-context'
 
 const geometry = (top: number, height: number, width = 240): DOMRect =>
   ({ top, bottom: top + height, height, width }) as DOMRect
@@ -169,9 +173,16 @@ describe('Presentation V2 measurement refinement', () => {
     const rects = lineRectsMock()
     try {
       const block = textBlock()
+      const measurementContext = createPresentationMeasurementContextV2(1)
       const run = () => {
         block.lineBoxes = undefined
-        return fillLineBoxes([block], sectionGeoms, 1, pages)
+        return refinePresentationMeasurementsV2({
+          blocks: [block],
+          sectionGeoms,
+          pages,
+          zoomFactor: 1,
+          measurementContext,
+        })
       }
 
       run()
@@ -196,6 +207,116 @@ describe('Presentation V2 measurement refinement', () => {
       expect(rects.getClientRects.mock.calls.length).toBeGreaterThan(afterWidthChange)
     } finally {
       rects.restore()
+      document.body.replaceChildren()
+    }
+  })
+
+  it('owns one coherent V2 measurement context and refreshes after environment changes', () => {
+    const context = createPresentationMeasurementContextV2(1)
+    expect(Object.isFrozen(context)).toBe(true)
+    expect(shouldInvalidateMeasurementV2(context, 1)).toBe(false)
+
+    bumpLineSampleFontEpoch()
+    expect(shouldInvalidateMeasurementV2(context, 1)).toBe(true)
+
+    const refreshed = createPresentationMeasurementContextV2(1)
+    expect(shouldInvalidateMeasurementV2(refreshed, 1)).toBe(false)
+    expect(shouldInvalidateMeasurementV2(refreshed, 1.25)).toBe(true)
+  })
+
+  it('remeasures when V2 zoom scale changes even if rendered width is unchanged', () => {
+    const rects = lineRectsMock()
+    try {
+      const block = textBlock()
+      const run = (zoomFactor: number) => {
+        block.lineBoxes = undefined
+        return refinePresentationMeasurementsV2({
+          blocks: [block],
+          sectionGeoms,
+          pages,
+          zoomFactor,
+          measurementContext: createPresentationMeasurementContextV2(zoomFactor),
+        })
+      }
+
+      run(1)
+      const initialSamples = rects.getClientRects.mock.calls.length
+      const firstLines = block.lineBoxes
+      run(2)
+
+      expect(rects.getClientRects.mock.calls.length).toBeGreaterThan(initialSamples)
+      expect(block.lineBoxes).not.toEqual(firstLines)
+    } finally {
+      rects.restore()
+      document.body.replaceChildren()
+    }
+  })
+
+  it('reuses shared samples across stable V2 runs and converges on the next pass', () => {
+    const rects = lineRectsMock()
+    try {
+      const block = textBlock()
+      const measurementContext = createPresentationMeasurementContextV2(1)
+      const refine = () =>
+        refinePresentationMeasurementsV2({
+          blocks: [block],
+          sectionGeoms,
+          pages,
+          zoomFactor: 1,
+          measurementContext,
+        })
+
+      expect(refine()).toBe(true)
+      const initialSamples = rects.getClientRects.mock.calls.length
+      expect(refine()).toBe(false)
+
+      block.lineBoxes = undefined
+      expect(refine()).toBe(true)
+      expect(rects.getClientRects.mock.calls.length).toBe(initialSamples)
+    } finally {
+      rects.restore()
+      document.body.replaceChildren()
+    }
+  })
+
+  it('remeasures table rows when row geometry changes without text or table width changes', () => {
+    const reads = { rows: 0 }
+    const table = document.createElement('table')
+    const body = document.createElement('tbody')
+    const first = document.createElement('tr')
+    const second = document.createElement('tr')
+    first.appendChild(document.createElement('td'))
+    second.appendChild(document.createElement('td'))
+    body.append(first, second)
+    table.appendChild(body)
+    let secondHeight = 60
+    table.getBoundingClientRect = () => geometry(0, 100, 240)
+    first.getBoundingClientRect = () => geometry(0, 40, 240)
+    second.getBoundingClientRect = () => {
+      reads.rows++
+      return geometry(40, secondHeight, 240)
+    }
+    document.body.appendChild(table)
+    const block: BlockBox = { el: table, top: 0, height: 100 }
+
+    try {
+      const run = () => {
+        block.tableRows = undefined
+        return refinePresentationMeasurementsV2({
+          blocks: [block],
+          sectionGeoms,
+          pages,
+          zoomFactor: 1,
+        })
+      }
+
+      run()
+      const firstSampleReads = reads.rows
+      secondHeight = 80
+      run()
+
+      expect(reads.rows).toBeGreaterThan(firstSampleReads)
+    } finally {
       document.body.replaceChildren()
     }
   })

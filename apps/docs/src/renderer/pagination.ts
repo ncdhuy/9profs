@@ -1985,7 +1985,30 @@ export function bumpLineSampleFontEpoch(): void {
   lineSampleFontEpoch++
 }
 
-function lineSampleSig(el: HTMLElement, textH: number): string {
+export function getLineSampleFontEpoch(): number {
+  return lineSampleFontEpoch
+}
+
+function rectSig(el: Element): string {
+  const rect = el.getBoundingClientRect()
+  return [rect.top, rect.left, rect.width, rect.height]
+    .map((value) => Math.round(value * 4))
+    .join(',')
+}
+
+/**
+ * Table cuts depend on row/cell geometry, including nested tables. Keep
+ * decoration rows out of this identity because domTableRows intentionally
+ * excludes them from measurement.
+ */
+function tableGeometrySig(el: HTMLElement): string {
+  return Array.from(el.querySelectorAll('tr,td,th,table,img,svg,canvas'))
+    .filter((node) => !node.closest('.page-gap, .page-repeat-header'))
+    .map(rectSig)
+    .join(';')
+}
+
+function lineSampleSig(el: HTMLElement, textH: number, zoomFactor: number): string {
   // djb2 over the text: equal-length edits must still invalidate
   const text = el.textContent ?? ''
   let h = 5381
@@ -1995,7 +2018,8 @@ function lineSampleSig(el: HTMLElement, textH: number): string {
   // costs one re-sample, so quantization errs toward invalidating.
   const w = el.getBoundingClientRect().width
   const nodes = el.getElementsByTagName('*').length
-  return `${lineSampleFontEpoch}:${Math.round(textH * 4)}:${Math.round(w * 4)}:${nodes}:${h}`
+  const table = el.querySelector('tr') ? tableGeometrySig(el) : ''
+  return `${lineSampleFontEpoch}:${Math.round(zoomFactor * 1000)}:${Math.round(textH * 4)}:${Math.round(w * 4)}:${nodes}:${h}:${table}`
 }
 
 export interface PaginationMeasurementCandidate {
@@ -2062,7 +2086,7 @@ export function samplePaginationBlock(
   // line boxes tile only the text area (block height includes the merged-in
   // space-after and any folded-in leading space-before, which lines must not cover)
   const textH = block.height - (block.spaceAfterPx ?? 0) - (block.spaceBeforePx ?? 0)
-  const sig = lineSampleSig(block.el!, textH)
+  const sig = lineSampleSig(block.el!, textH, zoomFactor)
   const cached = lineSampleCache.get(block.el!)
   const hit = cached?.sig === sig ? cached : null
 
