@@ -2014,6 +2014,7 @@ export function App() {
               totalHeight: flowH,
               zoomFactor: factor,
               metaOf: blockMetaOf,
+              floats,
             })
           : renderPresentationSnapshot(presentationRenderer, {
               blocks,
@@ -2021,11 +2022,12 @@ export function App() {
               totalHeight: flowH,
               zoomFactor: factor,
               metaOf: blockMetaOf,
+              floats,
             })
         tSlice = performance.now() - t1
-        return { snapshot, secList, hfHs, floats }
+        return { snapshot, secList, hfHs }
       })
-      const { snapshot, secList, hfHs, floats } = measured
+      const { snapshot, secList, hfHs } = measured
       // Page-gap presentation consumes one coherent layout result; DOM decoration
       // remains the responsibility of setPageGaps below.
       const { blocks } = snapshot
@@ -2565,7 +2567,12 @@ export function App() {
             : []
         setColumnLayout(editor.view, [...colSpecs, ...vaSpecs])
         // after setPageGaps: widget insertion is synchronous, so anchor rects are final
-        syncFloatShifts(pm, floats, pm.getBoundingClientRect().top + mTopPx * factor, factor)
+        syncFloatShifts(
+          pm,
+          snapshot.floats,
+          pm.getBoundingClientRect().top + mTopPx * factor,
+          factor,
+        )
         // Word keeps anchored objects on the page: cell boxes lifted past the
         // paper top by a negative anchor offset are pushed back down
         clampCellBoxTops(pm, pm.getBoundingClientRect().top, factor)
@@ -2579,7 +2586,11 @@ export function App() {
           sections: secList ?? undefined,
           zoomFactor: factor,
           editorView: editor.view,
-          floatBoxes: floats.map((item) => ({ el: item.el, top: item.top, height: item.height })),
+          floatBoxes: snapshot.floats.map((item) => ({
+            el: item.el,
+            top: item.top,
+            height: item.height,
+          })),
           blockOf: (el: HTMLElement) => {
             const block = blocks.find((item) => item.el === el || item.el?.contains(el))
             return block?.docxIndex

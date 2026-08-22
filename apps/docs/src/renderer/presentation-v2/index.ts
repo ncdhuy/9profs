@@ -2,6 +2,7 @@ import {
   sliceWithLineSplit,
   type BlockBox,
   type BlockMetaOf,
+  type FloatBox,
   type PageSlice,
   type SectionGeom,
 } from '../pagination'
@@ -21,6 +22,8 @@ export interface PresentationInput {
   totalHeight: number
   zoomFactor: number
   metaOf?: BlockMetaOf
+  /** Existing measured body floating boxes; omitted by consumers without live DOM measurement. */
+  floats?: FloatBox[]
 }
 
 /**
@@ -35,6 +38,7 @@ export interface PresentationLayoutSnapshot {
   readonly sectionGeoms: SectionGeom[]
   readonly totalHeight: number
   readonly zoomFactor: number
+  readonly floats: FloatBox[]
 }
 
 /**
@@ -76,6 +80,7 @@ export function renderPresentationSnapshot(
     sectionGeoms: input.sectionGeoms,
     totalHeight: input.totalHeight,
     zoomFactor: input.zoomFactor,
+    floats: input.floats ?? [],
   }
 }
 

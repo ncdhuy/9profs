@@ -5,8 +5,10 @@ import {
   syncCutOverlays,
   syncPhantomRowspans,
   clampCellBoxTops,
+  syncFloatShifts,
 } from '../src/renderer/editor/pagination-gaps'
 import { createLineRectsCache, singleCutCell } from '../src/renderer/pagination'
+import type { PresentationLayoutSnapshot } from '../src/renderer/presentation-v2'
 
 const rowOf = (cells: number): HTMLTableRowElement => {
   const tr = document.createElement('tr')
@@ -217,5 +219,27 @@ describe('clampCellBoxTops', () => {
     box.getBoundingClientRect = () => ({ top: 0, bottom: 45, height: 45, width: 100 }) as DOMRect
     clampCellBoxTops(pm, 0, 1)
     expect(box.style.getPropertyValue('--page-float-dy')).toBe('62.0px')
+  })
+})
+
+describe('snapshot-owned float presentation', () => {
+  it('passes measured float descriptors to post-gap physical correction', () => {
+    const pm = document.createElement('div')
+    const gap = document.createElement('div')
+    gap.className = 'page-gap'
+    gap.getBoundingClientRect = () =>
+      ({ top: 100, bottom: 140, height: 40, width: 100 }) as DOMRect
+    const float = document.createElement('div')
+    float.getBoundingClientRect = () =>
+      ({ top: 150, bottom: 170, height: 20, width: 20 }) as DOMRect
+    pm.append(gap, float)
+    const snapshot: Pick<PresentationLayoutSnapshot, 'floats'> = {
+      floats: [{ el: float, top: 150, height: 20 }],
+    }
+
+    syncFloatShifts(pm, snapshot.floats, 0, 1)
+
+    expect(float.style.getPropertyValue('--page-float-dy')).toBe('40.0px')
+    expect(float.dataset.pageFloatDy).toBe('40')
   })
 })

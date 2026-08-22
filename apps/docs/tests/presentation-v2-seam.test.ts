@@ -12,12 +12,13 @@ import {
   type PresentationRenderer,
 } from '../src/renderer/presentation-v2'
 import { parseDocx, readSections, saveDocx, type Block } from '@genoffice/docx-engine'
-import type { BlockBox, PageSlice } from '../src/renderer/pagination'
+import type { BlockBox, FloatBox, PageSlice } from '../src/renderer/pagination'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SIMPLE_FIXTURE = join(__dirname, 'pagination-corpus/docx/fixture-simple.docx')
 
 function presentationInput() {
+  const floats: FloatBox[] = [{ el: {} as HTMLElement, top: 900, height: 120 }]
   const blocks: BlockBox[] = [
     {
       top: 0,
@@ -43,6 +44,7 @@ function presentationInput() {
     sectionGeoms: [{ contentHeight: 800, forceBreak: false, cols: 2, colWidths: [300, 300] }],
     totalHeight: 1340,
     zoomFactor: 1,
+    floats,
   }
 }
 
@@ -130,6 +132,8 @@ describe('DOCX presentation-v2 seam', () => {
     expect(v2.pages).toEqual(v1.pages)
     expect(v1.blocks).toBe(input.blocks)
     expect(v1.sectionGeoms).toBe(input.sectionGeoms)
+    expect(v1.floats).toBe(input.floats)
+    expect(v2.floats).toBe(input.floats)
     expect(v1.blocks.map((block) => block.docxIndex)).toEqual([3, 7])
     expect(v1.pages.every((page) => v1.sectionGeoms[page.section] === input.sectionGeoms[page.section])).toBe(
       true,

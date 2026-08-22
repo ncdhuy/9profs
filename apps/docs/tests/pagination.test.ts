@@ -1826,6 +1826,7 @@ describe('computeSectionedSlicesF2 — multi-column flow', () => {
       sectionGeoms: [],
       totalHeight: 110,
       zoomFactor: 1,
+      floats: [],
     }
     const specs = columnLayoutSpecs(snapshot.blocks, snapshot.pages, secs)
     const g = sectionColGeom(secs[1])
