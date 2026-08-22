@@ -48,13 +48,17 @@ import { PrintDialog } from './components/PrintDialog'
 import {
   captureGeometryProbeDiagnostics,
   capturePostRenderDiagnostics,
+  createFullPresentationInvalidationHint,
   createPresentationV2PerformanceRecorder,
   createPresentationGeometry,
   headerFooterPagePlacement,
+  mergePresentationInvalidationHints,
+  presentationInvalidationHintFromTransaction,
   renderPresentation,
   renderPresentationSnapshot,
   resolvePresentationRenderer,
   type GeometryProbe,
+  type PresentationInvalidationHint,
   type PresentationGeometry,
   type PresentationGeometrySource,
 } from './presentation-v2'
@@ -66,6 +70,7 @@ import {
   endnotesAnchorY,
   effectiveHfRefs,
   createLineRectsCache,
+  getLineSampleFontEpoch,
   lineStartAnchor,
   liveSections,
   nextLineAnchor,
@@ -375,6 +380,9 @@ export function App() {
   } | null>(null)
   const [_recent, setRecent] = useState<string[]>([])
   const paginationRunRef = useRef(0)
+  const presentationLayoutEpochRef = useRef(0)
+  const presentationInvalidationRef = useRef<PresentationInvalidationHint | null>(null)
+  const presentationTransactionCountRef = useRef(0)
   const [settings, setSettings] = useState<AiSettings>(DEFAULT_SETTINGS)
   const [showAi, setShowAi] = useState(() => localStorage.getItem('aidocs.showAi') !== '0')
   /** Increments on every open/new document: AiPanel remounts by key to reset the conversation and history (save path changes don't bump it, so the session continues) */
@@ -1933,6 +1941,7 @@ export function App() {
 
   // status-bar page number: real page slicing (same algorithm as the pagination preview). Edits remeasure with debounce; scrolling only relocates
   useEffect(() => {
+    const layoutEpoch = ++presentationLayoutEpochRef.current
     if (!doc || !section) {
       setPageInfo({ current: 1, total: 1 })
       setLastPageNo(null)
@@ -1947,6 +1956,16 @@ export function App() {
     let timer: number | null = null
     let suppressSig = ''
     const pmEl = () => document.querySelector('.editor-scroll .ProseMirror') as HTMLElement | null
+    const blockIndexForHint = (pm: HTMLElement, blocks: BlockBox[], topLevelIndex: number) => {
+      const documentChildren = Array.from(pm.children).filter(
+        (child) =>
+          !child.classList.contains('page-gap') && !child.classList.contains('page-float-host'),
+      )
+      const target = documentChildren[topLevelIndex]
+      if (!target) return undefined
+      const index = blocks.findIndex((block) => block.el === target)
+      return index >= 0 ? index : undefined
+    }
     const locate = () => {
       const pm = pmEl()
       if (!pm || slices.length === 0) return
@@ -1975,6 +1994,19 @@ export function App() {
       if (!pm) return
       const tStart = performance.now()
       const paginationRunId = ++paginationRunRef.current
+      const pendingInvalidation = presentationInvalidationRef.current
+      presentationInvalidationRef.current = null
+      const currentFontEpoch = getLineSampleFontEpoch()
+      const invalidationHint =
+        pendingInvalidation &&
+        (pendingInvalidation.layoutEpoch !== layoutEpoch ||
+          pendingInvalidation.fontEpoch !== currentFontEpoch)
+          ? createFullPresentationInvalidationHint(
+              layoutEpoch,
+              currentFontEpoch,
+              'layout-environment',
+            )
+          : pendingInvalidation
       // V2 is still an explicit seam/test path. Its recorder is opt-in to the
       // V2 run and remains absent from the normal V1 production path.
       const v2Performance =
@@ -1989,6 +2021,19 @@ export function App() {
         const origin = pm.getBoundingClientRect().top + mTopPx * factor
         const { blocks, totalHeight, floats, sectBreaks } = measureBlocks(pm, origin, factor)
         tMeasure = performance.now() - t0
+        const v2InvalidationHint =
+          invalidationHint?.kind === 'local' && invalidationHint.topLevelIndex !== undefined
+            ? (() => {
+                const blockIndex = blockIndexForHint(pm, blocks, invalidationHint.topLevelIndex!)
+                return blockIndex === undefined
+                  ? createFullPresentationInvalidationHint(
+                      layoutEpoch,
+                      currentFontEpoch,
+                      'unknown-transaction',
+                    )
+                  : { ...invalidationHint, blockIndex }
+              })()
+            : invalidationHint
         // multi-section: assign blocks to sections by docxIndex; each section has its own content height / forced breaks.
         // liveSections: when a section-break block is deleted, that section merges into the next in real time (effective before saving)
         const secList =
@@ -2019,6 +2064,7 @@ export function App() {
               metaOf: blockMetaOf,
               floats,
               sectionHfHeights,
+              invalidationHint: v2InvalidationHint ?? undefined,
               performance: v2Performance?.sink,
             })
           : renderPresentationSnapshot(presentationRenderer, {
@@ -2029,6 +2075,7 @@ export function App() {
               metaOf: blockMetaOf,
               floats,
               sectionHfHeights,
+              invalidationHint: v2InvalidationHint ?? undefined,
               performance: v2Performance?.sink,
             })
         tSlice = performance.now() - t1
@@ -2726,6 +2773,8 @@ export function App() {
           annotationsMs: tAnnotations,
           postRenderMs: tPostRender,
           v2Performance: v2Performance?.snapshot(),
+          presentationInvalidation: invalidationHint,
+          presentationTransactionCount: presentationTransactionCountRef.current,
         }
         requestAnimationFrame(() => {
           const tf = performance.now()
@@ -2741,6 +2790,21 @@ export function App() {
       }
       locate()
     }
+    const onTransaction = ({
+      transaction,
+    }: {
+      transaction: import('@tiptap/pm/state').Transaction
+    }) => {
+      presentationTransactionCountRef.current++
+      presentationInvalidationRef.current = mergePresentationInvalidationHints(
+        presentationInvalidationRef.current,
+        presentationInvalidationHintFromTransaction(
+          transaction,
+          layoutEpoch,
+          getLineSampleFontEpoch(),
+        ),
+      )
+    }
     const onUpdate = () => {
       // Do not use a geometry snapshot across a document/layout change. The existing
       // ProseMirror hit test remains the explicit fallback until post-render readback settles.
@@ -2754,11 +2818,16 @@ export function App() {
     // must be remeasured, and cached line samples invalidated (block heights may not change)
     const onFontsChanged = () => {
       bumpLineSampleFontEpoch()
+      presentationInvalidationRef.current = mergePresentationInvalidationHints(
+        presentationInvalidationRef.current,
+        createFullPresentationInvalidationHint(layoutEpoch, getLineSampleFontEpoch(), 'font-epoch'),
+      )
       onUpdate()
     }
     document.fonts.ready.then(onFontsChanged).catch(() => {})
     document.fonts.addEventListener('loadingdone', onFontsChanged)
     scroller.addEventListener('scroll', locate, { passive: true })
+    editor?.on('transaction', onTransaction)
     editor?.on('update', onUpdate)
     return () => {
       if (timer) window.clearTimeout(timer)
@@ -2766,6 +2835,7 @@ export function App() {
       presentationGeometrySourceRef.current = null
       document.fonts.removeEventListener('loadingdone', onFontsChanged)
       scroller.removeEventListener('scroll', locate)
+      editor?.off('transaction', onTransaction)
       editor?.off('update', onUpdate)
     }
   }, [

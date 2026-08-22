@@ -20,6 +20,14 @@ type PerformanceSnapshot = {
   cacheMisses: number
   lineDomSamples: number
   tableDomSamples: number
+  measurementCandidatesTotal: number
+  measurementCandidatesVisited: number
+  measurementCandidatesSkipped: number
+  measurementRestartBlockIndex?: number
+  measurementRestartPageIndex?: number
+  measurementCacheRestores: number
+  fullRefinementFallbacks: number
+  fullRefinementFallbackReasons: string[]
 }
 
 type LayoutMetrics = {
@@ -38,6 +46,8 @@ type LayoutMetrics = {
   annotationsMs?: number
   postRenderMs?: number
   v2Performance?: PerformanceSnapshot
+  presentationInvalidation?: Record<string, unknown>
+  presentationTransactionCount?: number
   paginationPreview?: {
     pages: number
     blocks: number
@@ -196,6 +206,9 @@ async function readMetrics(page: Page): Promise<LayoutMetrics> {
       annotationsMs: number('annotationsMs'),
       postRenderMs: number('postRenderMs'),
       v2Performance: debug?.v2Performance as PerformanceSnapshot | undefined,
+      presentationInvalidation: debug?.presentationInvalidation as
+        Record<string, unknown> | undefined,
+      presentationTransactionCount: number('presentationTransactionCount'),
       paginationPreview: debug?.paginationPreview as LayoutMetrics['paginationPreview'],
     }
   })
@@ -312,10 +325,22 @@ function medianPerformance(samples: LayoutMetrics[]): PerformanceSnapshot | unde
     'cacheMisses',
     'lineDomSamples',
     'tableDomSamples',
+    'measurementCandidatesTotal',
+    'measurementCandidatesVisited',
+    'measurementCandidatesSkipped',
+    'measurementRestartBlockIndex',
+    'measurementRestartPageIndex',
+    'measurementCacheRestores',
+    'fullRefinementFallbacks',
   ]
-  return Object.fromEntries(
-    keys.map((key) => [key, median(snapshots.map((snapshot) => snapshot[key]))]),
-  ) as PerformanceSnapshot
+  return {
+    ...Object.fromEntries(
+      keys.map((key) => [key, median(snapshots.map((snapshot) => snapshot[key]))]),
+    ),
+    fullRefinementFallbackReasons: [
+      ...new Set(snapshots.flatMap((snapshot) => snapshot.fullRefinementFallbackReasons)),
+    ],
+  } as PerformanceSnapshot
 }
 
 function medianSample(samples: LayoutMetrics[], elapsedMs: number[]): Record<string, unknown> {
@@ -340,6 +365,8 @@ function medianSample(samples: LayoutMetrics[], elapsedMs: number[]): Record<str
     geometryMs: numeric('geometryMs'),
     annotationsMs: numeric('annotationsMs'),
     postRenderMs: numeric('postRenderMs'),
+    presentationInvalidation: samples[samples.length - 1]?.presentationInvalidation,
+    presentationTransactionCount: numeric('presentationTransactionCount'),
     v2Performance: medianPerformance(samples),
   }
 }
@@ -380,6 +407,7 @@ test('DOCX V2 long-document cold, warm, and local-edit performance', async () =>
           warmSamples.push(warm)
           warmElapsed.push(performance.now() - startedAt)
         }
+        const warmResult = medianSample(warmSamples, warmElapsed)
 
         const edits: Record<string, unknown> = {}
         for (const [label, fraction] of [
@@ -405,12 +433,21 @@ test('DOCX V2 long-document cold, warm, and local-edit performance', async () =>
         }
         const paginationPreview = await measurePaginationPreview(page)
 
+        if (workload.name === 'large-100p') {
+          const end = edits.end as { v2Performance?: PerformanceSnapshot }
+          expect(end.v2Performance?.measurementCandidatesTotal ?? 0).toBeGreaterThan(0)
+          expect(end.v2Performance?.measurementCandidatesSkipped ?? 0).toBeGreaterThan(0)
+          expect(end.v2Performance?.measurementCandidatesVisited ?? 0).toBeLessThan(
+            initial.v2Performance?.measurementCandidatesTotal ?? Number.POSITIVE_INFINITY,
+          )
+        }
+
         results.push({
           workload: workload.name,
           targetPages: workload.targetPages,
           paragraphs: workload.paragraphs,
           cold: { elapsedMs: coldMs, ...initial },
-          warm: medianSample(warmSamples, warmElapsed),
+          warm: warmResult,
           edits,
           paginationPreview,
         })

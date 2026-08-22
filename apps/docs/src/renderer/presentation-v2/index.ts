@@ -13,6 +13,7 @@ import {
 } from '../pagination'
 import type { HfFloatBox } from '../editor/hf-dom'
 import { paginatePresentationV2 } from './page-slicer'
+import type { PresentationInvalidationHint } from './measurement-invalidation'
 import type { PresentationV2PerformanceSink } from './performance'
 
 export * from './diagnostics'
@@ -20,6 +21,7 @@ export * from './geometry'
 export * from './post-render'
 export * from './geometry-probes'
 export * from './performance'
+export * from './measurement-invalidation'
 
 export type PresentationRenderer = 'v1' | 'v2'
 
@@ -37,6 +39,8 @@ export interface PresentationInput {
   sectionHfHeights?: SectionHfHeights[]
   /** Opt-in read-only V2 phase/caching counters; ignored by the V1 path. */
   performance?: PresentationV2PerformanceSink
+  /** Transient V2-only edit hint; V1 intentionally ignores presentation pruning state. */
+  invalidationHint?: PresentationInvalidationHint
 }
 
 /**

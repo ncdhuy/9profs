@@ -11,11 +11,23 @@ export type PresentationV2Phase =
 
 export type PresentationV2MeasurementKind = 'line' | 'table'
 
+export interface PresentationV2MeasurementWindowSnapshot {
+  totalCandidates: number
+  skippedPrefixCandidates: number
+  visitedCandidates: number
+  restartBlockIndex?: number
+  restartPageIndex?: number
+  optimized: boolean
+}
+
 export interface PresentationV2PerformanceSink {
   onTotal?: (durationMs: number) => void
   onPhase?: (phase: PresentationV2Phase, durationMs: number) => void
   onMeasurementCandidates?: (count: number) => void
   onMeasurementSample?: (kind: PresentationV2MeasurementKind, cacheHit: boolean) => void
+  onMeasurementCacheRestore?: (kind: PresentationV2MeasurementKind) => void
+  onMeasurementWindow?: (window: PresentationV2MeasurementWindowSnapshot) => void
+  onFullRefinementFallback?: (reason: string) => void
   onRefinementPass?: (changed: boolean) => void
   onResolve?: () => void
 }
@@ -35,6 +47,14 @@ export interface PresentationV2PerformanceSnapshot {
   cacheMisses: number
   lineDomSamples: number
   tableDomSamples: number
+  measurementCandidatesTotal: number
+  measurementCandidatesVisited: number
+  measurementCandidatesSkipped: number
+  measurementRestartBlockIndex?: number
+  measurementRestartPageIndex?: number
+  measurementCacheRestores: number
+  fullRefinementFallbacks: number
+  fullRefinementFallbackReasons: string[]
 }
 
 export interface PresentationV2PerformanceRecorder {
@@ -60,6 +80,14 @@ export function createPresentationV2PerformanceRecorder(): PresentationV2Perform
   let cacheMisses = 0
   let lineDomSamples = 0
   let tableDomSamples = 0
+  let measurementCandidatesTotal = 0
+  let measurementCandidatesVisited = 0
+  let measurementCandidatesSkipped = 0
+  let measurementRestartBlockIndex: number | undefined
+  let measurementRestartPageIndex: number | undefined
+  let measurementCacheRestores = 0
+  let fullRefinementFallbacks = 0
+  const fullRefinementFallbackReasons: string[] = []
 
   const sink: PresentationV2PerformanceSink = {
     onTotal: (durationMs) => {
@@ -81,6 +109,23 @@ export function createPresentationV2PerformanceRecorder(): PresentationV2Perform
       actualDomSamples++
       if (kind === 'line') lineDomSamples++
       else tableDomSamples++
+    },
+    onMeasurementCacheRestore: () => {
+      measurementCacheRestores++
+    },
+    onMeasurementWindow: (window) => {
+      measurementCandidatesTotal = Math.max(measurementCandidatesTotal, window.totalCandidates)
+      measurementCandidatesVisited += window.visitedCandidates
+      measurementCandidatesSkipped += window.skippedPrefixCandidates
+      if (window.optimized && measurementRestartBlockIndex === undefined) {
+        measurementRestartBlockIndex = window.restartBlockIndex
+        measurementRestartPageIndex = window.restartPageIndex
+      }
+    },
+    onFullRefinementFallback: (reason) => {
+      fullRefinementFallbacks++
+      if (!fullRefinementFallbackReasons.includes(reason))
+        fullRefinementFallbackReasons.push(reason)
     },
     onRefinementPass: () => {
       refinementPasses++
@@ -107,6 +152,22 @@ export function createPresentationV2PerformanceRecorder(): PresentationV2Perform
       cacheMisses,
       lineDomSamples,
       tableDomSamples,
+      // The first-pass candidate population can grow after a re-solve exposes
+      // new page/column candidates. Include the sampler attempts and cache-only
+      // prefix restores so this is a complete run-work count, not just the
+      // first candidate discovery result.
+      measurementCandidatesTotal: Math.max(
+        measurementCandidatesTotal,
+        measurementCandidates,
+        measurementCandidatesVisited + measurementCandidatesSkipped,
+      ),
+      measurementCandidatesVisited,
+      measurementCandidatesSkipped,
+      measurementRestartBlockIndex,
+      measurementRestartPageIndex,
+      measurementCacheRestores,
+      fullRefinementFallbacks,
+      fullRefinementFallbackReasons: [...fullRefinementFallbackReasons],
     }),
   }
 }

@@ -2025,11 +2025,21 @@ function lineSampleSig(el: HTMLElement, textH: number, zoomFactor: number): stri
 export interface PaginationMeasurementCandidate {
   block: BlockBox
   contentHeight: number
+  /** Existing block order, used only by V2's transient refinement window. */
+  blockIndex: number
 }
 
 /** Optional read-only observer for callers that need to profile the shared sampler. */
 export interface PaginationMeasurementInstrumentation {
   onSample?: (kind: 'line' | 'table', cacheHit: boolean) => void
+  onCacheRestore?: (kind: 'line' | 'table') => void
+}
+
+export interface PaginationMeasurementCandidateOptions {
+  /** Exclude the already-proven prefix without changing candidate semantics. */
+  fromBlockIndex?: number
+  /** Restrict candidate discovery to a prefix used for shared-cache hydration. */
+  toBlockIndex?: number
 }
 
 /**
@@ -2040,6 +2050,7 @@ export function paginationMeasurementCandidates(
   blocks: BlockBox[],
   geoms: SectionGeom[],
   slices?: PageSlice[],
+  options?: PaginationMeasurementCandidateOptions,
 ): PaginationMeasurementCandidate[] {
   const geomOf = (s: number) => geoms[Math.max(0, Math.min(s, geoms.length - 1))]
   // cut bounds = page bounds + column bounds of multi-column pages (blocks crossing within a column also need line-level splits)
@@ -2053,7 +2064,9 @@ export function paginationMeasurementCandidates(
     }
   })
   const candidates: PaginationMeasurementCandidate[] = []
-  for (let i = 0; i < blocks.length; i++) {
+  const from = Math.max(0, options?.fromBlockIndex ?? 0)
+  const to = Math.min(blocks.length, options?.toBlockIndex ?? blocks.length)
+  for (let i = from; i < to; i++) {
     const block = blocks[i]
     if (!block.el || block.lineBoxes || block.tableRows) continue
     // Anchored textbox/shape blocks are atomic like Word shapes: their inner
@@ -2076,7 +2089,7 @@ export function paginationMeasurementCandidates(
     )
       continue
 
-    candidates.push({ block, contentHeight: contentH })
+    candidates.push({ block, contentHeight: contentH, blockIndex: i })
   }
   return candidates
 }
@@ -2132,6 +2145,45 @@ export function samplePaginationBlock(
     return true
   }
   return false
+}
+
+/**
+ * Reattach an already-valid shared-cache entry to a fresh BlockBox without
+ * sampling the DOM. This is intentionally a cache read, not a second V2
+ * cache: lineSampleCache remains the only stored measurement authority.
+ */
+export function restoreCachedPaginationBlock(
+  block: BlockBox,
+  contentHeight: number,
+  zoomFactor: number,
+  metaOf?: BlockMetaOf,
+  instrumentation?: PaginationMeasurementInstrumentation,
+): boolean {
+  const textH = block.height - (block.spaceAfterPx ?? 0) - (block.spaceBeforePx ?? 0)
+  const sig = lineSampleSig(block.el!, textH, zoomFactor)
+  const cached = lineSampleCache.get(block.el!)
+  if (!cached || cached.sig !== sig) return false
+  const kind = block.el!.querySelector('tr') ? 'table' : 'line'
+  instrumentation?.onCacheRestore?.(kind)
+  if (kind === 'table') {
+    const rows = cached.rows?.map((r) => ({ ...r })) ?? []
+    if (rows.length === 0) return true
+    const flags =
+      block.docxIndex !== undefined ? metaOf?.(block.docxIndex)?.tableRowFlags : undefined
+    if (flags)
+      rows.forEach((r, i) => {
+        if (flags[i]?.isHeader) r.isHeader = true
+        if (flags[i]?.cantSplit) r.cantSplit = true
+      })
+    block.tableRows = rows
+    return true
+  }
+  const boundaries = cached.boundaries ? [...cached.boundaries] : []
+  if (boundaries.length === 0 && block.height > contentHeight) {
+    for (let y = contentHeight; y < block.height; y += contentHeight) boundaries.push(y)
+  }
+  if (boundaries.length > 0) block.lineBoxes = tileBoxes(boundaries, textH)
+  return true
 }
 
 export function fillLineBoxes(
