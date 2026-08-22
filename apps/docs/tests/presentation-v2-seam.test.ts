@@ -6,6 +6,8 @@ import { blocksToPmDoc, pmDocToSavePlan, type PmNode } from '../src/renderer/edi
 import { isDocDirty, type DocDirtyState } from '../src/renderer/doc-dirty'
 import {
   renderPresentation,
+  renderPresentationSnapshot,
+  renderPresentationV1,
   resolvePresentationRenderer,
   type PresentationRenderer,
 } from '../src/renderer/presentation-v2'
@@ -20,6 +22,7 @@ function presentationInput() {
     {
       top: 0,
       height: 640,
+      docxIndex: 3,
       lineBoxes: [
         { offsetInBlock: 0, height: 160 },
         { offsetInBlock: 160, height: 160 },
@@ -30,6 +33,7 @@ function presentationInput() {
     {
       top: 640,
       height: 700,
+      docxIndex: 7,
       tableRows: [{ height: 220, isHeader: true }, { height: 240 }, { height: 240 }],
       fixedWidthPx: 280,
     },
@@ -105,6 +109,22 @@ describe('DOCX presentation-v2 seam', () => {
       renderPresentation(renderer, presentationInput())
 
     expect(render('v2')).toEqual(render('v1'))
+  })
+
+  it('exposes equivalent V1/V2 layout snapshots without changing existing identities', () => {
+    const input = presentationInput()
+    const v1 = renderPresentationSnapshot('v1', input)
+    const v2 = renderPresentationSnapshot('v2', input)
+
+    expect(v1.pages).toEqual(renderPresentationV1(input))
+    expect(renderPresentation('v1', input)).toEqual(v1.pages)
+    expect(v2.pages).toEqual(v1.pages)
+    expect(v1.blocks).toBe(input.blocks)
+    expect(v1.sectionGeoms).toBe(input.sectionGeoms)
+    expect(v1.blocks.map((block) => block.docxIndex)).toEqual([3, 7])
+    expect(v1.pages.every((page) => v1.sectionGeoms[page.section] === input.sectionGeoms[page.section])).toBe(
+      true,
+    )
   })
 
   it('does not change PM JSON, dirty state, or save plan', () => {

@@ -32,7 +32,11 @@ import { estimateHfHeight, hfHeaderGeom, FOOTNOTE_SEPARATOR_H } from '../line-me
 import { toRoman } from '../note-format'
 import { useI18n } from '../i18n/locale'
 import { hfFloatPagePos } from '../editor/hf-dom'
-import { renderPresentation, type PresentationRenderer } from '../presentation-v2'
+import {
+  renderPresentationSnapshot,
+  type PresentationLayoutSnapshot,
+  type PresentationRenderer,
+} from '../presentation-v2'
 import { HeaderFooterArea } from './HeaderFooterArea'
 
 const twipsToPx = (twips: number) => (twips / 1440) * 96
@@ -195,7 +199,8 @@ export function PaginationPreview({
   suppressEscape?: boolean
 }) {
   const { t } = useI18n()
-  const [slices, setSlices] = useState<PageSlice[]>([])
+  const [layout, setLayout] = useState<PresentationLayoutSnapshot | null>(null)
+  const slices = layout?.pages ?? []
   const [pageNotes, setPageNotes] = useState<PageNoteItem[][]>([])
   /** Top Y of the endnote area (virtual coordinates); null = no endnotes */
   const [endnotesTop, setEndnotesTop] = useState<number | null>(null)
@@ -253,7 +258,7 @@ export function PaginationPreview({
       )
       const flowH = flowWithFloats ?? withEndnotes?.totalHeight ?? totalHeight
       setEndnotesTop(withEndnotes?.top ?? null)
-      let computed: PageSlice[]
+      let computed: PresentationLayoutSnapshot
       if (live.length > 0) {
         // each section's default-variant header/footer estimated heights → body push-down (matching the canvas)
         const refs = effectiveHfRefs(live)
@@ -284,7 +289,7 @@ export function PaginationPreview({
         const geoms = sectionGeoms(live, hfHs)
         // when the canvas column layout is inactive, measure as full-width single flow; the geometry drops column flow to match
         if (colMode === 'none') for (const g of geoms) if (g.cols) g.cols = undefined
-        computed = renderPresentation(presentationRenderer, {
+        computed = renderPresentationSnapshot(presentationRenderer, {
           blocks,
           sectionGeoms: geoms,
           totalHeight: flowH,
@@ -299,7 +304,7 @@ export function PaginationPreview({
             estimateHfHeight(hf.header, canvasContentW, hf.images?.header, hfHeaderGeom(section)),
           ) -
           effectiveBottomPx(section, estimateHfHeight(hf.footer, canvasContentW, hf.images?.footer))
-        computed = renderPresentation(presentationRenderer, {
+        computed = renderPresentationSnapshot(presentationRenderer, {
           blocks,
           sectionGeoms: [
             {
@@ -313,13 +318,13 @@ export function PaginationPreview({
           metaOf: blockMetaOf,
         })
       }
-      setSlices(computed)
-      setPageNotes(pageFootnotesOf ? pageFootnotesOf(blocks, computed) : [])
+      setLayout(computed)
+      setPageNotes(pageFootnotesOf ? pageFootnotesOf(computed.blocks, computed.pages) : [])
       // Per-page full clones explode on large documents (pages × doc DOM →
       // renderer OOM / "Promise was collected" during printToPDF). Past the
       // budget, snapshot per-block geometry and render pruned windows instead.
       const kidEls = Array.from(pm.children) as HTMLElement[]
-      if (computed.length * kidEls.length >= CLONE_PRUNE_BUDGET) {
+      if (computed.pages.length * kidEls.length >= CLONE_PRUNE_BUDGET) {
         const metas: CloneChild[] = []
         let gapAccum = 0
         for (const el of kidEls) {

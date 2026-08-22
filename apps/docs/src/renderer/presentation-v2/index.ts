@@ -24,6 +24,20 @@ export interface PresentationInput {
 }
 
 /**
+ * Read-only derived layout result shared by V1 and V2 consumers. The arrays are
+ * the existing GenOffice layout objects; this contract does not clone, persist,
+ * or own document/editor state.
+ */
+export interface PresentationLayoutSnapshot {
+  readonly renderer: PresentationRenderer
+  readonly blocks: BlockBox[]
+  readonly pages: PageSlice[]
+  readonly sectionGeoms: SectionGeom[]
+  readonly totalHeight: number
+  readonly zoomFactor: number
+}
+
+/**
  * Internal test/development switch. Set globalThis.__9profsDocsPresentationRenderer to
  * 'v2' before the Docs renderer mounts; unknown values and the unset state remain V1.
  */
@@ -46,7 +60,23 @@ export function renderPresentation(
   renderer: PresentationRenderer,
   input: PresentationInput,
 ): PageSlice[] {
-  return renderer === 'v2' ? renderPresentationV2(input) : renderPresentationV1(input)
+  return renderPresentationSnapshot(renderer, input).pages
+}
+
+/** Build one coherent presentation result while preserving the existing PageSlice API. */
+export function renderPresentationSnapshot(
+  renderer: PresentationRenderer,
+  input: PresentationInput,
+): PresentationLayoutSnapshot {
+  const pages = renderer === 'v2' ? renderPresentationV2(input) : renderPresentationV1(input)
+  return {
+    renderer,
+    blocks: input.blocks,
+    pages,
+    sectionGeoms: input.sectionGeoms,
+    totalHeight: input.totalHeight,
+    zoomFactor: input.zoomFactor,
+  }
 }
 
 /** V1 owns current Docs pagination behavior. */
