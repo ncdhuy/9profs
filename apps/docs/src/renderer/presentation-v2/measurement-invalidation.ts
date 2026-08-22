@@ -11,6 +11,38 @@ export type PresentationInvalidationReason =
   | 'page-flow-changed'
   | 'no-invalidation-hint'
 
+export type PresentationScheduleClass = 'FAST_LOCAL' | 'CONSERVATIVE'
+
+/** Benchmark sweep (50/100/150 ms) selected 50 ms: isolated wait fell materially and an 8-edit burst still ran only twice. */
+export const PRESENTATION_FAST_LOCAL_DELAY_MS = 50
+export const PRESENTATION_FAST_LOCAL_MAX_WAIT_MS = 250
+export const PRESENTATION_CONSERVATIVE_DELAY_MS = 300
+
+/**
+ * Resolve the narrow local-edit timing policy. The optional global override is
+ * a benchmark/debug hook only; production keeps the evidence-selected default.
+ */
+export function presentationScheduleDelayMs(
+  scheduleClass: PresentationScheduleClass,
+  now: number,
+  firstPendingAt?: number,
+): number {
+  if (scheduleClass === 'CONSERVATIVE') return PRESENTATION_CONSERVATIVE_DELAY_MS
+  const override = (
+    globalThis as typeof globalThis & {
+      __9profsDocsPresentationLocalDelayMs?: unknown
+    }
+  ).__9profsDocsPresentationLocalDelayMs
+  const localDelay =
+    typeof override === 'number' && Number.isFinite(override)
+      ? Math.max(0, Math.min(PRESENTATION_CONSERVATIVE_DELAY_MS, override))
+      : PRESENTATION_FAST_LOCAL_DELAY_MS
+  if (localDelay >= PRESENTATION_CONSERVATIVE_DELAY_MS) return localDelay
+  if (firstPendingAt === undefined) return localDelay
+  const elapsed = Math.max(0, now - firstPendingAt)
+  return Math.min(localDelay, Math.max(0, PRESENTATION_FAST_LOCAL_MAX_WAIT_MS - elapsed))
+}
+
 /**
  * Transient presentation-only information about the next layout run.
  *

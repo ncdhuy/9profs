@@ -30,6 +30,27 @@ type PerformanceSnapshot = {
   fullRefinementFallbackReasons: string[]
 }
 
+type SchedulerSnapshot = {
+  transactionsReceived: number
+  fastLocalTransactions: number
+  conservativeTransactions: number
+  scheduledLayouts: number
+  cancelledTimers: number
+  rescheduledTimers: number
+  mergedInvalidationHints: number
+  staleTimerCallbacks: number
+  layoutRuns: number
+  schedulerWaitMs: number
+  layoutExecutionMs: number
+  settleMs: number
+  transactionToSchedulerAcceptedMs: number
+  lastScheduleClass?: 'FAST_LOCAL' | 'CONSERVATIVE'
+  lastSchedulerWaitMs?: number
+  lastLayoutExecutionMs?: number
+  lastSettleMs?: number
+  lastTransactionToSchedulerAcceptedMs?: number
+}
+
 type LayoutMetrics = {
   pages: number
   blocks: number
@@ -46,6 +67,10 @@ type LayoutMetrics = {
   annotationsMs?: number
   postRenderMs?: number
   v2Performance?: PerformanceSnapshot
+  scheduler?: SchedulerSnapshot
+  benchmarkFirstRunMs?: number
+  benchmarkQuietGuardMs?: number
+  benchmarkSettledMs?: number
   presentationInvalidation?: Record<string, unknown>
   presentationTransactionCount?: number
   paginationPreview?: {
@@ -206,6 +231,7 @@ async function readMetrics(page: Page): Promise<LayoutMetrics> {
       annotationsMs: number('annotationsMs'),
       postRenderMs: number('postRenderMs'),
       v2Performance: debug?.v2Performance as PerformanceSnapshot | undefined,
+      scheduler: debug?.scheduler as SchedulerSnapshot | undefined,
       presentationInvalidation: debug?.presentationInvalidation as
         Record<string, unknown> | undefined,
       presentationTransactionCount: number('presentationTransactionCount'),
@@ -247,6 +273,7 @@ async function measurePaginationPreview(page: Page): Promise<LayoutMetrics['pagi
 }
 
 async function waitForSettledRun(page: Page, previousRunId: number): Promise<LayoutMetrics> {
+  const startedAt = performance.now()
   await expect
     .poll(
       async () => {
@@ -257,13 +284,36 @@ async function waitForSettledRun(page: Page, previousRunId: number): Promise<Lay
     )
     .toBe(true)
 
+  const firstRunMs = performance.now() - startedAt
+  let quietGuardMs = 0
   for (;;) {
     const first = await readRun(page)
+    const quietStartedAt = performance.now()
     await page.waitForTimeout(350)
     await runTwoFrames(page)
+    quietGuardMs += performance.now() - quietStartedAt
     const second = await readRun(page)
-    if (second.runId === first.runId) return readMetrics(page)
+    if (second.runId === first.runId) {
+      return {
+        ...(await readMetrics(page)),
+        benchmarkFirstRunMs: firstRunMs,
+        benchmarkQuietGuardMs: quietGuardMs,
+        benchmarkSettledMs: performance.now() - startedAt,
+      }
+    }
   }
+}
+
+async function configureLocalDelay(page: Page): Promise<void> {
+  const configured = process.env.PRESENTATION_LOCAL_DELAY_MS
+  if (configured === undefined) return
+  const delay = Number(configured)
+  if (!Number.isFinite(delay)) throw new Error('PRESENTATION_LOCAL_DELAY_MS must be numeric')
+  await page.evaluate((value) => {
+    ;(
+      window as unknown as { __9profsDocsPresentationLocalDelayMs?: number }
+    ).__9profsDocsPresentationLocalDelayMs = value
+  }, delay)
 }
 
 async function invokeRemeasure(page: Page): Promise<void> {
@@ -298,6 +348,42 @@ async function editAt(page: Page, fraction: number): Promise<void> {
   }, fraction)
   await page.locator('.ProseMirror').first().focus()
   await page.keyboard.insertText('x')
+}
+
+async function typingBurstAt(page: Page, fraction: number, count: number, intervalMs: number) {
+  await page.evaluate(
+    async ({ positionFraction, editCount, editIntervalMs }) => {
+      const aidocs = (window as unknown as { __aidocs?: { editor?: any } }).__aidocs
+      const editor = aidocs?.editor
+      if (!editor) throw new Error('Docs page did not expose the editor automation hook')
+      const size = editor.state.doc.content.size
+      const pos = Math.max(1, Math.min(size - 1, Math.floor(size * positionFraction)))
+      editor.commands.setTextSelection(pos)
+      editor.commands.focus()
+      editor.view.focus()
+      for (let index = 0; index < editCount; index++) {
+        editor.view.dispatch(editor.state.tr.insertText(String.fromCharCode(97 + index)))
+        if (index + 1 < editCount)
+          await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, editIntervalMs))
+      }
+    },
+    { positionFraction: fraction, editCount: count, editIntervalMs: intervalMs },
+  )
+}
+
+async function structuralEditAt(page: Page, fraction: number): Promise<void> {
+  await page.evaluate((positionFraction) => {
+    const aidocs = (window as unknown as { __aidocs?: { editor?: any } }).__aidocs
+    const editor = aidocs?.editor
+    if (!editor) throw new Error('Docs page did not expose the editor automation hook')
+    const size = editor.state.doc.content.size
+    editor.commands.setTextSelection(
+      Math.max(1, Math.min(size - 1, Math.floor(size * positionFraction))),
+    )
+    editor.commands.focus()
+    if (!editor.commands.setNode('docHeading', { level: 1 }))
+      throw new Error('Docs page could not apply structural heading edit')
+  }, fraction)
 }
 
 function median(values: number[]): number {
@@ -367,6 +453,10 @@ function medianSample(samples: LayoutMetrics[], elapsedMs: number[]): Record<str
     postRenderMs: numeric('postRenderMs'),
     presentationInvalidation: samples[samples.length - 1]?.presentationInvalidation,
     presentationTransactionCount: numeric('presentationTransactionCount'),
+    scheduler: samples[samples.length - 1]?.scheduler,
+    benchmarkFirstRunMs: numeric('benchmarkFirstRunMs'),
+    benchmarkQuietGuardMs: numeric('benchmarkQuietGuardMs'),
+    benchmarkSettledMs: numeric('benchmarkSettledMs'),
     v2Performance: medianPerformance(samples),
   }
 }
@@ -390,6 +480,7 @@ test('DOCX V2 long-document cold, warm, and local-edit performance', async () =>
       try {
         const page = await waitForPageWithUrl(launched.app, 'docs/out')
         await expect(page.locator('.ProseMirror').first()).toBeVisible({ timeout: 180_000 })
+        await configureLocalDelay(page)
         const initial = await waitForSettledRun(page, 0)
         initial.layoutRuns = initial.paginationRunId
         const coldMs = performance.now() - coldStartedAt
@@ -431,6 +522,25 @@ test('DOCX V2 long-document cold, warm, and local-edit performance', async () =>
           warmBaseline = editBaseline
           edits[label] = medianSample(samples, elapsed)
         }
+
+        let typingBurst: Record<string, unknown> | undefined
+        let structural: Record<string, unknown> | undefined
+        if (workload.name === 'large-100p') {
+          const burstBaseline = warmBaseline
+          await typingBurstAt(page, 0.5, 8, 25)
+          const burst = await waitForSettledRun(page, burstBaseline)
+          burst.layoutRuns = burst.paginationRunId - burstBaseline
+          typingBurst = { editCount: 8, intervalMs: 25, ...burst }
+          warmBaseline = burst.paginationRunId
+
+          const structuralBaseline = warmBaseline
+          await structuralEditAt(page, 0.65)
+          const structuralRun = await waitForSettledRun(page, structuralBaseline)
+          structuralRun.layoutRuns = structuralRun.paginationRunId - structuralBaseline
+          structural = structuralRun
+          warmBaseline = structuralRun.paginationRunId
+          expect(structuralRun.scheduler?.lastScheduleClass).toBe('CONSERVATIVE')
+        }
         const paginationPreview = await measurePaginationPreview(page)
 
         if (workload.name === 'large-100p') {
@@ -449,6 +559,11 @@ test('DOCX V2 long-document cold, warm, and local-edit performance', async () =>
           cold: { elapsedMs: coldMs, ...initial },
           warm: warmResult,
           edits,
+          typingBurst,
+          structural,
+          localDelayMs: process.env.PRESENTATION_LOCAL_DELAY_MS
+            ? Number(process.env.PRESENTATION_LOCAL_DELAY_MS)
+            : 50,
           paginationPreview,
         })
       } finally {

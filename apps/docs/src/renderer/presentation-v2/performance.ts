@@ -6,6 +6,8 @@
  * the sink (the Electron benchmark does so through the existing page debug
  * seam).
  */
+import type { PresentationScheduleClass } from './measurement-invalidation'
+
 export type PresentationV2Phase =
   'sectionNormalization' | 'initialPageSolve' | 'measurementRefinement' | 'parityFinalization'
 
@@ -55,6 +57,146 @@ export interface PresentationV2PerformanceSnapshot {
   measurementCacheRestores: number
   fullRefinementFallbacks: number
   fullRefinementFallbackReasons: string[]
+}
+
+export interface PresentationSchedulerSnapshot {
+  transactionsReceived: number
+  fastLocalTransactions: number
+  conservativeTransactions: number
+  scheduledLayouts: number
+  cancelledTimers: number
+  rescheduledTimers: number
+  mergedInvalidationHints: number
+  staleTimerCallbacks: number
+  layoutRuns: number
+  schedulerWaitMs: number
+  layoutExecutionMs: number
+  settleMs: number
+  transactionToSchedulerAcceptedMs: number
+  lastScheduleClass?: PresentationScheduleClass
+  lastSchedulerWaitMs?: number
+  lastLayoutExecutionMs?: number
+  lastSettleMs?: number
+  lastTransactionToSchedulerAcceptedMs?: number
+}
+
+export interface PresentationSchedulerRecorder {
+  onTransaction: (
+    scheduleClass: PresentationScheduleClass | undefined,
+    merged: boolean,
+    timestamp: number,
+  ) => void
+  onSchedulerAccepted: (scheduleClass: PresentationScheduleClass, timestamp: number) => void
+  onTimerScheduled: (rescheduled: boolean) => void
+  onTimerCancelled: (rescheduled: boolean) => void
+  onStaleTimerCallback: () => void
+  onLayoutStart: (scheduled: boolean, timestamp: number) => number
+  onLayoutEnd: (runToken: number, timestamp: number) => void
+  onSettled: (runToken: number, timestamp: number) => void
+  snapshot: () => PresentationSchedulerSnapshot
+}
+
+/** Create opt-in scheduler counters for one Docs presentation lifecycle. */
+export function createPresentationSchedulerRecorder(): PresentationSchedulerRecorder {
+  let transactionsReceived = 0
+  let fastLocalTransactions = 0
+  let conservativeTransactions = 0
+  let scheduledLayouts = 0
+  let cancelledTimers = 0
+  let rescheduledTimers = 0
+  let mergedInvalidationHints = 0
+  let staleTimerCallbacks = 0
+  let layoutRuns = 0
+  let schedulerWaitMs = 0
+  let layoutExecutionMs = 0
+  let settleMs = 0
+  let transactionToSchedulerAcceptedMs = 0
+  let lastScheduleClass: PresentationScheduleClass | undefined
+  let lastSchedulerWaitMs: number | undefined
+  let lastLayoutExecutionMs: number | undefined
+  let lastSettleMs: number | undefined
+  let lastTransactionToSchedulerAcceptedMs: number | undefined
+  let pendingTransactionAt: number | undefined
+  let pendingScheduleAt: number | undefined
+  let nextRunToken = 0
+  let activeRunToken = 0
+  let activeRunStartedAt: number | undefined
+  let activeRunEndedAt: number | undefined
+
+  return {
+    onTransaction: (scheduleClass, merged, timestamp) => {
+      transactionsReceived++
+      if (scheduleClass === 'FAST_LOCAL') fastLocalTransactions++
+      else if (scheduleClass === 'CONSERVATIVE') conservativeTransactions++
+      if (merged) mergedInvalidationHints++
+      if (scheduleClass !== undefined && pendingTransactionAt === undefined)
+        pendingTransactionAt = timestamp
+    },
+    onSchedulerAccepted: (scheduleClass, timestamp) => {
+      lastScheduleClass = scheduleClass
+      if (pendingTransactionAt !== undefined) {
+        lastTransactionToSchedulerAcceptedMs = timestamp - pendingTransactionAt
+        transactionToSchedulerAcceptedMs += lastTransactionToSchedulerAcceptedMs
+        pendingTransactionAt = undefined
+      }
+      pendingScheduleAt = timestamp
+    },
+    onTimerScheduled: (rescheduled) => {
+      scheduledLayouts++
+      if (rescheduled) rescheduledTimers++
+    },
+    onTimerCancelled: (_rescheduled) => {
+      cancelledTimers++
+    },
+    onStaleTimerCallback: () => {
+      staleTimerCallbacks++
+    },
+    onLayoutStart: (scheduled, timestamp) => {
+      const runToken = ++nextRunToken
+      activeRunToken = runToken
+      layoutRuns++
+      if (scheduled && pendingScheduleAt !== undefined) {
+        lastSchedulerWaitMs = timestamp - pendingScheduleAt
+        schedulerWaitMs += lastSchedulerWaitMs
+        pendingScheduleAt = undefined
+      }
+      activeRunStartedAt = timestamp
+      activeRunEndedAt = undefined
+      return runToken
+    },
+    onLayoutEnd: (runToken, timestamp) => {
+      if (runToken !== activeRunToken || activeRunStartedAt === undefined) return
+      lastLayoutExecutionMs = timestamp - activeRunStartedAt
+      layoutExecutionMs += lastLayoutExecutionMs
+      activeRunEndedAt = timestamp
+    },
+    onSettled: (runToken, timestamp) => {
+      if (runToken !== activeRunToken) return
+      if (activeRunEndedAt === undefined) return
+      lastSettleMs = timestamp - activeRunEndedAt
+      settleMs += lastSettleMs
+    },
+    snapshot: () => ({
+      transactionsReceived,
+      fastLocalTransactions,
+      conservativeTransactions,
+      scheduledLayouts,
+      cancelledTimers,
+      rescheduledTimers,
+      mergedInvalidationHints,
+      staleTimerCallbacks,
+      layoutRuns,
+      schedulerWaitMs,
+      layoutExecutionMs,
+      settleMs,
+      transactionToSchedulerAcceptedMs,
+      lastScheduleClass,
+      lastSchedulerWaitMs,
+      lastLayoutExecutionMs,
+      lastSettleMs,
+      lastTransactionToSchedulerAcceptedMs,
+    }),
+  }
 }
 
 export interface PresentationV2PerformanceRecorder {

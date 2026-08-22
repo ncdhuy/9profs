@@ -10,11 +10,15 @@ import {
 import {
   createFullPresentationInvalidationHint,
   mergePresentationInvalidationHints,
+  presentationScheduleDelayMs,
   presentationInvalidationHintFromTransaction,
 } from '../src/renderer/presentation-v2/measurement-invalidation'
 import { createPresentationRefinementWindowV2 } from '../src/renderer/presentation-v2/measurement'
 import { paginatePresentationV2 } from '../src/renderer/presentation-v2/page-slicer'
-import { createPresentationV2PerformanceRecorder } from '../src/renderer/presentation-v2/performance'
+import {
+  createPresentationSchedulerRecorder,
+  createPresentationV2PerformanceRecorder,
+} from '../src/renderer/presentation-v2/performance'
 
 const textSchema = new Schema({
   nodes: {
@@ -54,6 +58,41 @@ function layoutSignature(blocks: BlockBox[], pages: PageSlice[]) {
 }
 
 describe('Presentation V2 dirty-range measurement pruning', () => {
+  it('uses bounded fast-local scheduling and conservative structural timing', () => {
+    expect(presentationScheduleDelayMs('FAST_LOCAL', 100)).toBe(50)
+    expect(presentationScheduleDelayMs('FAST_LOCAL', 340, 100)).toBe(10)
+    expect(presentationScheduleDelayMs('FAST_LOCAL', 400, 100)).toBe(0)
+    expect(presentationScheduleDelayMs('CONSERVATIVE', 100, 0)).toBe(300)
+
+    vi.stubGlobal('__9profsDocsPresentationLocalDelayMs', 50)
+    expect(presentationScheduleDelayMs('FAST_LOCAL', 100)).toBe(50)
+    vi.unstubAllGlobals()
+  })
+
+  it('records scheduler acceptance, timer wait, execution, settle, and stale callbacks', () => {
+    const recorder = createPresentationSchedulerRecorder()
+    recorder.onTransaction('FAST_LOCAL', false, 10)
+    recorder.onSchedulerAccepted('FAST_LOCAL', 11)
+    recorder.onTimerScheduled(false)
+    const runToken = recorder.onLayoutStart(true, 111)
+    recorder.onLayoutEnd(runToken, 125)
+    recorder.onSettled(runToken, 141)
+    recorder.onStaleTimerCallback()
+
+    expect(recorder.snapshot()).toMatchObject({
+      transactionsReceived: 1,
+      fastLocalTransactions: 1,
+      scheduledLayouts: 1,
+      layoutRuns: 1,
+      schedulerWaitMs: 100,
+      layoutExecutionMs: 14,
+      settleMs: 16,
+      transactionToSchedulerAcceptedMs: 1,
+      staleTimerCallbacks: 1,
+      lastScheduleClass: 'FAST_LOCAL',
+    })
+  })
+
   it('classifies ordinary text replacement and falls back for structural changes', () => {
     const doc = textSchema.node('doc', null, [
       textSchema.node('paragraph', null, textSchema.text('ordinary body text')),

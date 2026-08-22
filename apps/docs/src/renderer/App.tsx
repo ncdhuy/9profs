@@ -49,11 +49,14 @@ import {
   captureGeometryProbeDiagnostics,
   capturePostRenderDiagnostics,
   createFullPresentationInvalidationHint,
+  createPresentationSchedulerRecorder,
   createPresentationV2PerformanceRecorder,
   createPresentationGeometry,
   headerFooterPagePlacement,
   mergePresentationInvalidationHints,
   presentationInvalidationHintFromTransaction,
+  presentationScheduleDelayMs,
+  PRESENTATION_CONSERVATIVE_DELAY_MS,
   renderPresentation,
   renderPresentationSnapshot,
   resolvePresentationRenderer,
@@ -1954,6 +1957,11 @@ export function App() {
     const contentH = twipsToPx(section.pageHeight) - effTopSingle - effBottomSingle
     let slices: PageSlice[] = []
     let timer: number | null = null
+    let disposed = false
+    let scheduleToken = 0
+    let fastLocalFirstPendingAt: number | undefined
+    const scheduler =
+      presentationRenderer === 'v2' ? createPresentationSchedulerRecorder() : undefined
     let suppressSig = ''
     const pmEl = () => document.querySelector('.editor-scroll .ProseMirror') as HTMLElement | null
     const blockIndexForHint = (pm: HTMLElement, blocks: BlockBox[], topLevelIndex: number) => {
@@ -1989,10 +1997,20 @@ export function App() {
         prev.current === current && prev.total === total ? prev : { current, total },
       )
     }
-    const remeasure = () => {
+    const remeasure = (scheduled = false, expectedScheduleToken?: number) => {
+      // Each timer owns one token; invalidated callbacks never read or paint stale editor state.
+      if (
+        disposed ||
+        (expectedScheduleToken !== undefined && expectedScheduleToken !== scheduleToken)
+      ) {
+        scheduler?.onStaleTimerCallback()
+        return
+      }
       const pm = pmEl()
       if (!pm) return
       const tStart = performance.now()
+      // This path is synchronous; timers and animation frames cannot enter until DOM mutation ends.
+      const schedulerRunToken = scheduler?.onLayoutStart(scheduled, tStart)
       const paginationRunId = ++paginationRunRef.current
       const pendingInvalidation = presentationInvalidationRef.current
       presentationInvalidationRef.current = null
@@ -2680,7 +2698,11 @@ export function App() {
           const last = slices[slices.length - 1]
           const lastSec = secList?.[last.section]?.settings ?? section
           const lastPlacement = headerFooterPagePlacement(snapshot, slices.length - 1, lastSec)
-          if (!lastPlacement) return
+          if (!lastPlacement) {
+            if (schedulerRunToken !== undefined)
+              scheduler?.onLayoutEnd(schedulerRunToken, performance.now())
+            return
+          }
           const paperTop =
             (lastGapEl.getBoundingClientRect().bottom - pm.getBoundingClientRect().top) / factor -
             lastPlacement.marginTop
@@ -2773,6 +2795,7 @@ export function App() {
           annotationsMs: tAnnotations,
           postRenderMs: tPostRender,
           v2Performance: v2Performance?.snapshot(),
+          scheduler: scheduler?.snapshot(),
           presentationInvalidation: invalidationHint,
           presentationTransactionCount: presentationTransactionCountRef.current,
         }
@@ -2781,6 +2804,11 @@ export function App() {
           requestAnimationFrame(() => {
             const dbg = (window as unknown as Record<string, Record<string, unknown>>).__pageDebug
             if (dbg) dbg.frameMs = performance.now() - tf
+            if (dbg?.paginationRunId === paginationRunId) {
+              scheduler?.onSettled(schedulerRunToken ?? 0, performance.now())
+              dbg.scheduler = scheduler?.snapshot()
+              dbg.frameMs = performance.now() - tf
+            }
           })
         })
         setGapNoteIds((prev) => {
@@ -2788,6 +2816,8 @@ export function App() {
           return gapIds
         })
       }
+      if (schedulerRunToken !== undefined)
+        scheduler?.onLayoutEnd(schedulerRunToken, performance.now())
       locate()
     }
     const onTransaction = ({
@@ -2796,13 +2826,24 @@ export function App() {
       transaction: import('@tiptap/pm/state').Transaction
     }) => {
       presentationTransactionCountRef.current++
+      const nextHint = presentationInvalidationHintFromTransaction(
+        transaction,
+        layoutEpoch,
+        getLineSampleFontEpoch(),
+      )
+      const previousHint = presentationInvalidationRef.current
       presentationInvalidationRef.current = mergePresentationInvalidationHints(
-        presentationInvalidationRef.current,
-        presentationInvalidationHintFromTransaction(
-          transaction,
-          layoutEpoch,
-          getLineSampleFontEpoch(),
-        ),
+        previousHint,
+        nextHint,
+      )
+      scheduler?.onTransaction(
+        !transaction.docChanged
+          ? undefined
+          : nextHint?.kind === 'local'
+            ? 'FAST_LOCAL'
+            : 'CONSERVATIVE',
+        previousHint !== null && nextHint !== undefined,
+        performance.now(),
       )
     }
     const onUpdate = () => {
@@ -2810,8 +2851,34 @@ export function App() {
       // ProseMirror hit test remains the explicit fallback until post-render readback settles.
       presentationGeometryRef.current = null
       presentationGeometrySourceRef.current = null
-      if (timer) window.clearTimeout(timer)
-      timer = window.setTimeout(remeasure, 300)
+      const now = performance.now()
+      const scheduleClass =
+        presentationRenderer === 'v2' && presentationInvalidationRef.current?.kind === 'local'
+          ? 'FAST_LOCAL'
+          : 'CONSERVATIVE'
+      scheduler?.onSchedulerAccepted(scheduleClass, now)
+      const rescheduled = timer !== null
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        scheduler?.onTimerCancelled(true)
+      }
+      if (scheduleClass === 'FAST_LOCAL') fastLocalFirstPendingAt ??= now
+      else fastLocalFirstPendingAt = undefined
+      const delay =
+        scheduleClass === 'FAST_LOCAL'
+          ? presentationScheduleDelayMs(scheduleClass, now, fastLocalFirstPendingAt)
+          : PRESENTATION_CONSERVATIVE_DELAY_MS
+      const expectedScheduleToken = ++scheduleToken
+      scheduler?.onTimerScheduled(rescheduled)
+      timer = window.setTimeout(() => {
+        timer = null
+        if (disposed || expectedScheduleToken !== scheduleToken) {
+          scheduler?.onStaleTimerCallback()
+          return
+        }
+        fastLocalFirstPendingAt = undefined
+        remeasure(true, expectedScheduleToken)
+      }, delay)
     }
     remeasure()
     // async @font-face loading triggers a full reflow (line-break points change); pagination
@@ -2830,7 +2897,9 @@ export function App() {
     editor?.on('transaction', onTransaction)
     editor?.on('update', onUpdate)
     return () => {
-      if (timer) window.clearTimeout(timer)
+      disposed = true
+      scheduleToken++
+      if (timer !== null) window.clearTimeout(timer)
       presentationGeometryRef.current = null
       presentationGeometrySourceRef.current = null
       document.fonts.removeEventListener('loadingdone', onFontsChanged)
