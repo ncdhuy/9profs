@@ -6,6 +6,7 @@ import {
   type PageSlice,
 } from '../pagination'
 import { refinePresentationMeasurementsV2 } from './measurement'
+import { normalizePresentationSectionsV2, type PresentationSectionInputsV2 } from './sections'
 
 export type PresentationV2PaginationInput = Pick<
   PresentationInput,
@@ -18,13 +19,20 @@ function prepareSemanticPagination(input: PresentationV2PaginationInput): void {
   if (input.metaOf) applyBlockMeta(input.blocks, input.metaOf)
 }
 
-function solveInitialPageFlow(input: PresentationV2PaginationInput): PageSlice[] {
-  return computeSectionedSlicesF2(input.blocks, input.sectionGeoms, input.totalHeight)
+function solveInitialPageFlow(
+  input: PresentationV2PaginationInput,
+  sections: PresentationSectionInputsV2,
+): PageSlice[] {
+  // Preserve the GenOffice zero-capacity fallback while making the decision
+  // explicit in the V2 section phase.
+  const geoms = sections.hasUsableGeometry ? sections.geoms : []
+  return computeSectionedSlicesF2(input.blocks, geoms, input.totalHeight)
 }
 
 function refineMeasuredPageFlow(
   input: PresentationV2PaginationInput,
   initialSlices: PageSlice[],
+  sections: PresentationSectionInputsV2,
 ): PageSlice[] {
   let slices = initialSlices
   // Keep the existing bounded fixed-point behavior: line/table measurement can
@@ -32,22 +40,22 @@ function refineMeasuredPageFlow(
   for (let pass = 0; pass < MAX_LINE_REFINEMENT_PASSES; pass++) {
     const changed = refinePresentationMeasurementsV2({
       blocks: input.blocks,
-      sectionGeoms: input.sectionGeoms,
+      sectionGeoms: sections.geoms,
       pages: slices,
       zoomFactor: input.zoomFactor,
       metaOf: input.metaOf,
     })
     if (!changed) break
-    slices = solveInitialPageFlow(input)
+    slices = solveInitialPageFlow(input, sections)
   }
   return slices
 }
 
 function finalizePhysicalParity(
   slices: PageSlice[],
-  sectionGeoms: PresentationV2PaginationInput['sectionGeoms'],
+  sections: PresentationSectionInputsV2,
 ): PageSlice[] {
-  return insertParityBlanks(slices, sectionGeoms)
+  return insertParityBlanks(slices, sections.geoms)
 }
 
 /**
@@ -57,7 +65,8 @@ function finalizePhysicalParity(
  */
 export function paginatePresentationV2(input: PresentationV2PaginationInput): PageSlice[] {
   prepareSemanticPagination(input)
-  const initialSlices = solveInitialPageFlow(input)
-  const refinedSlices = refineMeasuredPageFlow(input, initialSlices)
-  return finalizePhysicalParity(refinedSlices, input.sectionGeoms)
+  const sections = normalizePresentationSectionsV2(input.sectionGeoms)
+  const initialSlices = solveInitialPageFlow(input, sections)
+  const refinedSlices = refineMeasuredPageFlow(input, initialSlices, sections)
+  return finalizePhysicalParity(refinedSlices, sections)
 }
