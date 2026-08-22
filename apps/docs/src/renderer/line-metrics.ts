@@ -304,12 +304,23 @@ const TWIPS_TO_PX = 96 / 1440
 const GRID_SNAP_EPS = 0.001
 
 /**
- * Ceil a line height UP to whole grid cells. Single source for docGrid line
- * snapping: the pagination model calls it directly and cssGridLineExpr emits
- * the same formula (ε included) as a CSS round(up) — keep them in lockstep.
+ * Word's typed-grid measurements need a slightly wider boundary tolerance than
+ * the generic snap helper: the calibrated SimSun-class factor can land ~0.22%
+ * above a pitch while Word still keeps the line in that cell.
  */
-export function snapLineToPitch(heightPx: number, pitchPx: number): number {
-  return pitchPx > 0 ? Math.ceil(heightPx / pitchPx - GRID_SNAP_EPS) * pitchPx : heightPx
+const DOC_GRID_SNAP_EPS = 0.003
+
+/**
+ * Ceil a line height UP to whole grid cells. Single source for docGrid line
+ * snapping: the pagination model calls it directly with the Word-calibrated
+ * typed-grid tolerance, and cssGridLineExpr emits the matching CSS formula.
+ */
+export function snapLineToPitch(
+  heightPx: number,
+  pitchPx: number,
+  epsilon = GRID_SNAP_EPS,
+): number {
+  return pitchPx > 0 ? Math.ceil(heightPx / pitchPx - epsilon) * pitchPx : heightPx
 }
 
 /**
@@ -332,7 +343,7 @@ export function computeLineHeight(
     docGrid && (docGrid.type === 'lines' || docGrid.type === 'linesAndChars') && docGrid.linePitch
       ? docGrid.linePitch * TWIPS_TO_PX
       : 0
-  const snapped = snapLineToPitch(naturalLineH, pitchPx)
+  const snapped = snapLineToPitch(naturalLineH, pitchPx, DOC_GRID_SNAP_EPS)
 
   if (lineRule === 'exact' && lineRawTwips !== undefined) {
     // fixed line height: use the specified value regardless of font size
@@ -744,10 +755,10 @@ export function isKoreanFontName(fontFamily: string): boolean {
 const GRID_PITCH = 'var(--doc-grid-pitch,0.0001px)'
 
 /** grid-snapped single-line height; docStyleCss assigns it to --doc-line-grid in typed-grid docs.
- *  CSS mirror of snapLineToPitch (same ε); 1em is the paragraph's own font size —
+ *  CSS mirror of snapLineToPitch with DOC_GRID_SNAP_EPS; 1em is the paragraph's own font size —
  *  Word snaps by the tallest run per line, one line-height per paragraph is our simplification. */
 export function cssGridLineExpr(): string {
-  return `round(up, calc(var(--doc-line-factor,1.2) * 1em - ${GRID_PITCH} * ${GRID_SNAP_EPS}), ${GRID_PITCH})`
+  return `round(up, calc(var(--doc-line-factor,1.2) * 1em - ${GRID_PITCH} * ${DOC_GRID_SNAP_EPS}), ${GRID_PITCH})`
 }
 
 /** SimSun-gap lifted line (・/〜 runs): multiple × grid-snapped 1.7143em, mirroring the

@@ -32,6 +32,7 @@ interface PresentationFixture {
   id: string
   file: string
   features: string[]
+  expectedPageCount?: number
 }
 
 interface RendererRun {
@@ -78,6 +79,12 @@ const FIXTURES: PresentationFixture[] = [
     id: 'cjk-doc-grid',
     file: resolve(CORPUS, '02-chinese-long-docgrid.docx'),
     features: ['CJK', 'document grid'],
+  },
+  {
+    id: 'headings-keepnext-doc-grid',
+    file: resolve(CORPUS, '04-headings-keepnext.docx'),
+    features: ['CJK', 'document grid', 'keepNext'],
+    expectedPageCount: 4,
   },
 ]
 
@@ -529,6 +536,15 @@ for (const fixture of FIXTURES) {
       expect(actual.observations.loaded.renderer, `fixture=${fixture.id} V2 debug renderer`).toBe(
         'v2',
       )
+      if (fixture.expectedPageCount !== undefined) {
+        for (const run of [expected, actual]) {
+          const pages = (run.observations.loaded.postRender as { pages?: unknown[] } | undefined)
+            ?.pages
+          expect(pages?.length, `fixture=${fixture.id} renderer=${run.renderer} page count`).toBe(
+            fixture.expectedPageCount,
+          )
+        }
+      }
 
       const unavailable = [
         ...Object.values(expected.observations).flatMap(unavailableGeometry),

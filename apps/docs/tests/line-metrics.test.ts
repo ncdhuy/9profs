@@ -160,6 +160,13 @@ describe('computeLineHeight', () => {
     expect(h).toBeCloseTo(312 * (96 / 1440), 2)
   })
 
+  it('Word-calibrated CJK lines just above a typed grid stay in the lower cell', () => {
+    const docGrid = { type: 'lines' as const, linePitch: 312 }
+    const naturalLineH = 16 * 1.3029 // 12pt SimSun-class line metric
+    const h = computeLineHeight(naturalLineH, 'auto', 276, docGrid)
+    expect(h).toBeCloseTo(312 * (96 / 1440) * (276 / 240), 2)
+  })
+
   it('docGrid lines mode: taller lines take more whole cells', () => {
     const docGrid = { type: 'lines' as const, linePitch: 300 }
     const h = computeLineHeight(55, 'auto', 240, docGrid)
@@ -211,7 +218,7 @@ describe('snapLineToPitch', () => {
 
   it('cssGridLineExpr mirrors the same formula and ε', () => {
     expect(cssGridLineExpr()).toBe(
-      'round(up, calc(var(--doc-line-factor,1.2) * 1em - var(--doc-grid-pitch,0.0001px) * 0.001), var(--doc-grid-pitch,0.0001px))',
+      'round(up, calc(var(--doc-line-factor,1.2) * 1em - var(--doc-grid-pitch,0.0001px) * 0.003), var(--doc-grid-pitch,0.0001px))',
     )
   })
 })

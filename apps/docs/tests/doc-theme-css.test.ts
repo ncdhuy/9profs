@@ -115,7 +115,7 @@ describe('docStyleCss — typed line grid', () => {
       parsedWithSectPr('<w:sectPr><w:docGrid w:type="lines" w:linePitch="360"/></w:sectPr>'),
     )
     expect(css).toContain(
-      '.doc-page, .doc-page * { --doc-line-grid:round(up, calc(var(--doc-line-factor,1.2) * 1em - var(--doc-grid-pitch,0.0001px) * 0.001), var(--doc-grid-pitch,0.0001px)) }',
+      '.doc-page, .doc-page * { --doc-line-grid:round(up, calc(var(--doc-line-factor,1.2) * 1em - var(--doc-grid-pitch,0.0001px) * 0.003), var(--doc-grid-pitch,0.0001px)) }',
     )
   })
 
