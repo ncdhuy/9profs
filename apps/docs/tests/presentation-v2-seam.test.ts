@@ -84,6 +84,15 @@ function persistenceBlock(): Block {
   }
 }
 
+function pageGapBoundaryInputs(snapshot: ReturnType<typeof renderPresentationSnapshot>) {
+  return snapshot.pages.slice(1).map((page, index) => ({
+    previousStart: snapshot.pages[index].start,
+    previousEnd: snapshot.pages[index].end,
+    start: page.start,
+    section: page.section,
+  }))
+}
+
 describe('DOCX presentation-v2 seam', () => {
   it('defaults to V1 and accepts deterministic internal V1/V2 selection', () => {
     expect(resolvePresentationRenderer()).toBe('v1')
@@ -125,6 +134,19 @@ describe('DOCX presentation-v2 seam', () => {
     expect(v1.pages.every((page) => v1.sectionGeoms[page.section] === input.sectionGeoms[page.section])).toBe(
       true,
     )
+  })
+
+  it('keeps page-gap boundary inputs equivalent through the shared snapshot', () => {
+    const input = presentationInput()
+    const v1 = renderPresentationSnapshot('v1', input)
+    const v2 = renderPresentationSnapshot('v2', input)
+
+    expect(pageGapBoundaryInputs(v1)).toHaveLength(v1.pages.length - 1)
+    expect(pageGapBoundaryInputs(v2)).toEqual(pageGapBoundaryInputs(v1))
+    expect(pageGapBoundaryInputs(v2).map((boundary) => boundary.start)).toEqual(
+      pageGapBoundaryInputs(v1).map((boundary) => boundary.start),
+    )
+    expect(pageGapBoundaryInputs(v1).every(({ section }) => input.sectionGeoms[section])).toBe(true)
   })
 
   it('does not change PM JSON, dirty state, or save plan', () => {

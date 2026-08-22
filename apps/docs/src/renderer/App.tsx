@@ -50,6 +50,7 @@ import {
   capturePostRenderDiagnostics,
   createPresentationGeometry,
   renderPresentation,
+  renderPresentationSnapshot,
   resolvePresentationRenderer,
   type GeometryProbe,
   type PresentationGeometry,
@@ -2006,15 +2007,15 @@ export function App() {
         const flowH = flowWithFloats ?? withEndnotes?.totalHeight ?? totalHeight
         const hfHs = secList ? hfHeightsOf(secList) : null
         const t1 = performance.now()
-        const s = secList
-          ? renderPresentation(presentationRenderer, {
+        const layout = secList
+          ? renderPresentationSnapshot(presentationRenderer, {
               blocks,
               sectionGeoms: colGeomsFor(sectionGeoms(secList, hfHs!)),
               totalHeight: flowH,
               zoomFactor: factor,
               metaOf: blockMetaOf,
             })
-          : renderPresentation(presentationRenderer, {
+          : renderPresentationSnapshot(presentationRenderer, {
               blocks,
               sectionGeoms: [{ contentHeight: contentH, forceBreak: false }],
               totalHeight: flowH,
@@ -2022,10 +2023,13 @@ export function App() {
               metaOf: blockMetaOf,
             })
         tSlice = performance.now() - t1
-        return { blocks, secList, hfHs, s, floats }
+        return { layout, secList, hfHs, floats }
       })
-      const { blocks, secList, hfHs, floats } = measured
-      slices = measured.s
+      const { layout, secList, hfHs, floats } = measured
+      // Page-gap presentation consumes one coherent layout result; DOM decoration
+      // remains the responsibility of setPageGaps below.
+      const { blocks } = layout
+      slices = layout.pages
       // document-end footer shows the last page's displayed number, not the physical count
       if (slices.length > 0) {
         const lastIdx = slices.length - 1
