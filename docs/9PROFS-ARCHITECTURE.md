@@ -108,17 +108,26 @@ branch divergence includes:
 `packages/agent-core`, `packages/ai-provider`, and `packages/ai-search` are
 present and useful, but are not evidence that 9Profs Core has been implemented.
 
+### Phase 0 status
+
+| Area                       | Status          | Evidence                                                                                  |
+| -------------------------- | --------------- | ----------------------------------------------------------------------------------------- |
+| Phase 0 contracts          | IMPLEMENTED     | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams  |
+| AionCore runtime           | NOT IMPLEMENTED | No agent runtime, process, or AionCore source has been ported                             |
+| OfficeCLI integration      | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling |
+| GenOffice mutation adapter | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration          |
+| Research domain            | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                     |
+
 ### Not implemented yet
 
 No repository package currently establishes:
 
-- a 9Profs Core runtime/service boundary;
-- an assistant registry, shared skill registry, MCP layer, or extension host;
+- an AionCore/9Profs agent runtime or service boundary;
+- an MCP layer, extension host, or skill filesystem loader;
 - a research/review/citation/regulation domain;
-- `DocumentChangeSet` and `DocumentMutationGateway` contracts;
 - a GenOffice document adapter that owns AI mutations through editor
   transactions;
-- an OfficeCLI sidecar/adapter or active-document ownership registry;
+- OfficeCLI process integration or active-document ownership enforcement;
 - account, subscription, credits, remote workspace, or SaaS billing services.
 
 These are future architecture, not current capabilities.
@@ -229,8 +238,11 @@ behavior stays intact until a compatible replacement exists and is validated.
 ### Phase 0 — architecture and contracts
 
 - Keep this document and the DOCX status documents canonical.
-- Define `DocumentChangeSet`, snapshot, active-document ownership, and mutation
-  gateway contracts without implementing a writer.
+- `packages/9profs-core/` and `packages/document-gateway/` define the Phase 0
+  contracts; `packages/genoffice-adapter/` and `packages/officecli-adapter/`
+  establish compile-checked seams only.
+- Define active-document ownership and mutation gateway contracts without
+  implementing a writer.
 - Keep V1 as the Docs default. Continue V2 parity, geometry, position mapping,
   save/reopen, and preservation checks; treat V2 as experimental.
 - Exit when architecture references match real paths and no document layer has

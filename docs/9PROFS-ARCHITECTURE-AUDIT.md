@@ -41,7 +41,8 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Markdown                 | Tiptap editor, `apps/markdown/src/renderer/markdown/docText.ts`, optional `export/docxExport.ts`                           | Implemented; plain-file-first                 |
 | Shared AI                | `agent-core`, `ai-provider`, `ai-search`, and app-level AI skills/tools/transports                                         | Implemented local foundation; not 9Profs Core |
 | Local workspace data     | `packages/project-store` local projects/chats/attachments                                                                  | Implemented local persistence; not SaaS       |
-| Research/product backend | No research domain, document gateway, OfficeCLI, assistant registry, MCP/extension host, or account/billing backend        | Future                                        |
+| Phase 0 contracts        | `packages/9profs-core`, `packages/document-gateway`, and compile-checked adapter seams                                     | Implemented; contracts only                   |
+| Research/product backend | No research domain, runtime, OfficeCLI process integration, or account/billing backend                                     | Future                                        |
 
 ## GenOffice inheritance and current divergence
 
@@ -145,7 +146,12 @@ The target architecture proposes these compatible future boundaries:
 - `packages/officecli-adapter/` for pinned OfficeCLI calls and detached-file
   policy.
 
-These boundaries are specifications only. None is implemented by this task.
+Phase 0 contract portions are implemented in `packages/9profs-core/` and
+`packages/document-gateway/`. `packages/genoffice-adapter/` and
+`packages/officecli-adapter/` are compile-checked skeletons only.
+
+The AionCore runtime, OfficeCLI integration, GenOffice mutation adapter, and
+research domain remain NOT IMPLEMENTED.
 
 ## Migration conclusion
 

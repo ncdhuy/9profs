@@ -1,0 +1,17 @@
+export type {
+  ApprovedDocumentChangeSet,
+  DocumentAuthority,
+  DocumentChange,
+  DocumentChangeSet,
+  DocumentChangeSetId,
+  DocumentChangeSetBase,
+  DocumentId,
+  DocumentInspection,
+  DocumentInspectionRequest,
+  DocumentInspector,
+  DocumentMutationGateway,
+  DocumentMutationResult,
+  GenOfficeActiveDocumentAuthority,
+  ProposedDocumentChangeSet,
+  RejectedDocumentChangeSet,
+} from './types'
