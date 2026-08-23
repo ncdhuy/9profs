@@ -42,7 +42,8 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Shared AI                | `agent-core`, `ai-provider`, `ai-search`, and app-level AI skills/tools/transports                                         | Implemented local foundation; not 9Profs Core |
 | Local workspace data     | `packages/project-store` local projects/chats/attachments                                                                  | Implemented local persistence; not SaaS       |
 | Phase 0 contracts        | `packages/9profs-core`, `packages/document-gateway`, and compile-checked adapter seams                                     | Implemented; contracts only                   |
-| Research/product backend | No research domain, runtime, OfficeCLI process integration, or account/billing backend                                     | Future                                        |
+| Rust Core foundation     | `9profs-core-rs/` common/API/SQLite/realtime/runtime/app crates; loopback HTTP/WebSocket bootstrap                         | Implemented; foundation only                  |
+| Research/product backend | No research domain, OfficeCLI process integration, or account/billing backend                                              | Future                                        |
 
 ## GenOffice inheritance and current divergence
 
@@ -119,7 +120,8 @@ No package is removed, phased out, or replaced by this audit.
 2. Format engines and existing app save paths are the source of truth for
    persisted Office bytes. DOCX persistence is protected in `docx-engine`.
 3. Current AI state is per-run/local in app panels, agent loop, and provider
-   streams. No shared 9Profs runtime state owner exists.
+   streams. `9profs-core-rs` now owns only runtime foundation state; no agent
+   domain state exists yet.
 4. Current skills are app-local; no assistant or shared skill registry exists.
 5. Current search/provider/native integrations are adapters, not an Office
    ownership layer.
@@ -147,11 +149,13 @@ The target architecture proposes these compatible future boundaries:
   policy.
 
 Phase 0 contract portions are implemented in `packages/9profs-core/` and
-`packages/document-gateway/`. `packages/genoffice-adapter/` and
+`packages/document-gateway/`. Phase 1A Rust Core foundation is implemented in
+`9profs-core-rs/`; `packages/genoffice-adapter/` and
 `packages/officecli-adapter/` are compile-checked skeletons only.
 
-The AionCore runtime, OfficeCLI integration, GenOffice mutation adapter, and
-research domain remain NOT IMPLEMENTED.
+Agent execution/AionRS, OfficeCLI integration, GenOffice mutation adapter, and
+research domain remain NOT IMPLEMENTED. AionCore audit SHA:
+`7ac84f93c5f81e1b1cc41f8119c089df72d63afc`.
 
 ## Migration conclusion
 

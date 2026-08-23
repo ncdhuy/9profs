@@ -59,6 +59,10 @@ External Tool Adapters
 └─ future OfficeCLI and optional Dify-backed workflows
 ```
 
+The Rust Core runtime lives in `9profs-core-rs/` behind an HTTP/WebSocket
+transport boundary. It is not a TypeScript package dependency and does not own
+Office document state or persistence.
+
 The Electron shell hosts the Office applications; it is not a second Office
 document writer. Shared packages such as `file-parse`, `pdf2docx`,
 `font-metrics`, `electron-utils`, `i18n`, and `ui` remain supporting
@@ -113,16 +117,36 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Area                       | Status          | Evidence                                                                                  |
 | -------------------------- | --------------- | ----------------------------------------------------------------------------------------- |
 | Phase 0 contracts          | IMPLEMENTED     | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams  |
-| AionCore runtime           | NOT IMPLEMENTED | No agent runtime, process, or AionCore source has been ported                             |
+| Phase 1A Rust Core         | IMPLEMENTED     | `9profs-core-rs/` transport/runtime foundation; no product domains                        |
+| Agent runtime              | NOT IMPLEMENTED | No agent execution, AionRS, or process runtime has been ported                            |
 | OfficeCLI integration      | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling |
 | GenOffice mutation adapter | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration          |
 | Research domain            | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                     |
+
+### Phase 1A Rust Core foundation
+
+The Phase 1A Rust Core foundation is intentionally limited to:
+
+- `nineprofs-core-rs/` with common, API DTO, SQLite, realtime, runtime, and
+  composition-root crates;
+- `/api/health`, `/api/runtime`, and `/ws` transport endpoints;
+- loopback-only default binding at `127.0.0.1:39761` with no wildcard CORS;
+- a reserved launch-scoped session-secret field, with authentication deferred;
+- `packages/9profs-core/src/transport.ts` as an optional TypeScript mapping.
+  It does not import Rust code or replace Electron IPC.
+
+AionCore audit source: commit
+`7ac84f93c5f81e1b1cc41f8119c089df72d63afc` on `main`. Adapted source patterns
+came from `ARCHITECTURE.md`, the root `Cargo.toml`, `crates/aionui-common`,
+`aionui-api-types`, `aionui-db`, `aionui-realtime`, `aionui-runtime`, and
+`aionui-app`. GenOffice baseline inspection used commit
+`f68df70e222d47aa08211f9a2d7748c610d1d6aa` on `main`.
 
 ### Not implemented yet
 
 No repository package currently establishes:
 
-- an AionCore/9Profs agent runtime or service boundary;
+- an agent execution runtime, assistant registry, or service domain;
 - an MCP layer, extension host, or skill filesystem loader;
 - a research/review/citation/regulation domain;
 - a GenOffice document adapter that owns AI mutations through editor
@@ -248,12 +272,20 @@ behavior stays intact until a compatible replacement exists and is validated.
 - Exit when architecture references match real paths and no document layer has
   an ambiguous write authority.
 
-### Phase 1 — 9Profs Core foundation
+### Phase 1A — 9Profs Rust Core runtime foundation — IMPLEMENTED
 
-- Add the smallest runtime package around configuration, workspace/project
-  contracts, events, policy, and usage hooks.
-- Adapt `agent-core` without changing Office editor behavior.
-- Keep local `project-store` and Electron IPC working.
+- Rust workspace lives in `9profs-core-rs/`; root scripts expose
+  `core:build`, `core:test`, and `core:run` without changing normal `dev`.
+- Dependency direction is `nineprofs-core` app → `nineprofs-runtime` →
+  `nineprofs-realtime`/`nineprofs-db` → `nineprofs-api-types`/`nineprofs-common`.
+- HTTP exposes `/api/health` and `/api/runtime`; WebSocket exposes `/ws`.
+- Default bind is loopback (`127.0.0.1:39761`). No wildcard CORS policy is
+  installed. A launch-scoped session secret is reserved in runtime config but
+  authentication is not enabled yet.
+- TypeScript keeps `@genoffice/9profs-core` as the application contract layer;
+  `src/transport.ts` maps stable DTOs and does not depend on Rust details.
+- Existing Electron IPC, GenOffice Office behavior, and Sheets sidecar remain
+  unchanged.
 
 ### Phase 2 — agent runtime, assistants, skills, MCP, extensions
 

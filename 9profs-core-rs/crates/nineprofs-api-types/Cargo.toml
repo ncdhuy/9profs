@@ -1,0 +1,12 @@
+[package]
+name = "nineprofs-api-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nineprofs-common = { path = "../nineprofs-common" }
+serde.workspace = true
+serde_json.workspace = true
+

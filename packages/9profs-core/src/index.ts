@@ -14,3 +14,12 @@ export type {
   ToolId,
   ToolProvider,
 } from './types'
+
+export { createCoreTransport } from './transport'
+export type {
+  CoreFetch,
+  CoreHealth,
+  CoreResponse,
+  CoreRuntimeInfo,
+  CoreTransport,
+} from './transport'
