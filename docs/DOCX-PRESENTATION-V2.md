@@ -1,197 +1,131 @@
 # DOCX presentation-v2 boundary
 
-Status: future design boundary only. No presentation-v2 implementation is authorized by this document.
+Status: implemented experimental renderer boundary. V1 remains the default
+production path. V2 is available through an internal/test selector and is not a
+user-facing replacement or a new document model.
 
-Evidence base: `docs/9PROFS-ARCHITECTURE-AUDIT.md`.
+This document records current source status and protected contracts. The
+canonical cross-product architecture is [9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md).
 
-## Purpose
+## Current implementation status
 
-Improve DOCX visual presentation/layout independently of the existing DOCX persistence and editing-state engine. The first implementation is a reversible seam/proof, not a new layout algorithm.
+| Capability                                 | Status                   | Source evidence                                                                                                                                                                                                                                     |
+| ------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Renderer selection                         | Implemented experimental | `apps/docs/src/renderer/presentation-v2/index.ts` defines `PresentationRenderer`, defaults to `v1`, and resolves an internal global/query override.                                                                                                 |
+| V1 pagination                              | Fallback/legacy baseline | `renderPresentationV1` uses existing `sliceWithLineSplit` and current `apps/docs/src/renderer/pagination.ts` behavior.                                                                                                                              |
+| V2 page flow                               | Implemented experimental | `presentation-v2/page-slicer.ts` performs V2 orchestration, bounded refinement, section normalization, and performance recording while reusing GenOffice `BlockBox`, `PageSlice`, and `computeSectionedSlicesF2` primitives.                        |
+| V2 measurement/invalidation                | Implemented experimental | `measurement.ts`, `measurement-context.ts`, and `measurement-invalidation.ts` provide refinement windows, font/zoom invalidation, transaction classification, and conservative fallback.                                                            |
+| V2 geometry and post-render readback       | Implemented experimental | `geometry.ts`, `geometry-probes.ts`, `post-render.ts`, and App `__pageDebug` capture page, gap, header/footer, float, caret, selection, and position geometry.                                                                                      |
+| Parity diagnostics                         | Implemented experimental | `diagnostics.ts` normalizes and compares presentation/model values with explicit geometry tolerance and diagnostic categories.                                                                                                                      |
+| Automated proof                            | Partial                  | V2 unit tests, geometry tests, Docs fixture tests, and `e2e/docs-presentation-parity.spec.ts` cover selection, sections, measurement, dirty/save/reopen preservation, and browser geometry. This is not a claim that V2 is ready to become default. |
+| Independent replacement of all V1 behavior | Future                   | Requires broader fidelity proof and a deliberate decision to replace individual components. Keep V1 available.                                                                                                                                      |
+
+V2 is therefore more than a design document and more than a delegated page
+array. It has its own orchestration and diagnostics, but it remains compatible
+with and dependent on established GenOffice presentation primitives. It does
+not own persistence or editor state.
 
 ## Protected contracts
 
-The following remain protected and are not presentation-v2 ownership:
+| Protected area            | Repository contract                                                                                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OOXML parse               | `packages/docx-engine/src/parse.ts`, `types.ts`, block construction, raw XML fragments, `docxIndex`, sections, styles, numbering, comments, notes, headers/footers, and unsupported content |
+| OOXML patch/generate/save | `packages/docx-engine/src/patch.ts`, `generate.ts`, `zip-load.ts`; surgical part updates and untouched-entry preservation                                                                   |
+| Editor/model conversion   | `apps/docs/src/renderer/editor/convert.ts`; `blocksToPmDoc`, `pmDocToSavePlan`, model identity, anchors, SDT shells, and save-plan semantics                                                |
+| Tiptap/ProseMirror state  | Docs `App.tsx` and `editor/*`; schema, transactions, nested editors, undo/redo, selections, and editor positions                                                                            |
+| Revisions/comments        | Docs `editor/revisions.ts` and `comments.ts`; revision mapping, comment ranges, and OOXML emission                                                                                          |
+| Dirty state               | `apps/docs/src/renderer/doc-dirty.ts`; editor and document metadata dirty flags                                                                                                             |
+| Save/reparse              | `apps/docs/src/renderer/file-actions.ts`, `save-until-persisted.ts`; snapshot, atomic save, race handling, reparse, recovery, undo/caret/scroll preservation                                |
+| Main/preload IPC          | `apps/docs/src/main/docs-main.ts` and `apps/docs/src/preload/index.ts`; filesystem, encryption, recovery, save, and export boundaries                                                       |
 
-| Protected area | Repository contract |
-|---|---|
-| OOXML parse | `packages/docx-engine/src/parse.ts:184-422 (parseDocx)`; block construction, raw XML fragments, `docxIndex`, original bytes, sections, styles, numbering, comments, notes, headers/footers, and unsupported content |
-| OOXML patch/generate/save | `packages/docx-engine/src/patch.ts:380 (saveDocx)`, `generate.ts`, `types.ts`, `zip-load.ts`; surgical part updates and untouched-entry preservation |
-| Editor/model conversion | `apps/docs/src/renderer/editor/convert.ts:62-81 (blocksToPmDoc)` and `:1114 (pmDocToSavePlan)`; model identity, anchors, SDT shells, and save plan semantics |
-| Tiptap/ProseMirror state | `apps/docs/src/renderer/App.tsx:641-772`; `editor/extensions.ts:3477+`, `marks.ts`, nested editors, transactions, undo/redo, and editor positions |
-| Revisions/comments | `apps/docs/src/renderer/editor/revisions.ts:574 (TrackChangesExtension)` and `comments.ts`; revision mapping, acceptance/rejection, comment ranges, and OOXML emission |
-| Dirty state | `apps/docs/src/renderer/doc-dirty.ts:6 (DocDirtyState)` and `:32 (isDocDirty)`; editor and document metadata dirty flags |
-| Save/reparse | `apps/docs/src/renderer/file-actions.ts:466 (buildDocBytes)`, `:662 (saveOnce)`, `save-until-persisted.ts:28/60`; snapshot, atomic save, race handling, reparse, rebase, undo/caret/scroll preservation |
-| Main/preload IPC | `apps/docs/src/main/docs-main.ts:2307 (loadDocx)`, `:2927 (registerDocsIpc)`, `apps/docs/src/preload/index.ts:63`; filesystem, encryption, recovery, save, and export boundaries |
+Presentation V2 may consume these contracts as inputs. It must not redefine or
+persist them.
 
-Presentation-v2 may consume these contracts as inputs. It must not redefine them.
+## Presentation ownership
 
-## Presentation-v2 owns
+V2 owns derived visual layout and geometry:
 
-Presentation-v2 owns only visual layout and geometry:
-
-- layout adapter and renderer selection;
-- layout representation derived from the live editor/model/DOM;
+- renderer selection and presentation input normalization;
 - font/style measurement inputs and line metrics;
-- pagination and page/section geometry;
+- pagination and page/section/column geometry;
 - page-gap visual presentation and navigation geometry;
-- visual header/footer placement and reserved space;
-- columns and column balancing presentation;
-- float/text-box visual placement;
-- line/table cut geometry;
-- position-to-rectangle and rectangle-to-position mapping needed for cursor/selection display.
+- header/footer visual placement and reserved space;
+- float/text-box placement and line/table cut geometry;
+- position-to-rectangle and rectangle-to-position diagnostics for caret and
+  selection display.
 
-The current implementation points are `apps/docs/src/renderer/pagination.ts`, `line-metrics.ts`, `doc-style-css.ts`, `editor/pagination-gaps.ts`, `page-gap-nav.ts`, `column-layout.ts`, `hf-dom.ts`, and the App measurement/placement orchestration. The existing types/functions to reuse as a seam include `PageSlice`, `BlockBox`, `SectionGeom`, `computePageSlices`, `measureBlocks`, `fillLineBoxes`, `lineBreakBoundaries`, and `sectionGeoms`.
+The current V2 boundary is `apps/docs/src/renderer/presentation-v2/*`, with
+App measurement/placement orchestration and existing consumers in
+`pagination.ts`, `line-metrics.ts`, `doc-style-css.ts`,
+`editor/pagination-gaps.ts`, `page-gap-nav.ts`, `column-layout.ts`, and
+`editor/hf-dom.ts`.
 
-## Explicit non-ownership
+V2 does not own:
 
-Presentation-v2 does not own:
-
-- OOXML parsing or serialization;
-- block identity, `docxIndex`, raw XML, relationships, or ZIP parts;
-- Tiptap schema, ProseMirror transactions, or editor commands;
-- comments, revisions, fields, protection, notes, or their persistence semantics;
+- OOXML parsing or serialization, block identity, `docxIndex`, raw XML,
+  relationships, ZIP parts, or save bytes;
+- Tiptap schema, ProseMirror transactions, editor commands, comments,
+  revisions, fields, protection, notes, or their persistence semantics;
 - dirty tracking, save ordering, save races, reparse, recovery, or Save As;
-- AI tool semantics or document mutation commands;
-- other Office Core products.
+- AI tool semantics, document mutation commands, or external tool writes;
+- Sheets, Slides, PDF, Markdown, or shell persistence.
 
-## Input/output seam
-
-The initial contract should be conceptually equivalent to:
+## Runtime seam
 
 ```text
-PresentationInput
-  = current PM/DOM view
-  + BlockBox/LineBox/table measurement inputs
-  + section geometry and header/footer metadata
-  + style/theme/font inputs
-  + current editor position/selection context
+live PM/DOM/document metadata
+        |
+        v
+presentation-v2 renderer selector
+        |-----------------------|
+       V1                      V2
+ current pagination       bounded V2 refinement
+        |                      |
+        +------ PageSlice[] / geometry consumers
+                               |
+                               v
+                     derived Docs presentation
 
-PresentationOutput
-  = PageSlice[]
-  + SectionGeom[]
-  + line/table cut geometry
-  + page-gap/column/header-footer/float decorations
-  + position ↔ rectangle mapping
+unchanged PM/editor state -> pmDocToSavePlan -> docx-engine save/reparse
 ```
 
-This is an adapter boundary, not a requirement to add a new document model. V2 should either produce the current pagination output types or provide a narrow adapter that makes the same output available to existing UI consumers.
+The current selector is an internal development/test hook. It is not a product
+setting and must remain outside `packages/docx-engine`.
 
-## First implementation strategy: parallel V1/V2 renderer
+## Required proof before V2 becomes default
 
-### Feature flag
+Keep V1 available until representative fixtures prove all of the following:
 
-Introduce one renderer-selection feature flag at the Docs App/pagination orchestration boundary. The flag selects the current V1 pipeline or the V2 seam/proof as one presentation unit.
+- normalized pages, sections, columns, line cuts, and table cuts;
+- page gaps, floats, header/footer placement, and reserved space;
+- position mapping, caret, selection, and page-boundary hit testing;
+- ProseMirror JSON, dirty state, `pmDocToSavePlan`, saved bytes, and save/reopen;
+- comments, revisions, anchors, notes, unsupported-content preservation, and
+  Word/LibreOffice comparison where applicable;
+- deterministic behavior across font/zoom/measurement environments and long
+  documents.
 
-The flag must cover together:
+Existing proof surfaces include:
 
-1. DOM measurement and line metrics;
-2. page/section/column slice calculation;
-3. page-gap decorations and overlays;
-4. header/footer visual placement;
-5. float shifts and phantom row-span presentation;
-6. pagination preview;
-7. position/geometry mapping for cursor and selection.
-
-There is no confirmed existing renderer feature flag. The flag is new wiring and must not be placed inside `packages/docx-engine`.
-
-### V2 seam/proof scope
-
-The initial V2 must do the smallest useful thing:
-
-- accept the existing presentation inputs;
-- return the existing page/geometry output shape;
-- render one or more representative documents through the parallel path;
-- expose diagnostics comparing V1 and V2 output;
-- leave layout decisions equivalent to V1 or use a deliberately minimal adapter;
-- prove that switching renderers does not modify the editor model, dirty state, save plan, or saved bytes.
-
-The initial V2 must not attempt to replace `computeSectionedSlicesF2`, invent a new line-breaking algorithm, redesign the ProseMirror schema, or move persistence into the renderer.
-
-## File ownership map
-
-### Likely V2 files
-
-- `apps/docs/src/renderer/pagination.ts`: adapter, page/section geometry, measurements, and output compatibility.
-- `apps/docs/src/renderer/line-metrics.ts`: measurement adapter and deterministic font inputs.
-- `apps/docs/src/renderer/doc-style-css.ts`: presentation CSS/input adaptation only.
-- `apps/docs/src/renderer/editor/pagination-gaps.ts`: V2 page-gap decoration adapter.
-- `apps/docs/src/renderer/editor/page-gap-nav.ts`: V2 position mapping/navigation adapter.
-- `apps/docs/src/renderer/editor/column-layout.ts`: V2 column presentation adapter.
-- `apps/docs/src/renderer/editor/hf-dom.ts`: V2 header/footer visual placement adapter.
-- `apps/docs/src/renderer/App.tsx`: renderer selection and orchestration only.
-- `apps/docs/tests/*`: parity, fixture, geometry, cursor/selection, and feature-flag tests.
-
-### Read-only for the first V2 proof
-
-- `packages/docx-engine/src/parse.ts`
-- `packages/docx-engine/src/patch.ts`
-- `packages/docx-engine/src/generate.ts`
-- `packages/docx-engine/src/types.ts`
-- `packages/docx-engine/src/zip-load.ts`
-- `packages/docx-engine/src/section.ts`
-- `packages/docx-engine/src/theme.ts`
-- `apps/docs/src/renderer/editor/convert.ts`
-- `apps/docs/src/renderer/editor/extensions.ts`
-- `apps/docs/src/renderer/editor/marks.ts`
-- `apps/docs/src/renderer/editor/revisions.ts`
-- `apps/docs/src/renderer/editor/comments.ts`
-- `apps/docs/src/renderer/doc-dirty.ts`
-- `apps/docs/src/renderer/file-actions.ts` save/reparse logic
-- `apps/docs/src/preload/index.ts`
-- `apps/docs/src/main/docs-main.ts` open/save IPC
-
-“Read-only” means no semantic changes in the first presentation experiment. An additive adapter may later require a separately reviewed contract change.
-
-## Invariants
-
-Every V1/V2 path must preserve:
-
-1. The same ProseMirror document and JSON for the same user/AI edit.
-2. The same `pmDocToSavePlan` result for the same editor state.
-3. The same `DocDirtyState` result for the same editor/document metadata.
-4. The same `saveDocx` inputs and round-trip behavior.
-5. `docxIndex`, raw XML, SDT shells, relationships, media, headers/footers, comments, revisions, styles, numbering, notes, and unsupported-content preservation.
-6. Editor positions, selections, revision/comment anchors, and nested text-box state.
-7. Save race behavior: edits arriving during `saveOnce` remain live and are not lost.
-8. AI behavior: tools call existing document/editor commands and never mutate presentation DOM as a persistence shortcut.
-
-## Proof and acceptance gates
-
-Before V2 becomes the default, compare V1/V2 on the existing corpus, including:
-
-- `apps/docs/tests/pagination-corpus/docx/*` English, CJK/doc-grid, mixed language, sections, columns, breaks, footnotes, headings/keep-next, tables, repeated headers, and oversized tables;
-- headers/footers and variants;
-- nested tables, drawings/floats, text boxes, comments, revisions, fields, protection, and unsupported-content fixtures;
-- missing/fallback fonts, CJK, RTL/complex scripts, and mixed runs.
-
-Required checks:
-
-- page count, page/section geometry, line breaks, table row cuts, column placement, header/footer placement, and float placement;
-- position/rectangle mapping, cursor crossing page gaps, selection, comment/revision anchors, and nested-editor coordinates;
-- dirty state before/after renderer switching;
-- `pmDocToSavePlan` equality;
-- save → reparse → editor reconciliation;
-- unchanged OOXML part/relationship/media preservation;
-- print/export and pagination preview behavior.
-
-Use the existing Word/LibreOffice references and tools (`apps/docs/tests/pagination-corpus/baseline-word.json`, `baseline-lo.json`, `scripts/pagination-baseline*.mjs`, `scripts/docs-word-fidelity.mjs`, `tools/fidelity-compare.mjs`) as external references. They do not replace V1/V2 parity tests.
+- `apps/docs/tests/presentation-v2-seam.test.ts`;
+- `presentation-v2-sections.test.ts`, `presentation-v2-measurement.test.ts`,
+  `presentation-v2-dirty-range.test.ts`, and `presentation-v2-diagnostics.test.ts`;
+- `presentation-geometry.test.ts` and `presentation-geometry-probes.test.ts`;
+- `e2e/docs-presentation-parity.spec.ts` and the Docs pagination corpus.
 
 ## AI and external references
 
-AI continues to use the existing Docs protocol and tools: `apps/docs/src/renderer/ai/protocol.ts`, `tools.ts`, `docs-skill.ts`, and `transport.ts`. Presentation-v2 must not expose DOM mutation as an AI editing API.
+Docs AI continues to use `apps/docs/src/renderer/ai/protocol.ts`, `tools.ts`,
+`docs-skill.ts`, and `transport.ts`. V2 must never expose presentation DOM
+mutation as an AI editing API.
 
-SuperDoc is an architecture/design reference only by default. Do not copy AGPL source into 9Profs; any direct code reuse requires separately approved commercial/license review.
-
-Casual Docs is an architecture and implementation reference. Its implementation may be studied, adapted, or ported only when the relevant source/license permits it. Preserve required copyright notices, attribution, and license obligations. Do not blindly copy whole subsystems; prefer adapting narrow presentation components to GenOffice contracts.
-
-GenOffice remains the primary implementation base. Casual Docs and SuperDoc must not replace `packages/docx-engine`, Tiptap/ProseMirror document state, save/round-trip, comments/revisions, or dirty tracking.
+Casual Docs and SuperDoc remain architecture/design references only. Do not
+copy their source into 9Profs. Any future adaptation requires separate source,
+license, and compatibility review.
 
 ## Stop conditions
 
-Pause the V2 work if any of the following occurs:
-
-- a proposed change requires modifying `docx-engine` persistence to make the renderer work;
-- the editor schema or save plan must change before the seam is proven;
-- V1/V2 parity cannot be measured deterministically;
-- a renderer change alters saved OOXML without an explicitly approved persistence task;
-- the change begins touching Sheets, Slides, PDF, Markdown, shell, dependencies, or unrelated refactors.
+Pause V2 expansion if a proposed change requires modifying
+`packages/docx-engine` persistence, a second document/editor model, direct DOM
+mutation for AI, a competing active-file writer, or parity proof that cannot be
+made deterministic.

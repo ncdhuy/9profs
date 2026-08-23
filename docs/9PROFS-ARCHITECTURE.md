@@ -1,142 +1,290 @@
-# 9Profs accepted architecture
+# 9Profs architecture baseline
 
-Status: governance baseline for the strategic GenOffice fork.
+Status: canonical architecture and migration baseline for the current
+`develop` branch. Audited 2026-08-23 from repository source, manifests, tests,
+and a read-only comparison with `baseline/genoffice`.
 
-Evidence base: `docs/9PROFS-ARCHITECTURE-AUDIT.md`. This document records accepted boundaries and classifications; it does not implement any product or SaaS layer.
+This document describes what exists, what remains GenOffice-derived, and the
+target boundaries for 9Profs. It does not implement 9Profs Core, OfficeCLI,
+research workflows, or SaaS services.
 
-## High-level architecture
+## Non-negotiable rules
 
-```text
-GenOffice strategic fork
-├─ Office Core
-│  ├─ Docs
-│  ├─ Sheets
-│  ├─ Slides
-│  ├─ PDF
-│  └─ Markdown
-├─ Research Layer (future)
-├─ AI Gateway (future)
-├─ Dify adapter for PDF intelligence (future)
-└─ SaaS/Product layer (future)
-```
+1. `baseline/genoffice` is reference-only and must never be modified.
+2. GenOffice-derived Office behavior remains authoritative for interactive
+   document editing.
+3. One active Office document has one canonical write authority. For a file
+   actively opened in GenOffice, GenOffice owns editor state and canonical
+   save. OfficeCLI may inspect, query, render, validate, or write a detached
+   copy, but must not compete for the active file's canonical write.
+4. AI changes documents through typed tools and editor/document transactions.
+   It must not mutate presentation DOM or bypass save/reparse contracts.
+5. `packages/docx-engine` is a protected persistence boundary. Its parse, patch,
+   generate, raw XML, anchors, and round-trip contracts are not replaced by a
+   new core or external tool.
 
-The Electron shell and shared packages support the Office Core and remain part of the platform. The root workspace is still packaged as `genoffice`/`@genoffice/*` in `package.json` and the application manifests; branding changes are separate from architecture preservation.
+## Current repository topology
 
-## Decision vocabulary
-
-| Decision | Meaning in 9Profs |
-|---|---|
-| **KEEP** | Preserve the subsystem and its current contracts. Bug fixes and safety tests remain allowed. |
-| **KEEP + EXTEND** | Preserve the subsystem and add narrowly-scoped adapters/capabilities at its existing boundary. |
-| **MODIFY SELECTIVELY** | Change only the named layer, with compatibility tests and no implied permission to change adjacent persistence or products. |
-| **NEW** | Future 9Profs capability not established as a complete subsystem in the audited repository. It must integrate through explicit contracts. |
-
-## Accepted decisions
-
-| Area | Decision | Accepted boundary and evidence |
-|---|---|---|
-| Unified shell/runtime | KEEP + EXTEND | Preserve the `BrowserWindow`/`WebContentsView` module model in `apps/shell/src/main/index.ts:193-268` and `tab-manager.ts:49-69`. Add future platform services through explicit IPC/service clients. |
-| Docs product | KEEP + EXTEND | Preserve the Docs app, Tiptap/ProseMirror editor, AI tools, dirty state, and save lifecycle. `apps/docs/src/main/docs-main.ts`, `apps/docs/src/renderer/App.tsx`, and `file-actions.ts` remain the product boundary. |
-| DOCX persistence | KEEP | `packages/docx-engine/src/parse.ts`, `patch.ts`, `generate.ts`, `types.ts`, and `zip-load.ts` preserve OOXML parts, raw fragments, `docxIndex` anchors, and surgical round-trip save. This is a protected boundary. |
-| DOCX editing state | KEEP + EXTEND | `apps/docs/src/renderer/editor/convert.ts` and `editor/extensions.ts` remain the model bridge. Presentation work may add adapters, not replace schema or transaction semantics. |
-| DOCX presentation/layout | MODIFY SELECTIVELY | The change surface is renderer-side: `apps/docs/src/renderer/pagination.ts`, `line-metrics.ts`, `doc-style-css.ts`, page-gap/column/header-footer presentation extensions, and App orchestration. Use a parallel V1/V2 seam first. |
-| Sheets/XLSX | KEEP | Preserve Univer, `univer-sync.ts`, `save-actions.ts`, `xlsx-gateway.ts`, `xlsx-package-io.ts`, and the Rust sidecar. The existing fail-closed and touched-entry preservation behavior is an asset. |
-| Slides/PPTX | KEEP | Preserve `packages/pptx-engine`, `packages/pptx-render`, `SlideCanvas`, and element-level patch/save. The engine/render separation already matches the preservation strategy. |
-| PDF | KEEP + EXTEND | Preserve PDF.js viewing, renderer edit state, PDFium/PDF-lib operations, and `save-pdf.ts`. Add backend intelligence beside `apps/pdf/src/renderer/ai/pdf-skill.ts`, `ai/tools.ts`, and the PDF IPC boundary. |
-| Markdown | KEEP + EXTEND | Preserve Tiptap Markdown, `parseDocText`, `serializeDocText`, asset lifecycle, and optional `docxExport.ts`. Future research/review skills may plug into its existing AI skill boundary. |
-| Generic AI/agent core | KEEP + EXTEND | Reuse `packages/agent-core` (`AgentSkill`, `AgentTransport`, `AgentLoop`) and `packages/ai-provider` provider-neutral streaming/adapter contracts. Add 9Profs routing through a compatible transport. |
-| Genspark-specific AI/auth/search | MODIFY SELECTIVELY | Isolate `GenSparkAccountStatus`, Genspark endpoint/auth settings, `gsk` search, cloud generation, and GenOffice-branded prompts. Keep generic tool and stream contracts stable. |
-| Research Layer | NEW | Future research skills, review workflows, evidence handling, and manuscript/review services. No current Office Core persistence contract should depend on it. |
-| AI Gateway | NEW | Future 9Profs backend boundary for auth, routing, policy, usage, retrieval, and provider/Dify orchestration. It should implement existing stream/cancel/tool-call semantics. |
-| Dify PDF adapter | NEW | Future backend adapter from bounded PDF context to Dify workflows/RAG. Do not couple Dify to PDF.js, PDFium, text editing, or PDF save. |
-| SaaS/Product layer | NEW | Future account, workspace, billing, usage, storage, and tenancy services. The current local `project-store` is reusable infrastructure, not a confirmed SaaS backend. |
-
-## Office Core boundaries
-
-### Docs/DOCX
-
-The accepted DOCX lifecycle is:
+The repository is a TypeScript/Electron workspace whose root and package
+manifests still use `genoffice` and `@genoffice/*`. `package.json` defines
+`apps/*` and `packages/*` workspaces and runs product tests/typechecks in
+dependency order.
 
 ```text
-DOCX bytes
-  → Docs main `loadDocx`
-  → `docx-engine.parseDocx`
-  → Block model + raw XML/`docxIndex`
-  → `blocksToPmDoc`
-  → Tiptap/ProseMirror editor state
-  → renderer presentation
-  → editor/AI transactions
-  → `pmDocToSavePlan`
-  → `buildDocBytes` / `docx-engine.saveDocx`
-  → atomic write
-  → reparse and state reconciliation
+Product Layer
+└─ apps/shell + packages/project-store + local settings/recent files
+
+Research Domain Layer (future)
+└─ research/review, citation, regulation, methodology workflows
+
+AI / Agent Core
+├─ packages/agent-core       current loop, skills, tools, IPC transport
+├─ packages/ai-provider      current provider protocols and streaming
+├─ packages/ai-search        current Genspark/Serper/DuckDuckGo search
+└─ future 9Profs runtime, assistants, skills, MCP, extensions
+
+Document Integration Layer
+├─ current apps/*/src/*/ai tools and document commands
+└─ future DocumentChangeSet, DocumentMutationGateway, adapters, ownership
+
+GenOffice-derived Office Core
+├─ apps/docs + packages/docx-engine
+├─ apps/sheets + XLSX gateway + Rust sidecar
+├─ apps/slides + packages/pptx-engine + packages/pptx-render
+├─ apps/pdf + PDF.js/PDFium/PDF-lib paths
+└─ apps/markdown + Tiptap Markdown serialization
+
+External Tool Adapters
+├─ current provider/search/file-format/native sidecar integrations
+└─ future OfficeCLI and optional Dify-backed workflows
 ```
 
-`packages/docx-engine` owns OOXML understanding and persistence. The Docs renderer owns the visual presentation. `apps/docs/src/renderer/file-actions.ts:662 (saveOnce)` remains the save/reparse authority.
+The Electron shell hosts the Office applications; it is not a second Office
+document writer. Shared packages such as `file-parse`, `pdf2docx`,
+`font-metrics`, `electron-utils`, `i18n`, and `ui` remain supporting
+infrastructure.
 
-### Sheets/XLSX
+## Implemented, inherited, diverged, and future
 
-Sheets remains an independent Office Core subsystem: Univer and the renderer journal provide editing state; `apps/sheets/src/gateway/xlsx-gateway.ts:600 (planCellEditsToXlsx)` and `xlsx-package-io.ts:149 (saveWorkbookViaSidecar)` provide preservation-oriented save; the Rust sidecar handles archive/range/recalculation work. DOCX tasks must not cross this boundary.
+### Implemented today
 
-### Slides/PPTX
+| Area                               | Evidence                                                                                                                      | Status                                                 |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Electron document workspace        | `apps/shell/src/main/index.ts`, `tab-manager.ts`; standalone app entrypoints under `apps/*/src/main` and `src/renderer`       | Implemented                                            |
+| DOCX persistence                   | `packages/docx-engine/src/parse.ts`, `patch.ts`, `generate.ts`, `types.ts`, `zip-load.ts`                                     | Implemented; protected                                 |
+| DOCX editing                       | `apps/docs/src/renderer/editor/convert.ts`, Tiptap/ProseMirror extensions, comments, revisions, selections, undo/redo         | Implemented; GenOffice authority                       |
+| DOCX presentation V1               | `apps/docs/src/renderer/pagination.ts`, `line-metrics.ts`, `doc-style-css.ts`, pagination-gap/header-footer/column extensions | Implemented; default compatibility baseline            |
+| DOCX presentation V2               | `apps/docs/src/renderer/presentation-v2/*`, App wiring, unit tests, and `e2e/docs-presentation-parity.spec.ts`                | Implemented experimental; V1 remains default           |
+| XLSX editing and preservation save | Univer renderer, `apps/sheets/src/gateway/xlsx-gateway.ts`, `xlsx-package-io.ts`, and `apps/sheets/native/xlsx-engine`        | Implemented; independent Office Core                   |
+| PPTX model, render, and save       | `packages/pptx-engine`, `packages/pptx-render`, `apps/slides/src/renderer/SlideCanvas.tsx`                                    | Implemented; independent Office Core                   |
+| PDF viewer/editor                  | PDF.js renderer, PDFium/PDF-lib main-process operations, `apps/pdf/src/main/save-pdf.ts`                                      | Implemented; independent Office Core                   |
+| Markdown editor/serialization      | `apps/markdown/src/renderer/markdown/docText.ts`, Tiptap editor, `export/docxExport.ts`                                       | Implemented; plain-file-first                          |
+| Local AI foundation                | `packages/agent-core`, `packages/ai-provider`, `packages/ai-search`, app-specific AI tools/skills                             | Implemented; GenOffice-shaped, not yet 9Profs Core     |
+| Local project/chat persistence     | `packages/project-store`                                                                                                      | Implemented; not a remote multi-tenant product backend |
 
-Slides remains an independent Office Core subsystem: `packages/pptx-engine/src/parse.ts:153 (parseSlide)` and `index.ts:622/640 (savePptx/savePptxToFile)` own PPTX model and archive save; `packages/pptx-render/src/build-slide.ts:121 (buildRenderSlide)` and `text-layout.ts:783 (layoutText)` own presentation rendering; `apps/slides/src/renderer/SlideCanvas.tsx:510` owns canvas editing. DOCX tasks must not modify it.
+### Inherited or retained from GenOffice
 
-### PDF
+The root identity, workspace layout, Office applications, format engines,
+Electron shell, Tiptap/ProseMirror Docs state, and current AI packages remain
+GenOffice-derived or GenOffice-shaped. The current branch's manifests still
+confirm that identity. A read-only `baseline/genoffice..develop` comparison
+shows no current-branch architecture replacement of the Office Core.
 
-PDF remains a local viewer/editor. `apps/pdf/src/renderer/PdfPage.tsx:47` owns page/text-layer presentation; `apps/pdf/src/main/text-edit.ts` owns PDFium-backed text extraction/edit validation; `apps/pdf/src/main/save-pdf.ts:839/863` owns byte save. The future Dify integration is a backend AI service, not a new PDF persistence engine.
+### Diverged from the baseline
 
-### Markdown
+The read-only comparison reports 42 changed files and 10,091 added lines,
+concentrated in the Docs renderer and its validation surface. Material current
+branch divergence includes:
 
-Markdown remains plain-file-first. `apps/markdown/src/renderer/markdown/docText.ts:21 (parseDocText)` and `:109 (serializeDocText)` own envelope/body round-trip; `apps/markdown/src/renderer/App.tsx:172-207` owns editor loading; `apps/markdown/src/renderer/export/docxExport.ts:260/294` is an explicit optional export path.
+- expanded Docs `App.tsx`, pagination, line metrics, pagination preview, and
+  presentation-related editor behavior;
+- new `apps/docs/src/renderer/presentation-v2/` modules for page slicing,
+  sections, measurement context/refinement, invalidation, performance,
+  geometry, post-render capture, probes, and diagnostics;
+- new Docs V2 unit tests, geometry tests, caret hit-testing/performance tests,
+  and `e2e/docs-presentation-parity.spec.ts`;
+- current architecture/governance documentation.
 
-## Future layers
+`packages/agent-core`, `packages/ai-provider`, and `packages/ai-search` are
+present and useful, but are not evidence that 9Profs Core has been implemented.
 
-### Research Layer — NEW
+### Not implemented yet
 
-The Research Layer may provide research skills, evidence extraction, review, citation/provenance, and future manuscript workflows. It must consume document context through bounded skill/tool contracts. It must not become a hidden dependency of `docx-engine`, Sheets, Slides, PDF save, or Markdown serialization.
+No repository package currently establishes:
 
-### AI Gateway — NEW
+- a 9Profs Core runtime/service boundary;
+- an assistant registry, shared skill registry, MCP layer, or extension host;
+- a research/review/citation/regulation domain;
+- `DocumentChangeSet` and `DocumentMutationGateway` contracts;
+- a GenOffice document adapter that owns AI mutations through editor
+  transactions;
+- an OfficeCLI sidecar/adapter or active-document ownership registry;
+- account, subscription, credits, remote workspace, or SaaS billing services.
 
-The gateway should sit between app-specific skills/transports and provider-specific main-process adapters:
+These are future architecture, not current capabilities.
+
+## DOCX presentation V2 status
+
+V2 is not design-only. Source and tests establish a real but experimental
+renderer path.
+
+| Capability               | Status                   | Evidence and boundary                                                                                                                                                                                                                                                                      |
+| ------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Renderer selection       | Implemented experimental | `presentation-v2/index.ts` defines `PresentationRenderer`, defaults to `v1`, and resolves an internal `globalThis.__9profsDocsPresentationRenderer`/query override. No user-facing setting exists.                                                                                         |
+| V1 path                  | Fallback/legacy baseline | `renderPresentationV1` uses existing `sliceWithLineSplit`; V1 is the production default while V2 is validated.                                                                                                                                                                             |
+| V2 page flow             | Implemented experimental | `page-slicer.ts` owns V2 orchestration, bounded refinement, section normalization, and performance hooks while reusing GenOffice `BlockBox`, `PageSlice`, and `computeSectionedSlicesF2` primitives. It is not a second OOXML model.                                                       |
+| V2 measurement           | Implemented experimental | `measurement.ts`, `measurement-context.ts`, and `measurement-invalidation.ts` support refinement windows, font/zoom invalidation, and conservative fallback for ambiguous transactions.                                                                                                    |
+| V2 geometry/post-render  | Implemented experimental | `geometry.ts`, `geometry-probes.ts`, `post-render.ts`, and App `__pageDebug` expose normalized page, gap, header/footer, float, caret, selection, and position geometry for diagnostics.                                                                                                   |
+| V1/V2 parity diagnostics | Implemented experimental | `diagnostics.ts` compares normalized model/presentation values with explicit geometry tolerance and categories.                                                                                                                                                                            |
+| Automated proof          | Partial                  | `presentation-v2-*.test.ts`, geometry tests, Docs fixture tests, and `e2e/docs-presentation-parity.spec.ts` cover renderer selection, sections, measurement, dirty/save/reopen preservation, and browser geometry. Full default-readiness across all Office fidelity cases is not claimed. |
+| V2 default replacement   | Future                   | Requires repeatable parity, position mapping, save/reopen and preservation proof across the representative corpus. Keep V1 available until then.                                                                                                                                           |
+
+V2 remains renderer-side. It must not change Tiptap/ProseMirror schema or
+transactions, `blocksToPmDoc`, `pmDocToSavePlan`, dirty tracking, `saveDocx`,
+save ordering, reparse, comments, revisions, anchors, or OOXML identity.
+
+## Layer ownership
+
+| Concern                | Current owner/source of truth                                                                                                                 | Target rule                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Document editing state | GenOffice app editor: ProseMirror for Docs/Markdown, Univer/journal for Sheets, PPTX model/canvas for Slides, PDF renderer edit state for PDF | GenOffice-derived Office Core remains canonical for interactive editing.                                                     |
+| Persisted Office bytes | Format-specific engines and app save paths; DOCX through `docx-engine` and Docs save/reparse                                                  | One canonical writer per active document. Presentation, AI, and external tools cannot become parallel writers.               |
+| AI/runtime state       | `agent-core` loop/transport, app panels, provider streams; mostly per-run/local                                                               | Future 9Profs Core owns runtime/session/policy state. It does not own Office bytes or editor state.                          |
+| Skills                 | Current app skills under `apps/*/src/*/ai`; shared `AgentSkill` contract in `packages/agent-core/src/skill.ts`                                | Future skill registry owns discovery/versioning/execution policy; skills call document tools, never persistence internals.   |
+| Assistants             | No shared registry; app UI/provider settings identify current behavior                                                                        | Future assistant registry owns assistant metadata, allowed skills, policy, and model routing.                                |
+| External tools         | Current provider/search/file/native adapters                                                                                                  | Adapters own transport and normalized observations. OfficeCLI can write only new, detached, or unowned documents.            |
+| Research workflows     | No research domain package exists; current search is generic/app support                                                                      | Future Research Domain owns evidence, provenance, review state, citations, and domain workflows, not Office canonical bytes. |
+| Presentation           | Docs renderer V1/V2 and visual extensions                                                                                                     | Presentation is derived state. It never becomes the document persistence authority.                                          |
+
+### Active Office document authority
 
 ```text
-app skill + document tools/context
-  → AgentTransport-compatible 9Profs gateway client
-  → 9Profs backend
-  → provider routing, policy, retrieval, usage, billing, Dify adapters
-  → streamed tool calls/results and cancellation
+Agent
+  -> DocumentChangeSet (future typed intent)
+  -> DocumentMutationGateway (future ownership/policy boundary)
+  -> GenOffice adapter/editor transaction
+  -> GenOffice canonical save/reparse
 ```
 
-The existing contracts to preserve are `packages/agent-core/src/types.ts:86-111`, `agent-core/src/electron-transport.ts:67`, and `ai-provider/src/stream.ts:16 (streamForProvider)`. The gateway must not force document products to know about provider routing or tenancy.
+For an active GenOffice-owned file, OfficeCLI receives a snapshot or bounded
+inspection request. It does not write the active canonical file. A detached
+copy or newly generated file may use OfficeCLI as its writer when no GenOffice
+session owns that file.
 
-### Dify adapter for PDF intelligence — NEW
+## Proposed future module boundaries
 
-The future flow is:
+Start with explicit modules under a small package surface; split packages only
+after contracts stabilize. Proposed names are compatible with `packages/*`.
 
-```text
-PDF UI / PDF AI skill
-  → bounded PDF context request
-  → 9Profs backend
-  → Dify workflow/RAG application
-  → grounded response or approved tool intent
-  → PDF AI panel / existing local pending-edit tools
-```
+| Proposed boundary                              | Owns                                                                                                              | Must not own                                                      |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `packages/9profs-core/`                        | Runtime configuration, workspace/project service contracts, events, policy, usage hooks, service composition      | Office bytes, editor transactions, provider-specific wire formats |
+| `packages/9profs-core/src/agent-runtime/`      | Agent run lifecycle, context assembly, cancellation, tool execution policy; wraps/adapts `packages/agent-core`    | DOCX XML, DOM mutation, canonical save                            |
+| `packages/9profs-core/src/assistant-registry/` | Assistant descriptors, allowed skills, model/policy selection, versioning                                         | Direct provider secrets or Office persistence                     |
+| `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                             | Product-specific editor internals                                 |
+| `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                     | Unmediated active-document writes                                 |
+| `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                     | Loading arbitrary code into the Docs persistence boundary         |
+| `packages/research-domain/`                    | Review, thesis, citation, regulation, evidence/provenance, methodology workflows                                  | Canonical Office editing or provider SDK details                  |
+| `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                            | Format-specific OOXML/XLSX/PPTX/PDF implementation                |
+| `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                    | Competing writer or presentation DOM mutation                     |
+| `packages/officecli-adapter/`                  | Pinned OfficeCLI process/API boundary, inspect/query/outline/validate/render/generate calls, detached-file policy | Canonical writes to active GenOffice-owned files                  |
 
-The clean existing seam is `apps/pdf/src/renderer/ai/tools.ts:26 (PdfAiDeps)`, `pdf-skill.ts`, `ai/transport.ts`, and `apps/pdf/src/main/pdf-main.ts:724 (registerPdfIpc)`. Dify is not currently integrated and must not be added as part of a DOCX or PDF UI refactor.
+Existing app AI directories remain product adapters until these boundaries
+exist. `packages/project-store` can back local workspace history; it does not
+become a remote SaaS contract by implication.
 
-### SaaS/Product layer — NEW
+## Existing AI package classification
 
-Account, workspace, billing, usage, storage, and gateway policy are future product services. `packages/project-store/src/store.ts:77` and `project-store/src/ipc.ts:74-75` provide local persistence contracts that may be extended or wrapped, but they do not establish a remote multi-tenant architecture.
+| Module                 | Classification | Current responsibility                                                                                                      | Why                                                                                                                                                                            |
+| ---------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/agent-core`  | ADAPT          | `AgentLoop`, `AgentSkill`, tool execution, stream/IPC transport, payload sanitization                                       | Generic and reusable foundation, but lacks 9Profs assistant registry, policy, MCP, usage, and document gateway ownership. Preserve contracts; wrap it in future agent runtime. |
+| `packages/ai-provider` | ADAPT          | Provider registry, Anthropic/Gemini/OpenAI-compatible protocols, streaming/chat, watchdogs; includes GenSpark auth/settings | Protocol contracts are reusable. GenSpark endpoints, account status, attribution, and credits policy must move behind a 9Profs provider/gateway adapter over time.             |
+| `packages/ai-search`   | ADAPT          | Genspark-first web/image search with Serper and DuckDuckGo fallbacks                                                        | Keep current product behavior. Refactor its transport/auth into External Tool Adapters and expose research-safe results/provenance later; do not remove it now.                |
 
-## Governance invariants
+No package is classified PHASE OUT or REPLACE LATER in this task. Existing
+behavior stays intact until a compatible replacement exists and is validated.
 
-1. Preserve GenOffice Office Core behavior unless a task names a specific compatibility change.
-2. DOCX persistence and editing state are independent of presentation-v2.
-3. A DOCX presentation task cannot alter Sheets, Slides, PDF, Markdown, or shell behavior without explicit authorization.
-4. AI changes documents through existing document/editor commands, never by mutating presentation DOM.
-5. Future layers integrate through typed boundaries and do not leak SaaS/provider concerns into file-format engines.
-6. SuperDoc is an architecture/design reference only by default. Do not copy AGPL source into 9Profs; any direct code reuse requires separately approved commercial/license review.
-7. Casual Docs is an architecture and implementation reference. Study, adapt, or port implementation only when the relevant source/license permits it; preserve required copyright notices, attribution, and license obligations. Do not blindly copy whole subsystems; prefer narrow presentation components adapted to GenOffice contracts.
-8. GenOffice remains the primary implementation base. Casual Docs and SuperDoc must not replace `packages/docx-engine`, Tiptap/ProseMirror document state, save/round-trip, comments/revisions, or dirty tracking.
-9. Every selective modification requires focused tests, preservation evidence, and an explicit stop condition.
+## Migration map
+
+| Current module                           | Current responsibility                              | Target responsibility                                                 | Action                                 | Migration phase |
+| ---------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------- | --------------- |
+| `apps/shell`                             | Electron host, tabs, settings, recent files, IPC    | Product host and 9Profs service client boundary                       | Keep; add typed clients later          | 1, 6            |
+| `packages/project-store`                 | Local projects/chats/attachments                    | Local history/workspace persistence behind product services           | Keep; adapt storage boundary           | 1, 6            |
+| `packages/agent-core`                    | Generic loop/skills/tools/IPC                       | Agent runtime execution kernel                                        | Adapt behind 9Profs runtime            | 1, 2            |
+| `packages/ai-provider`                   | Provider protocols and GenSpark-aware routing       | Provider adapter behind policy/usage gateway                          | Adapt; isolate vendor policy           | 2               |
+| `packages/ai-search`                     | Search backends and fallbacks                       | External search adapter and research evidence input                   | Adapt; preserve fallback behavior      | 2, 5            |
+| `apps/*/src/*/ai`                        | Product-specific tools, prompts, transports         | Registered skills using document/research contracts                   | Adapt incrementally                    | 2, 4, 5         |
+| `apps/docs` + `packages/docx-engine`     | Canonical DOCX editor, persistence, renderer        | GenOffice-derived Office Core                                         | Keep; harden V2 and add adapter seam   | 0, 4            |
+| `apps/docs/src/renderer/presentation-v2` | Experimental derived layout/refinement/diagnostics  | Validated optional presentation implementation                        | Keep V1 fallback; prove before default | 0               |
+| `apps/sheets`                            | Univer XLSX editing, gateway, Rust sidecar          | GenOffice-derived Office Core                                         | Keep; no cross-product rewrite         | 0, 4            |
+| `apps/slides` + `packages/pptx-*`        | PPTX model, render, canvas, save                    | GenOffice-derived Office Core                                         | Keep; expose gateway later             | 0, 4            |
+| `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                   | 0, 4, 5         |
+| `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                      | 0, 4, 5         |
+| No current module                        | No OfficeCLI or mutation gateway                    | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Add only after contracts are approved  | 0, 3, 4         |
+| No current module                        | No research/review domain                           | `packages/research-domain`                                            | Add after evidence and skill contracts | 5               |
+| No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof  | 6               |
+
+## Ordered implementation sequence
+
+### Phase 0 — architecture and contracts
+
+- Keep this document and the DOCX status documents canonical.
+- Define `DocumentChangeSet`, snapshot, active-document ownership, and mutation
+  gateway contracts without implementing a writer.
+- Keep V1 as the Docs default. Continue V2 parity, geometry, position mapping,
+  save/reopen, and preservation checks; treat V2 as experimental.
+- Exit when architecture references match real paths and no document layer has
+  an ambiguous write authority.
+
+### Phase 1 — 9Profs Core foundation
+
+- Add the smallest runtime package around configuration, workspace/project
+  contracts, events, policy, and usage hooks.
+- Adapt `agent-core` without changing Office editor behavior.
+- Keep local `project-store` and Electron IPC working.
+
+### Phase 2 — agent runtime, assistants, skills, MCP, extensions
+
+- Add agent-runtime wrapper, assistant registry, skill registry, MCP capability
+  policy, and extension lifecycle.
+- Adapt current app skills and provider/search adapters incrementally.
+- Preserve existing stream/cancel/tool-call contracts and app fallbacks.
+
+### Phase 3 — OfficeCLI sidecar
+
+- Pin OfficeCLI behind `officecli-adapter`.
+- Support inspect/query/outline/validate/render and detached/new-document
+  generation.
+- Add explicit active-file ownership checks and reject competing canonical
+  writes.
+
+### Phase 4 — GenOffice document gateway
+
+- Implement `DocumentChangeSet` validation and `DocumentMutationGateway`.
+- Add a narrow GenOffice adapter that converts approved changes into editor
+  commands/transactions, then uses existing save/reparse paths.
+- Start with Docs; prove dirty state, undo/caret, comments/revisions, OOXML
+  identity, and round-trip preservation before other products.
+
+### Phase 5 — research/review domain
+
+- Add research/review/citation/regulation/methodology services and provenance.
+- Register domain skills through the same agent/MCP contracts.
+- Consume Office snapshots and submit approved mutations through the gateway;
+  research code never writes active Office files directly.
+
+### Phase 6 — product/SaaS layer
+
+- Add account, organization, workspace sync, subscription/billing, usage/credits,
+  history, and configuration services.
+- Move provider policy and runtime usage accounting behind product contracts.
+- Retain local/offline Office editing and the single-writer rule.
+
+## Reference documents
+
+- [Architecture re-baseline audit](9PROFS-ARCHITECTURE-AUDIT.md) — confirmed
+  repository findings and evidence.
+- [DOCX presentation V2 boundary](DOCX-PRESENTATION-V2.md) — current V1/V2
+  implementation status and protected contracts.
+- [DOCX V2 reference map](DOCX-V2-REFERENCE-MAP.md) — external architecture
+  comparison and implementation lessons; not a source-of-truth status document.
