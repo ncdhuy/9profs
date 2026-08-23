@@ -159,6 +159,26 @@ Assistant/Skills foundation are implemented in `9profs-core-rs/`;
 `packages/genoffice-adapter/` and
 `packages/officecli-adapter/` are compile-checked skeletons only.
 
+Phase 2A Agent Registry + Task Lifecycle Foundation is implemented in
+`9profs-core-rs/crates/nineprofs-agent/`. It owns metadata-only backend
+descriptors, builtin/custom catalog hydration, deterministic registry lookup,
+explicit availability, independent `RunId`/`AgentTaskId` identities,
+concurrency-safe task lifecycle, cancellation, and transport-safe realtime
+events. Assistant remains a configured persona and stores only a stable
+backend ID; it does not depend on agent executor types.
+
+Phase 2A source audit used the pinned local AionCore checkout
+`D:\startup\upstream\AionCore` at
+`7ac84f93c5f81e1b1cc41f8119c089df72d63afc`, including
+`crates/aionui-ai-agent/src/registry.rs`, `registry_tests.rs`,
+`task_manager.rs`, `agent_task.rs`, `lib.rs`, metadata repository/API types,
+and application composition wiring. Reused concepts are catalog hydration,
+stable IDs, repository boundaries, deterministic ordering, explicit
+availability, and concurrent task ownership. Excluded functionality is CLI
+discovery/probing/version checks, ACP, AionRS, process spawning, model/health
+probing, conversations, leases, idle sessions, warmup, background agents,
+install/update logic, and real `AgentFactory` executors.
+
 Agent execution/AionRS, AionRS-backed runtime, MCP, full Extensions runtime,
 OfficeCLI integration, GenOffice mutation adapter, and research domain remain
 NOT IMPLEMENTED. AionCore audit SHA:

@@ -7,6 +7,7 @@ members = [
     "crates/nineprofs-realtime",
     "crates/nineprofs-skills",
     "crates/nineprofs-assistant",
+    "crates/nineprofs-agent",
     "crates/nineprofs-runtime",
     "app/nineprofs-core",
 ]

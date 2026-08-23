@@ -1,4 +1,5 @@
 export type AgentRunId = string
+export type AgentBackendId = string
 export type AssistantId = string
 export type SkillId = string
 export type ToolId = string
@@ -19,6 +20,27 @@ export interface AgentRun {
 /** Implementation boundary for executing one agent request. */
 export interface AgentBackend {
   run(request: AgentRequest): Promise<AgentRun>
+}
+
+export type AgentBackendSource = 'builtin' | 'custom' | 'extension'
+export type AgentBackendKind = 'embedded' | 'cli' | 'remote' | 'extension'
+export type AgentBackendAvailability = 'unknown' | 'available' | 'unavailable' | 'disabled'
+
+/** Metadata/catalog boundary. This is not the executable AgentBackend contract. */
+export interface AgentBackendDescriptor {
+  readonly id: AgentBackendId
+  readonly name: string
+  readonly description: string
+  readonly source: AgentBackendSource
+  readonly kind: AgentBackendKind
+  readonly capabilities: readonly string[]
+  readonly availability: AgentBackendAvailability
+  readonly availability_reason: string | null
+  readonly enabled: boolean
+  readonly sort_order: number
+  readonly version: string | null
+  readonly created_at_ms: number | null
+  readonly updated_at_ms: number | null
 }
 
 export interface ToolDefinition {

@@ -1,4 +1,9 @@
 export type {
+  AgentBackendAvailability,
+  AgentBackendDescriptor,
+  AgentBackendId,
+  AgentBackendKind,
+  AgentBackendSource,
   AgentBackend,
   AgentRequest,
   AgentRun,

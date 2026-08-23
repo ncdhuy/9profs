@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum.workspace = true
+nineprofs-agent = { path = "../../crates/nineprofs-agent" }
 nineprofs-api-types = { path = "../../crates/nineprofs-api-types" }
 nineprofs-assistant = { path = "../../crates/nineprofs-assistant" }
 nineprofs-realtime = { path = "../../crates/nineprofs-realtime" }

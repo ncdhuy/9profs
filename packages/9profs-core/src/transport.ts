@@ -3,6 +3,7 @@
  * Rust remains an implementation detail; callers depend only on these values.
  */
 import type {
+  AgentBackendDescriptor,
   AssistantId,
   CoreAssistant,
   CoreSkill,
@@ -47,6 +48,8 @@ export type CoreFetch = (
 export interface CoreTransport {
   health(): Promise<CoreHealth>
   runtime(): Promise<CoreRuntimeInfo>
+  agents(): Promise<AgentBackendDescriptor[]>
+  agent(id: string): Promise<AgentBackendDescriptor>
   assistants(): Promise<CoreAssistant[]>
   assistant(id: AssistantId): Promise<CoreAssistant>
   createAssistant(input: CreateAssistantInput): Promise<CoreAssistant>
@@ -88,6 +91,8 @@ export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTr
   return {
     health: () => get<CoreHealth>('/api/health'),
     runtime: () => get<CoreRuntimeInfo>('/api/runtime'),
+    agents: () => get<AgentBackendDescriptor[]>('/api/agents'),
+    agent: (id) => get<AgentBackendDescriptor>(`/api/agents/${encodeURIComponent(id)}`),
     assistants: () => get<CoreAssistant[]>('/api/assistants'),
     assistant: (id) => get<CoreAssistant>(`/api/assistants/${encodeURIComponent(id)}`),
     createAssistant: (input) => request<CoreAssistant>('/api/assistants', 'POST', input),

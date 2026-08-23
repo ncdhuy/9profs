@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use nineprofs_agent::AgentBackendDescriptor;
 use nineprofs_api_types::{
     ApiResponse, AssistantDto, CreateAssistantRequest, ErrorResponse, EventEnvelope,
     HealthResponse, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
@@ -20,11 +21,79 @@ struct AppState {
     runtime: Arc<CoreRuntime>,
 }
 
+#[cfg(test)]
+mod agent_api_tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn agent_list_get_and_unknown_backend_api_work() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        let router = build_router(runtime);
+
+        let response = router
+            .clone()
+            .oneshot(Request::get("/api/agents").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["success"], true);
+        assert!(
+            payload["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|agent| { agent["id"] == "codex" && agent["availability"] == "unknown" })
+        );
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/agents/codex")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["data"]["id"], "codex");
+
+        let response = router
+            .oneshot(
+                Request::get("/api/agents/does-not-exist")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], "not_found");
+        assert_eq!(payload["error"], "agent backend not found: does-not-exist");
+    }
+}
+
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
     let state = AppState { runtime };
     Router::new()
         .route("/api/health", get(health))
         .route("/api/runtime", get(runtime_info))
+        .route("/api/agents", get(list_agents))
+        .route("/api/agents/{id}", get(get_agent))
         .route(
             "/api/assistants",
             get(list_assistants).post(create_assistant),
@@ -50,6 +119,25 @@ async fn runtime_info(State(state): State<AppState>) -> axum::Json<ApiResponse<R
     axum::Json(ApiResponse::ok(state.runtime.info()))
 }
 
+async fn list_agents(
+    State(state): State<AppState>,
+) -> axum::Json<ApiResponse<Vec<AgentBackendDescriptor>>> {
+    axum::Json(ApiResponse::ok(state.runtime.agent_registry().list().await))
+}
+
+async fn get_agent(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<AgentBackendDescriptor>>, ApiError> {
+    let descriptor = state
+        .runtime
+        .agent_registry()
+        .get(&id)
+        .await
+        .ok_or_else(|| ApiError::AgentNotFound(id.clone()))?;
+    Ok(axum::Json(ApiResponse::ok(descriptor)))
+}
+
 async fn websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
     nineprofs_realtime::websocket_upgrade(upgrade, state.runtime.event_bus())
 }
@@ -58,6 +146,7 @@ async fn websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> 
 enum ApiError {
     Assistant(AssistantError),
     NotFound(String),
+    AgentNotFound(String),
 }
 
 impl From<AssistantError> for ApiError {
@@ -73,6 +162,11 @@ impl IntoResponse for ApiError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 format!("skill not found: {id}"),
+            ),
+            Self::AgentNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                format!("agent backend not found: {id}"),
             ),
             Self::Assistant(error) => match &error {
                 AssistantError::NotFound(_) => {

@@ -2,6 +2,10 @@
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
+use nineprofs_agent::{
+    AgentRegistry, AgentRegistryError, AgentTaskManager, BackendResolution, BuiltinAgentCatalog,
+    SqliteAgentMetadataRepository,
+};
 use nineprofs_api_types::{HealthResponse, RuntimeInfo};
 use nineprofs_assistant::{
     AssistantError, AssistantService, BuiltinAssistantCatalog, SqliteAssistantRepository,
@@ -79,6 +83,8 @@ pub enum RuntimeError {
     Skills(#[from] SkillError),
     #[error(transparent)]
     Assistant(#[from] AssistantError),
+    #[error(transparent)]
+    AgentRegistry(#[from] AgentRegistryError),
 }
 
 pub struct CoreRuntime {
@@ -88,22 +94,33 @@ pub struct CoreRuntime {
     event_bus: Arc<BroadcastEventBus>,
     skill_catalog: Arc<SkillCatalog>,
     assistant_service: AssistantService,
+    agent_registry: Arc<AgentRegistry>,
+    task_manager: AgentTaskManager,
 }
 
 impl CoreRuntime {
     pub async fn initialize(config: RuntimeConfig) -> Result<Self, RuntimeError> {
         let database = Database::open(&config.database_path).await?;
-        Self::from_database(config, database)
+        Self::from_database(config, database).await
     }
 
     pub async fn initialize_in_memory(config: RuntimeConfig) -> Result<Self, RuntimeError> {
         let database = Database::in_memory().await?;
-        Self::from_database(config, database)
+        Self::from_database(config, database).await
     }
 
-    fn from_database(config: RuntimeConfig, database: Database) -> Result<Self, RuntimeError> {
+    async fn from_database(
+        config: RuntimeConfig,
+        database: Database,
+    ) -> Result<Self, RuntimeError> {
         let metadata_repository = database.metadata_repository();
         let event_bus = Arc::new(BroadcastEventBus::new(config.event_capacity));
+        let agent_registry = Arc::new(AgentRegistry::new(
+            Arc::new(SqliteAgentMetadataRepository::new(database.pool().clone())),
+            BuiltinAgentCatalog::load(),
+            Arc::clone(&event_bus),
+        ));
+        agent_registry.hydrate().await?;
         let skill_catalog = Arc::new(SkillCatalog::with_configured_roots(
             config.custom_skill_roots.clone(),
         )?);
@@ -113,6 +130,7 @@ impl CoreRuntime {
             Arc::clone(&skill_catalog),
             Arc::clone(&event_bus),
         )?;
+        let task_manager = AgentTaskManager::new(Arc::clone(&event_bus));
         Ok(Self {
             config,
             database,
@@ -120,6 +138,8 @@ impl CoreRuntime {
             event_bus,
             skill_catalog,
             assistant_service,
+            agent_registry,
+            task_manager,
         })
     }
 
@@ -147,6 +167,25 @@ impl CoreRuntime {
         &self.assistant_service
     }
 
+    pub fn agent_registry(&self) -> Arc<AgentRegistry> {
+        Arc::clone(&self.agent_registry)
+    }
+
+    pub fn task_manager(&self) -> AgentTaskManager {
+        self.task_manager.clone()
+    }
+
+    pub async fn resolve_assistant_backend(
+        &self,
+        assistant_id: &str,
+    ) -> Result<BackendResolution, RuntimeError> {
+        let assistant = self.assistant_service.get(assistant_id).await?;
+        Ok(self
+            .agent_registry
+            .resolve_assistant_backend(assistant.backend_agent_id.as_deref())
+            .await)
+    }
+
     pub fn health(&self) -> HealthResponse {
         HealthResponse::ok()
     }
@@ -160,6 +199,7 @@ impl CoreRuntime {
                 "health".to_owned(),
                 "runtime".to_owned(),
                 "realtime".to_owned(),
+                "agents".to_owned(),
                 "assistants".to_owned(),
                 "skills".to_owned(),
             ],
@@ -181,5 +221,66 @@ mod tests {
         assert_eq!(runtime.info().service, "9profs-core");
         assert_eq!(runtime.event_bus().receiver_count(), 0);
         assert!(!runtime.config().session_secret_configured());
+    }
+
+    #[tokio::test]
+    async fn assistant_backend_resolution_preserves_missing_and_disabled_states() {
+        let runtime = CoreRuntime::initialize_in_memory(RuntimeConfig::default())
+            .await
+            .unwrap();
+        runtime
+            .assistant_service()
+            .create(nineprofs_assistant::CreateAssistant {
+                id: Some("backend-assistant".to_owned()),
+                name: "Backend assistant".to_owned(),
+                description: "Resolution test".to_owned(),
+                backend_agent_id: Some("codex".to_owned()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            runtime
+                .resolve_assistant_backend("backend-assistant")
+                .await
+                .unwrap(),
+            BackendResolution::Unknown { .. }
+        ));
+        runtime
+            .agent_registry()
+            .set_availability(
+                "codex",
+                nineprofs_agent::AvailabilityState::Disabled,
+                Some("disabled for test".to_owned()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .resolve_assistant_backend("backend-assistant")
+                .await
+                .unwrap(),
+            BackendResolution::Disabled { .. }
+        ));
+
+        runtime
+            .assistant_service()
+            .update(
+                "backend-assistant",
+                nineprofs_assistant::UpdateAssistant {
+                    backend_agent_id: Some(Some("missing".to_owned())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .resolve_assistant_backend("backend-assistant")
+                .await
+                .unwrap(),
+            BackendResolution::Missing { id } if id == "missing"
+        ));
     }
 }

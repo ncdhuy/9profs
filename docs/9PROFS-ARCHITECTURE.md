@@ -114,14 +114,17 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 
 ### Phase 0 status
 
-| Area                       | Status          | Evidence                                                                                  |
-| -------------------------- | --------------- | ----------------------------------------------------------------------------------------- |
-| Phase 0 contracts          | IMPLEMENTED     | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams  |
-| Phase 1A Rust Core         | IMPLEMENTED     | `9profs-core-rs/` transport/runtime foundation; no product domains                        |
-| Agent runtime              | NOT IMPLEMENTED | No agent execution, AionRS, or process runtime has been ported                            |
-| OfficeCLI integration      | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling |
-| GenOffice mutation adapter | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration          |
-| Research domain            | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                     |
+| Area                            | Status          | Evidence                                                                                   |
+| ------------------------------- | --------------- | ------------------------------------------------------------------------------------------ |
+| Phase 0 contracts               | IMPLEMENTED     | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams   |
+| Phase 1A Rust Core              | IMPLEMENTED     | `9profs-core-rs/` transport/runtime foundation; no product domains                         |
+| Phase 2A agent metadata/catalog | IMPLEMENTED     | `nineprofs-agent` descriptors, builtin catalog, minimal SQLite custom metadata persistence |
+| Phase 2A Agent Registry         | IMPLEMENTED     | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates |
+| Phase 2A task lifecycle         | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events       |
+| Real agent execution            | NOT IMPLEMENTED | No AionRS, ACP, CLI probing, process spawning, or backend executor is wired                |
+| OfficeCLI integration           | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling  |
+| GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
+| Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
 
 ### Phase 1A Rust Core foundation
 
@@ -158,6 +161,62 @@ came from `ARCHITECTURE.md`, the root `Cargo.toml`, `crates/aionui-common`,
 - Phase 1B Assistant ↔ Skills binding — IMPLEMENTED. Assistants persist stable
   skill IDs; service validation resolves IDs through `SkillCatalog`.
 
+### Phase 2A — Agent Registry + Task Lifecycle Foundation
+
+Phase 2A is IMPLEMENTED in `9profs-core-rs/crates/nineprofs-agent/` and the
+runtime composition/API boundaries:
+
+- `AgentBackendDescriptor` is metadata only: stable ID, name, description,
+  source, kind, capabilities, explicit availability, enabled state, order,
+  version, and timestamps.
+- `AgentRegistry` hydrates builtin/resource descriptors and persisted custom
+  descriptors, owns deterministic list/lookup/resolution behavior, rejects
+  duplicate IDs, and publishes `agent.registryChanged`.
+- `AgentTaskManager` owns independent `RunId` and `AgentTaskId` identities,
+  concurrency-safe task state, cancellation signals, terminal cleanup, and
+  `agent.task*` lifecycle events. Tasks are not keyed by conversation ID.
+- Assistant records continue to store only the stable `backend_agent_id`
+  string. Runtime resolution returns explicit not-configured, missing, unknown,
+  unavailable, disabled, or resolved outcomes; Assistant does not depend on
+  executor/process types.
+- Read-only HTTP catalog endpoints are available at `/api/agents` and
+  `/api/agents/:id`. No run-agent endpoint exists.
+
+The pinned AionCore audit source is
+`7ac84f93c5f81e1b1cc41f8119c089df72d63afc` at the local read-only clone
+`D:\startup\upstream\AionCore`. Phase 2A inspected
+`crates/aionui-ai-agent/src/registry.rs`, `registry_tests.rs`,
+`task_manager.rs`, `agent_task.rs`, `lib.rs`, the agent metadata repository/API
+types, and `aionui-app/src/services.rs` composition wiring.
+
+Adapted concepts: metadata as catalog source of truth, startup hydration,
+stable backend IDs, deterministic ordering, repository boundaries, explicit
+availability, serialized registry mutation, and concurrency-safe task
+ownership/lifecycle patterns.
+
+Intentionally deferred: CLI discovery/path resolution, `--version` probes,
+ACP handshakes, AionRS, model discovery, provider health checks, user CLI
+environment management, installer/update behavior, conversation sessions,
+leases, idle cleanup, warmup, background subagents, and every real
+`AgentFactory`/executor. Builtin CLI descriptors remain `unknown` and no
+binary is invoked.
+
+Dependency direction remains:
+
+```text
+nineprofs-core app
+├── nineprofs-runtime
+│   ├── nineprofs-agent
+│   ├── nineprofs-assistant ── nineprofs-skills
+│   ├── nineprofs-db
+│   └── nineprofs-realtime / nineprofs-api-types / nineprofs-common
+└── packages/9profs-core transport + Phase 0 adapters
+```
+
+Phase 2B may add runtime probing and real executors behind this registry and
+task boundary. It must preserve Assistant/backend separation, stable IDs,
+round-trip persistence, and the no-process Phase 2A behavior.
+
 Pinned AionCore source remains commit
 `7ac84f93c5f81e1b1cc41f8119c089df72d63afc`. Adapted upstream locations were
 `crates/aionui-assistant/src/{builtin.rs,service.rs,routes.rs,state.rs}`,
@@ -187,7 +246,7 @@ rules, and ordered skill assignments are persisted.
 
 No repository package currently establishes:
 
-- an agent execution runtime, assistant registry, or service domain;
+- real agent execution, backend executors, or provider runtime probing;
 - an MCP layer, extension host, or skill filesystem loader;
 - a research/review/citation/regulation domain;
 - a GenOffice document adapter that owns AI mutations through editor
@@ -225,7 +284,7 @@ save ordering, reparse, comments, revisions, anchors, or OOXML identity.
 | Persisted Office bytes | Format-specific engines and app save paths; DOCX through `docx-engine` and Docs save/reparse                                                  | One canonical writer per active document. Presentation, AI, and external tools cannot become parallel writers.               |
 | AI/runtime state       | `agent-core` loop/transport, app panels, provider streams; mostly per-run/local                                                               | Future 9Profs Core owns runtime/session/policy state. It does not own Office bytes or editor state.                          |
 | Skills                 | Current app skills under `apps/*/src/*/ai`; shared `AgentSkill` contract in `packages/agent-core/src/skill.ts`                                | Future skill registry owns discovery/versioning/execution policy; skills call document tools, never persistence internals.   |
-| Assistants             | No shared registry; app UI/provider settings identify current behavior                                                                        | Future assistant registry owns assistant metadata, allowed skills, policy, and model routing.                                |
+| Assistants             | Phase 1B metadata/CRUD plus Phase 2A backend-ID resolution                                                                                    | Future phases may add policy and model routing; Assistant remains separate from executable backends.                         |
 | External tools         | Current provider/search/file/native adapters                                                                                                  | Adapters own transport and normalized observations. OfficeCLI can write only new, detached, or unowned documents.            |
 | Research workflows     | No research domain package exists; current search is generic/app support                                                                      | Future Research Domain owns evidence, provenance, review state, citations, and domain workflows, not Office canonical bytes. |
 | Presentation           | Docs renderer V1/V2 and visual extensions                                                                                                     | Presentation is derived state. It never becomes the document persistence authority.                                          |

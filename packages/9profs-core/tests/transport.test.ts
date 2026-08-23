@@ -54,4 +54,60 @@ describe('Core transport boundary', () => {
       { input: 'http://127.0.0.1:39761/api/skills/scan', method: 'POST', body: undefined },
     ])
   })
+
+  it('maps agent registry list and get APIs', async () => {
+    const requests: string[] = []
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input) => {
+      requests.push(input)
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: input.endsWith('/api/agents')
+            ? [
+                {
+                  id: 'codex',
+                  name: 'Codex',
+                  description: 'Future backend',
+                  source: 'builtin',
+                  kind: 'cli',
+                  capabilities: ['cancellation'],
+                  availability: 'unknown',
+                  availability_reason: null,
+                  enabled: true,
+                  sort_order: 10,
+                  version: null,
+                  created_at_ms: null,
+                  updated_at_ms: null,
+                },
+              ]
+            : {
+                id: 'codex',
+                name: 'Codex',
+                description: 'Future backend',
+                source: 'builtin',
+                kind: 'cli',
+                capabilities: ['cancellation'],
+                availability: 'unknown',
+                availability_reason: null,
+                enabled: true,
+                sort_order: 10,
+                version: null,
+                created_at_ms: null,
+                updated_at_ms: null,
+              },
+        }),
+      }
+    })
+
+    await expect(transport.agents()).resolves.toHaveLength(1)
+    await expect(transport.agent('codex')).resolves.toMatchObject({
+      id: 'codex',
+      availability: 'unknown',
+    })
+    expect(requests).toEqual([
+      'http://127.0.0.1:39761/api/agents',
+      'http://127.0.0.1:39761/api/agents/codex',
+    ])
+  })
 })

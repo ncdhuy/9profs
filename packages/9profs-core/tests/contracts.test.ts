@@ -1,6 +1,7 @@
 import { expectTypeOf, test } from 'vitest'
 import type {
   AgentBackend,
+  AgentBackendDescriptor,
   AgentRequest,
   AgentRun,
   AssistantRegistry,
@@ -10,6 +11,10 @@ import type {
 } from '../src'
 
 test('agent and registry contracts stay generic and async', () => {
+  expectTypeOf<AgentBackendDescriptor>().toMatchTypeOf<{
+    id: string
+    availability: import('../src').AgentBackendAvailability
+  }>()
   expectTypeOf<AgentBackend['run']>().toEqualTypeOf<(request: AgentRequest) => Promise<AgentRun>>()
   expectTypeOf<ToolProvider['listTools']>().returns.toEqualTypeOf<
     Promise<readonly import('../src').ToolDefinition[]>
