@@ -4,21 +4,31 @@ export type {
   AgentRun,
   AgentRunId,
   AgentRunStatus,
+  AssistantSource,
   AssistantDefinition,
   AssistantId,
   AssistantRegistry,
+  CoreAssistant,
+  CoreSkill,
+  CoreSkillCatalog,
+  CoreSkillIssue,
+  CreateAssistantInput,
   SkillDefinition,
   SkillId,
   SkillProvider,
+  SkillSource,
+  UpdateAssistantInput,
   ToolDefinition,
   ToolId,
   ToolProvider,
 } from './types'
 
 export { createCoreTransport } from './transport'
+export { createCoreAssistantRegistry, createCoreSkillProvider } from './adapters'
 export type {
   CoreFetch,
   CoreHealth,
+  CoreRequestInit,
   CoreResponse,
   CoreRuntimeInfo,
   CoreTransport,

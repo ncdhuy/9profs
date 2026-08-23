@@ -845,6 +845,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nineprofs-assistant"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nineprofs-api-types",
+ "nineprofs-common",
+ "nineprofs-db",
+ "nineprofs-realtime",
+ "nineprofs-skills",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "nineprofs-common"
 version = "0.1.0"
 dependencies = [
@@ -859,8 +876,10 @@ dependencies = [
  "axum",
  "futures-util",
  "nineprofs-api-types",
+ "nineprofs-assistant",
  "nineprofs-realtime",
  "nineprofs-runtime",
+ "nineprofs-skills",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.2",
@@ -895,11 +914,21 @@ name = "nineprofs-runtime"
 version = "0.1.0"
 dependencies = [
  "nineprofs-api-types",
+ "nineprofs-assistant",
  "nineprofs-db",
  "nineprofs-realtime",
+ "nineprofs-skills",
  "serde",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "nineprofs-skills"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

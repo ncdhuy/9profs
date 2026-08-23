@@ -1,0 +1,24 @@
+{
+  "assistants": [
+    {
+      "id": "document-foundation",
+      "name": "Document Foundation",
+      "description": "General document planning and review foundation.",
+      "avatar": null,
+      "rule_file": "rules/document-foundation.md",
+      "enabled": true,
+      "enabled_skills": ["document-foundation"],
+      "agent_ref": null
+    },
+    {
+      "id": "writing-foundation",
+      "name": "Writing Foundation",
+      "description": "General writing structure and editing foundation.",
+      "avatar": null,
+      "rule_file": "rules/writing-foundation.md",
+      "enabled": true,
+      "enabled_skills": ["writing-foundation"],
+      "agent_ref": null
+    }
+  ]
+}

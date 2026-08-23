@@ -32,4 +32,26 @@ describe('Core transport boundary', () => {
       'http://127.0.0.1:39761/api/runtime',
     ])
   })
+
+  it('maps assistant and skill catalog APIs without exposing Rust types', async () => {
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
+      requests.push({ input, method: init?.method, body: init?.body })
+      const data = input.endsWith('/api/assistants')
+        ? []
+        : input.endsWith('/api/skills')
+          ? { skills: [], issues: [] }
+          : {}
+      return { ok: true, json: async () => ({ success: true, data }) }
+    })
+
+    await expect(transport.assistants()).resolves.toEqual([])
+    await expect(transport.skills()).resolves.toEqual({ skills: [], issues: [] })
+    await transport.scanSkills()
+    expect(requests).toEqual([
+      { input: 'http://127.0.0.1:39761/api/assistants' },
+      { input: 'http://127.0.0.1:39761/api/skills' },
+      { input: 'http://127.0.0.1:39761/api/skills/scan', method: 'POST', body: undefined },
+    ])
+  })
 })

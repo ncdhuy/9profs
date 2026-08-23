@@ -5,8 +5,8 @@ Status: canonical architecture and migration baseline for the current
 and a read-only comparison with `baseline/genoffice`.
 
 This document describes what exists, what remains GenOffice-derived, and the
-target boundaries for 9Profs. It does not implement 9Profs Core, OfficeCLI,
-research workflows, or SaaS services.
+target boundaries for 9Profs. It does not implement OfficeCLI, research
+workflows, agent execution, or SaaS services.
 
 ## Non-negotiable rules
 
@@ -141,6 +141,47 @@ came from `ARCHITECTURE.md`, the root `Cargo.toml`, `crates/aionui-common`,
 `aionui-api-types`, `aionui-db`, `aionui-realtime`, `aionui-runtime`, and
 `aionui-app`. GenOffice baseline inspection used commit
 `f68df70e222d47aa08211f9a2d7748c610d1d6aa` on `main`.
+
+## Phase 0–1B implementation status
+
+- Phase 0 contracts — IMPLEMENTED in `packages/9profs-core/`.
+- Phase 1A Rust Core foundation — IMPLEMENTED in `9profs-core-rs/` common,
+  API-types, SQLite, realtime, runtime, and app crates.
+- Phase 1B Assistant domain — IMPLEMENTED in
+  `9profs-core-rs/crates/nineprofs-assistant/`, including builtin/custom
+  catalogs, Rules, SQLite CRUD, ordered skill bindings, and metadata-only
+  backend-agent references.
+- Phase 1B Skills catalog/loading — IMPLEMENTED in
+  `9profs-core-rs/crates/nineprofs-skills/`, including embedded representative
+  builtin resources, configured-root custom `SKILL.md` discovery, malformed
+  skill reporting, and extension-ready provider boundary.
+- Phase 1B Assistant ↔ Skills binding — IMPLEMENTED. Assistants persist stable
+  skill IDs; service validation resolves IDs through `SkillCatalog`.
+
+Pinned AionCore source remains commit
+`7ac84f93c5f81e1b1cc41f8119c089df72d63afc`. Adapted upstream locations were
+`crates/aionui-assistant/src/{builtin.rs,service.rs,routes.rs,state.rs}`,
+`crates/aionui-extension/src/{skill_service.rs,loader.rs,asset_paths.rs}`,
+and representative resources under
+`crates/aionui-app/assets/{builtin-assistants,builtin-skills}`. AionRS,
+`aionui-ai-agent`, conversation state, MCP runtime, Cron behavior, and full
+extension loading were excluded.
+
+Dependency direction:
+
+```text
+nineprofs-core app
+├── nineprofs-runtime
+│   ├── nineprofs-assistant ── nineprofs-skills
+│   ├── nineprofs-db
+│   └── nineprofs-realtime / nineprofs-api-types / nineprofs-common
+└── packages/9profs-core transport + Phase 0 adapters
+```
+
+Skill precedence is deterministic: custom, then extension, then builtin.
+Configured custom roots are ordered highest to lowest precedence. Builtin
+assistants and skills remain resource-backed; only custom assistant metadata,
+rules, and ordered skill assignments are persisted.
 
 ### Not implemented yet
 

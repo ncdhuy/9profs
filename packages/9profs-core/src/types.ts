@@ -48,6 +48,65 @@ export interface AssistantDefinition {
   readonly description: string
 }
 
+export type AssistantSource = 'builtin' | 'custom'
+
+export interface CoreAssistant {
+  readonly id: AssistantId
+  readonly name: string
+  readonly description: string
+  readonly avatar: string | null
+  readonly source: AssistantSource
+  readonly rules: string
+  readonly enabled: boolean
+  readonly skill_ids: readonly SkillId[]
+  readonly backend_agent_id: string | null
+  readonly created_at_ms: number | null
+  readonly updated_at_ms: number | null
+}
+
+export interface CreateAssistantInput {
+  readonly id?: string
+  readonly name: string
+  readonly description: string
+  readonly avatar?: string | null
+  readonly rules?: string
+  readonly enabled?: boolean
+  readonly skill_ids?: readonly SkillId[]
+  readonly backend_agent_id?: string | null
+}
+
+export interface UpdateAssistantInput {
+  readonly name?: string
+  readonly description?: string
+  readonly avatar?: string | null
+  readonly rules?: string
+  readonly enabled?: boolean
+  readonly skill_ids?: readonly SkillId[]
+  readonly backend_agent_id?: string | null
+}
+
+export type SkillSource = 'builtin' | 'custom' | 'extension'
+
+export interface CoreSkill {
+  readonly id: SkillId
+  readonly name: string
+  readonly description: string
+  readonly source: SkillSource
+  readonly location: string
+  readonly content?: string
+}
+
+export interface CoreSkillIssue {
+  readonly root: string
+  readonly path?: string
+  readonly message: string
+}
+
+export interface CoreSkillCatalog {
+  readonly skills: readonly CoreSkill[]
+  readonly issues: readonly CoreSkillIssue[]
+}
+
 /** Registry boundary for assistant definitions and configuration. */
 export interface AssistantRegistry {
   listAssistants(): Promise<readonly AssistantDefinition[]>

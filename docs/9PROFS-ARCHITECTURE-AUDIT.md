@@ -31,19 +31,21 @@ The root is a private `genoffice` workspace with `apps/*` and `packages/*`
 workspaces. Product scripts run tests and typechecks for the shared packages,
 Docs, Sheets, Shell, Slides, PDF, and Markdown.
 
-| Current area             | Confirmed implementation                                                                                                   | Current status                                |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Electron shell           | `apps/shell/src/main/index.ts`, `tab-manager.ts`, preload and renderer UI; hosts app views/tabs                            | Implemented                                   |
-| Docs/DOCX                | `apps/docs` plus `packages/docx-engine`; Tiptap/ProseMirror model, renderer pagination, AI tools, dirty/save/reparse paths | Implemented; canonical Office editor          |
-| Sheets/XLSX              | Univer renderer, `apps/sheets/src/gateway/xlsx-gateway.ts`, `xlsx-package-io.ts`, Rust `native/xlsx-engine`                | Implemented; independent Office editor        |
-| Slides/PPTX              | `packages/pptx-engine`, `packages/pptx-render`, `apps/slides/src/renderer/SlideCanvas.tsx`                                 | Implemented; independent Office editor        |
-| PDF                      | PDF.js viewer/editor UI, PDFium/PDF-lib main-process operations, `apps/pdf/src/main/save-pdf.ts`                           | Implemented; independent Office editor        |
-| Markdown                 | Tiptap editor, `apps/markdown/src/renderer/markdown/docText.ts`, optional `export/docxExport.ts`                           | Implemented; plain-file-first                 |
-| Shared AI                | `agent-core`, `ai-provider`, `ai-search`, and app-level AI skills/tools/transports                                         | Implemented local foundation; not 9Profs Core |
-| Local workspace data     | `packages/project-store` local projects/chats/attachments                                                                  | Implemented local persistence; not SaaS       |
-| Phase 0 contracts        | `packages/9profs-core`, `packages/document-gateway`, and compile-checked adapter seams                                     | Implemented; contracts only                   |
-| Rust Core foundation     | `9profs-core-rs/` common/API/SQLite/realtime/runtime/app crates; loopback HTTP/WebSocket bootstrap                         | Implemented; foundation only                  |
-| Research/product backend | No research domain, OfficeCLI process integration, or account/billing backend                                              | Future                                        |
+| Current area              | Confirmed implementation                                                                                                   | Current status                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Electron shell            | `apps/shell/src/main/index.ts`, `tab-manager.ts`, preload and renderer UI; hosts app views/tabs                            | Implemented                                   |
+| Docs/DOCX                 | `apps/docs` plus `packages/docx-engine`; Tiptap/ProseMirror model, renderer pagination, AI tools, dirty/save/reparse paths | Implemented; canonical Office editor          |
+| Sheets/XLSX               | Univer renderer, `apps/sheets/src/gateway/xlsx-gateway.ts`, `xlsx-package-io.ts`, Rust `native/xlsx-engine`                | Implemented; independent Office editor        |
+| Slides/PPTX               | `packages/pptx-engine`, `packages/pptx-render`, `apps/slides/src/renderer/SlideCanvas.tsx`                                 | Implemented; independent Office editor        |
+| PDF                       | PDF.js viewer/editor UI, PDFium/PDF-lib main-process operations, `apps/pdf/src/main/save-pdf.ts`                           | Implemented; independent Office editor        |
+| Markdown                  | Tiptap editor, `apps/markdown/src/renderer/markdown/docText.ts`, optional `export/docxExport.ts`                           | Implemented; plain-file-first                 |
+| Shared AI                 | `agent-core`, `ai-provider`, `ai-search`, and app-level AI skills/tools/transports                                         | Implemented local foundation; not 9Profs Core |
+| Local workspace data      | `packages/project-store` local projects/chats/attachments                                                                  | Implemented local persistence; not SaaS       |
+| Phase 0 contracts         | `packages/9profs-core`, `packages/document-gateway`, and compile-checked adapter seams                                     | Implemented; contracts only                   |
+| Rust Core foundation      | `9profs-core-rs/` common/API/SQLite/realtime/runtime/app crates; loopback HTTP/WebSocket bootstrap                         | Implemented; foundation only                  |
+| Phase 1B Assistant domain | `nineprofs-assistant`; builtin/custom assistants, Rules, CRUD persistence, skill bindings, backend metadata reference      | Implemented                                   |
+| Phase 1B Skills catalog   | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary         | Implemented                                   |
+| Research/product backend  | No research domain, OfficeCLI process integration, or account/billing backend                                              | Future                                        |
 
 ## GenOffice inheritance and current divergence
 
@@ -122,7 +124,8 @@ No package is removed, phased out, or replaced by this audit.
 3. Current AI state is per-run/local in app panels, agent loop, and provider
    streams. `9profs-core-rs` now owns only runtime foundation state; no agent
    domain state exists yet.
-4. Current skills are app-local; no assistant or shared skill registry exists.
+4. Phase 1B now owns assistant and shared skill catalog metadata in
+   `9profs-core-rs`; app-local agent execution remains separate and deferred.
 5. Current search/provider/native integrations are adapters, not an Office
    ownership layer.
 6. No research domain owns evidence or review state yet.
@@ -136,10 +139,12 @@ The target architecture proposes these compatible future boundaries:
 - `packages/9profs-core/` for runtime, workspace, policy, events, and service
   composition;
 - `packages/9profs-core/src/agent-runtime/` for agent runs;
-- `packages/9profs-core/src/assistant-registry/` for assistant descriptors and
-  allowed capabilities;
-- `packages/9profs-core/src/skills/`, `mcp/`, and `extensions/` for shared
-  capability registration and lifecycle;
+- `9profs-core-rs/crates/nineprofs-assistant/` for assistant descriptors,
+  Rules, persistence, and stable skill bindings;
+- `9profs-core-rs/crates/nineprofs-skills/` for shared skill metadata and
+  resource loading; TypeScript `packages/9profs-core` remains transport-only;
+- future `mcp/` and `extensions/` runtime boundaries for capability
+  registration and lifecycle;
 - `packages/research-domain/` for research/review/citation/regulation;
 - `packages/document-gateway/` for `DocumentChangeSet`, snapshots, and active
   document ownership/mutation policy;
@@ -149,18 +154,30 @@ The target architecture proposes these compatible future boundaries:
   policy.
 
 Phase 0 contract portions are implemented in `packages/9profs-core/` and
-`packages/document-gateway/`. Phase 1A Rust Core foundation is implemented in
-`9profs-core-rs/`; `packages/genoffice-adapter/` and
+`packages/document-gateway/`. Phase 1A Rust Core foundation and Phase 1B
+Assistant/Skills foundation are implemented in `9profs-core-rs/`;
+`packages/genoffice-adapter/` and
 `packages/officecli-adapter/` are compile-checked skeletons only.
 
-Agent execution/AionRS, OfficeCLI integration, GenOffice mutation adapter, and
-research domain remain NOT IMPLEMENTED. AionCore audit SHA:
+Agent execution/AionRS, AionRS-backed runtime, MCP, full Extensions runtime,
+OfficeCLI integration, GenOffice mutation adapter, and research domain remain
+NOT IMPLEMENTED. AionCore audit SHA:
 `7ac84f93c5f81e1b1cc41f8119c089df72d63afc`.
+
+Phase 1B upstream adaptation record: assistant resource/catalog patterns came
+from `crates/aionui-assistant/src/builtin.rs` and `service.rs`; SKILL.md
+discovery, source handling, and configured path safety came from
+`crates/aionui-extension/src/skill_service.rs`, `loader.rs`, and
+`asset_paths.rs`; representative resources came from
+`crates/aionui-app/assets/builtin-assistants` and `builtin-skills`.
+`nineprofs-assistant` and `nineprofs-skills` contain 9Profs-owned adaptations;
+no AionRS, agent runtime, MCP, OfficeCLI, or frontend architecture was copied.
 
 ## Migration conclusion
 
 Next work starts with contracts and V2 proof, then builds 9Profs Core around
-existing GenOffice behavior. Agent/skills/MCP/extensions follow. OfficeCLI is
+existing GenOffice behavior. Agent runtime/MCP/extensions runtime follow.
+OfficeCLI is
 introduced as a sidecar with ownership checks. The document gateway then routes
 approved `DocumentChangeSet` values into GenOffice transactions. Research and
 SaaS/product services come after those boundaries are proven.

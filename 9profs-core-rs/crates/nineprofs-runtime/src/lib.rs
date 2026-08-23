@@ -3,8 +3,12 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use nineprofs_api_types::{HealthResponse, RuntimeInfo};
+use nineprofs_assistant::{
+    AssistantError, AssistantService, BuiltinAssistantCatalog, SqliteAssistantRepository,
+};
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
 use nineprofs_realtime::BroadcastEventBus;
+use nineprofs_skills::{SkillCatalog, SkillError};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -13,6 +17,7 @@ pub struct RuntimeConfig {
     pub data_dir: PathBuf,
     pub database_path: PathBuf,
     pub event_capacity: usize,
+    pub custom_skill_roots: Vec<PathBuf>,
     /// Reserved launch-scoped secret. Authentication is intentionally not enabled in Phase 1A.
     pub session_secret: Option<Arc<str>>,
 }
@@ -25,6 +30,7 @@ impl Default for RuntimeConfig {
             database_path: data_dir.join("core.db"),
             data_dir,
             event_capacity: 256,
+            custom_skill_roots: Vec::new(),
             session_secret: None,
         }
     }
@@ -48,6 +54,14 @@ impl RuntimeConfig {
                 config.session_secret = Some(Arc::from(value));
             }
         }
+        if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
+            config.custom_skill_roots = value
+                .split(';')
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .collect();
+        }
 
         config
     }
@@ -61,6 +75,10 @@ impl RuntimeConfig {
 pub enum RuntimeError {
     #[error(transparent)]
     Database(#[from] DbError),
+    #[error(transparent)]
+    Skills(#[from] SkillError),
+    #[error(transparent)]
+    Assistant(#[from] AssistantError),
 }
 
 pub struct CoreRuntime {
@@ -68,28 +86,41 @@ pub struct CoreRuntime {
     database: Database,
     metadata_repository: SqliteMetadataRepository,
     event_bus: Arc<BroadcastEventBus>,
+    skill_catalog: Arc<SkillCatalog>,
+    assistant_service: AssistantService,
 }
 
 impl CoreRuntime {
     pub async fn initialize(config: RuntimeConfig) -> Result<Self, RuntimeError> {
         let database = Database::open(&config.database_path).await?;
-        Ok(Self::from_database(config, database))
+        Self::from_database(config, database)
     }
 
     pub async fn initialize_in_memory(config: RuntimeConfig) -> Result<Self, RuntimeError> {
         let database = Database::in_memory().await?;
-        Ok(Self::from_database(config, database))
+        Self::from_database(config, database)
     }
 
-    fn from_database(config: RuntimeConfig, database: Database) -> Self {
+    fn from_database(config: RuntimeConfig, database: Database) -> Result<Self, RuntimeError> {
         let metadata_repository = database.metadata_repository();
         let event_bus = Arc::new(BroadcastEventBus::new(config.event_capacity));
-        Self {
+        let skill_catalog = Arc::new(SkillCatalog::with_configured_roots(
+            config.custom_skill_roots.clone(),
+        )?);
+        let assistant_service = AssistantService::new(
+            SqliteAssistantRepository::new(database.pool().clone()),
+            BuiltinAssistantCatalog::load().map_err(AssistantError::from)?,
+            Arc::clone(&skill_catalog),
+            Arc::clone(&event_bus),
+        )?;
+        Ok(Self {
             config,
             database,
             metadata_repository,
             event_bus,
-        }
+            skill_catalog,
+            assistant_service,
+        })
     }
 
     pub fn config(&self) -> &RuntimeConfig {
@@ -108,6 +139,14 @@ impl CoreRuntime {
         Arc::clone(&self.event_bus)
     }
 
+    pub fn skill_catalog(&self) -> Arc<SkillCatalog> {
+        Arc::clone(&self.skill_catalog)
+    }
+
+    pub fn assistant_service(&self) -> &AssistantService {
+        &self.assistant_service
+    }
+
     pub fn health(&self) -> HealthResponse {
         HealthResponse::ok()
     }
@@ -121,6 +160,8 @@ impl CoreRuntime {
                 "health".to_owned(),
                 "runtime".to_owned(),
                 "realtime".to_owned(),
+                "assistants".to_owned(),
+                "skills".to_owned(),
             ],
         }
     }

@@ -2,10 +2,14 @@
 //!
 //! This crate intentionally has no web-framework dependency.
 
+mod assistant;
 mod response;
 mod runtime;
+mod skill;
 mod websocket;
 
+pub use assistant::{AssistantDto, CreateAssistantRequest, UpdateAssistantRequest};
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};
+pub use skill::{SkillCatalogDto, SkillDto, SkillIssueDto};
 pub use websocket::EventEnvelope;

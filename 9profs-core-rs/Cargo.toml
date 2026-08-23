@@ -5,6 +5,8 @@ members = [
     "crates/nineprofs-api-types",
     "crates/nineprofs-db",
     "crates/nineprofs-realtime",
+    "crates/nineprofs-skills",
+    "crates/nineprofs-assistant",
     "crates/nineprofs-runtime",
     "app/nineprofs-core",
 ]

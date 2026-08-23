@@ -1,16 +1,21 @@
 [package]
-name = "nineprofs-runtime"
+name = "nineprofs-assistant"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 nineprofs-api-types = { path = "../nineprofs-api-types" }
-nineprofs-assistant = { path = "../nineprofs-assistant" }
-nineprofs-db = { path = "../nineprofs-db" }
+nineprofs-common = { path = "../nineprofs-common" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
 nineprofs-skills = { path = "../nineprofs-skills" }
 serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+nineprofs-db = { path = "../nineprofs-db" }
 tokio.workspace = true
