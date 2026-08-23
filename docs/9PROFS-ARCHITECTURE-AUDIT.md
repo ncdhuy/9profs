@@ -121,11 +121,12 @@ No package is removed, phased out, or replaced by this audit.
    editing.
 2. Format engines and existing app save paths are the source of truth for
    persisted Office bytes. DOCX persistence is protected in `docx-engine`.
-3. Current AI state is per-run/local in app panels, agent loop, and provider
-   streams. `9profs-core-rs` now owns only runtime foundation state; no agent
-   domain state exists yet.
-4. Phase 1B now owns assistant and shared skill catalog metadata in
-   `9profs-core-rs`; app-local agent execution remains separate and deferred.
+3. Current GenOffice AI state remains per-run/local in app panels, agent loop,
+   and provider streams. Phase 2B1 adds an independent Rust Core execution
+   path; it does not replace the current app AI path.
+4. Phase 1B owns assistant and shared skill catalog metadata in
+   `9profs-core-rs`; Phase 2B1 composes those records through
+   `AgentExecutionService` and an executor boundary.
 5. Current search/provider/native integrations are adapters, not an Office
    ownership layer.
 6. No research domain owns evidence or review state yet.
@@ -138,7 +139,8 @@ The target architecture proposes these compatible future boundaries:
 
 - `packages/9profs-core/` for runtime, workspace, policy, events, and service
   composition;
-- `packages/9profs-core/src/agent-runtime/` for agent runs;
+- `9profs-core-rs/crates/nineprofs-runtime/` for execution composition and
+  `nineprofs-agent/` for the 9Profs-owned executor boundary and task runtime;
 - `9profs-core-rs/crates/nineprofs-assistant/` for assistant descriptors,
   Rules, persistence, and stable skill bindings;
 - `9profs-core-rs/crates/nineprofs-skills/` for shared skill metadata and
@@ -174,15 +176,27 @@ Phase 2A source audit used the pinned local AionCore checkout
 `task_manager.rs`, `agent_task.rs`, `lib.rs`, metadata repository/API types,
 and application composition wiring. Reused concepts are catalog hydration,
 stable IDs, repository boundaries, deterministic ordering, explicit
-availability, and concurrent task ownership. Excluded functionality is CLI
-discovery/probing/version checks, ACP, AionRS, process spawning, model/health
-probing, conversations, leases, idle sessions, warmup, background agents,
-install/update logic, and real `AgentFactory` executors.
+availability, and concurrent task ownership. Phase 2B1 additionally inspected
+`agent_runtime.rs`, `agent_task.rs`, `task_manager.rs`, `factory/`, `manager/`,
+`protocol/`, `session_context.rs`, and service composition at the same pinned
+SHA. AionRS tag `v0.2.11` resolves to
+`8e61a90329fa9f67c4fdf7e97fe02c24dba33f75`; its `aion-agent`, `aion-config`,
+`aion-providers`, `aion-types`, `aion-protocol`, `aion-mcp`, and `aion-tools`
+sources were inspected. AionCore's real dependency edge is pinned to that
+tag, not a floating branch.
 
-Agent execution/AionRS, AionRS-backed runtime, MCP, full Extensions runtime,
-OfficeCLI integration, GenOffice mutation adapter, and research domain remain
-NOT IMPLEMENTED. AionCore audit SHA:
-`7ac84f93c5f81e1b1cc41f8119c089df72d63afc`.
+Phase 2B1 real execution is IMPLEMENTED in `nineprofs-agent`,
+`nineprofs-runtime`, `nineprofs-api-types`, and the core app transport. The
+9Profs-owned `AgentExecutor` boundary keeps AionRS types inside
+`AionRsExecutor`; the direct AionRS engine is constructed with an empty tool
+registry. Therefore shell, file mutation, subprocess, MCP, sub-agent, and
+upstream global-skill discovery capabilities are disabled. Provider/model
+configuration is launch-scoped through `NINEPROFS_AGENT_*` variables, with the
+API-key environment variable name retained but never the secret.
+
+Still NOT IMPLEMENTED: ACP/external CLI backends, MCP, full Extensions
+runtime, OfficeCLI integration, GenOffice mutation adapter, research domain,
+conversation/session persistence, and the GenOffice AI bridge.
 
 Phase 1B upstream adaptation record: assistant resource/catalog patterns came
 from `crates/aionui-assistant/src/builtin.rs` and `service.rs`; SKILL.md

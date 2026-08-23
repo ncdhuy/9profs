@@ -9,6 +9,89 @@ export interface AgentRequest {
   readonly assistantId?: AssistantId
 }
 
+export type AgentTaskStatus =
+  | 'queued'
+  | 'starting'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+
+export interface AgentRunRequest {
+  readonly assistant_id: AssistantId
+  readonly input: string
+}
+
+export interface AgentTaskFailure {
+  readonly code: string
+  readonly message: string
+}
+
+export interface AgentTask {
+  readonly task_id: string
+  readonly run_id: AgentRunId
+  readonly backend_id: AgentBackendId
+  readonly state: AgentTaskStatus
+  readonly created_at_ms: number
+  readonly updated_at_ms: number
+  readonly started_at_ms: number | null
+  readonly completed_at_ms: number | null
+  readonly failure: AgentTaskFailure | null
+  readonly cancellation_requested: boolean
+}
+
+export interface AgentRunStarted {
+  readonly run_id: AgentRunId
+  readonly task: AgentTask
+}
+
+export interface AgentRunResponse {
+  readonly run_id: AgentRunId
+  readonly tasks: readonly AgentTask[]
+}
+
+export type AgentExecutionOutputEvent =
+  | {
+      readonly id: string
+      readonly name: 'agent.outputStarted'
+      readonly occurred_at_ms: number
+      readonly payload: {
+        readonly run_id: AgentRunId
+        readonly task_id: string
+        readonly details: Record<string, never>
+      }
+    }
+  | {
+      readonly id: string
+      readonly name: 'agent.outputDelta'
+      readonly occurred_at_ms: number
+      readonly payload: {
+        readonly run_id: AgentRunId
+        readonly task_id: string
+        readonly details: { readonly delta: string }
+      }
+    }
+  | {
+      readonly id: string
+      readonly name: 'agent.outputCompleted'
+      readonly occurred_at_ms: number
+      readonly payload: {
+        readonly run_id: AgentRunId
+        readonly task_id: string
+        readonly details: { readonly output: string }
+      }
+    }
+  | {
+      readonly id: string
+      readonly name: 'agent.error'
+      readonly occurred_at_ms: number
+      readonly payload: {
+        readonly run_id: AgentRunId
+        readonly task_id: string
+        readonly details: { readonly code: string; readonly message: string }
+      }
+    }
+
 export type AgentRunStatus = 'completed' | 'failed' | 'cancelled'
 
 export interface AgentRun {

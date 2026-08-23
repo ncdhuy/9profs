@@ -6,6 +6,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+aion-agent.workspace = true
+aion-config.workspace = true
+aion-tools.workspace = true
 async-trait.workspace = true
 nineprofs-api-types = { path = "../nineprofs-api-types" }
 nineprofs-common = { path = "../nineprofs-common" }

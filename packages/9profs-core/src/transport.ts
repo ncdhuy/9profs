@@ -4,6 +4,10 @@
  */
 import type {
   AgentBackendDescriptor,
+  AgentRunRequest,
+  AgentRunResponse,
+  AgentRunStarted,
+  AgentTask,
   AssistantId,
   CoreAssistant,
   CoreSkill,
@@ -50,6 +54,10 @@ export interface CoreTransport {
   runtime(): Promise<CoreRuntimeInfo>
   agents(): Promise<AgentBackendDescriptor[]>
   agent(id: string): Promise<AgentBackendDescriptor>
+  createAgentRun(input: AgentRunRequest): Promise<AgentRunStarted>
+  agentRun(id: string): Promise<AgentRunResponse>
+  agentRunTasks(id: string): Promise<AgentTask[]>
+  cancelAgentTask(id: string): Promise<AgentTask>
   assistants(): Promise<CoreAssistant[]>
   assistant(id: AssistantId): Promise<CoreAssistant>
   createAssistant(input: CreateAssistantInput): Promise<CoreAssistant>
@@ -93,6 +101,11 @@ export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTr
     runtime: () => get<CoreRuntimeInfo>('/api/runtime'),
     agents: () => get<AgentBackendDescriptor[]>('/api/agents'),
     agent: (id) => get<AgentBackendDescriptor>(`/api/agents/${encodeURIComponent(id)}`),
+    createAgentRun: (input) => request<AgentRunStarted>('/api/agent-runs', 'POST', input),
+    agentRun: (id) => get<AgentRunResponse>(`/api/agent-runs/${encodeURIComponent(id)}`),
+    agentRunTasks: (id) => get<AgentTask[]>(`/api/agent-runs/${encodeURIComponent(id)}/tasks`),
+    cancelAgentTask: (id) =>
+      request<AgentTask>(`/api/agent-tasks/${encodeURIComponent(id)}/cancel`, 'POST'),
     assistants: () => get<CoreAssistant[]>('/api/assistants'),
     assistant: (id) => get<CoreAssistant>(`/api/assistants/${encodeURIComponent(id)}`),
     createAssistant: (input) => request<CoreAssistant>('/api/assistants', 'POST', input),

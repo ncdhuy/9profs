@@ -110,4 +110,51 @@ describe('Core transport boundary', () => {
       'http://127.0.0.1:39761/api/agents/codex',
     ])
   })
+
+  it('maps agent run creation, diagnostics, and cancellation APIs', async () => {
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
+    const task = {
+      task_id: 'task-1',
+      run_id: 'run-1',
+      backend_id: 'nineprofs-default',
+      state: 'queued',
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      started_at_ms: null,
+      completed_at_ms: null,
+      failure: null,
+      cancellation_requested: false,
+    }
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
+      requests.push({ input, method: init?.method, body: init?.body })
+      const data = input.endsWith('/api/agent-runs')
+        ? { run_id: 'run-1', task }
+        : input.endsWith('/tasks')
+          ? [task]
+          : input.includes('/api/agent-tasks/')
+            ? task
+            : { run_id: 'run-1', tasks: [task] }
+      return { ok: true, json: async () => ({ success: true, data }) }
+    })
+
+    await expect(
+      transport.createAgentRun({ assistant_id: 'assistant-1', input: 'hello' }),
+    ).resolves.toMatchObject({ run_id: 'run-1' })
+    await expect(transport.agentRun('run/1')).resolves.toMatchObject({ run_id: 'run-1' })
+    await expect(transport.agentRunTasks('run/1')).resolves.toHaveLength(1)
+    await expect(transport.cancelAgentTask('task/1')).resolves.toMatchObject({ task_id: 'task-1' })
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/agent-runs',
+        method: 'POST',
+        body: '{"assistant_id":"assistant-1","input":"hello"}',
+      },
+      { input: 'http://127.0.0.1:39761/api/agent-runs/run%2F1' },
+      { input: 'http://127.0.0.1:39761/api/agent-runs/run%2F1/tasks' },
+      {
+        input: 'http://127.0.0.1:39761/api/agent-tasks/task%2F1/cancel',
+        method: 'POST',
+      },
+    ])
+  })
 })

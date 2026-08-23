@@ -5,8 +5,8 @@ Status: canonical architecture and migration baseline for the current
 and a read-only comparison with `baseline/genoffice`.
 
 This document describes what exists, what remains GenOffice-derived, and the
-target boundaries for 9Profs. It does not implement OfficeCLI, research
-workflows, agent execution, or SaaS services.
+target boundaries for 9Profs. OfficeCLI, research workflows, and SaaS services
+remain future work; Phase 2B1 now provides the first real agent execution path.
 
 ## Non-negotiable rules
 
@@ -62,6 +62,11 @@ External Tool Adapters
 The Rust Core runtime lives in `9profs-core-rs/` behind an HTTP/WebSocket
 transport boundary. It is not a TypeScript package dependency and does not own
 Office document state or persistence.
+
+The Phase 2B1 portion of that runtime owns Assistant/Rules/Skills composition,
+agent backend resolution, task execution, AionRS provider adaptation, and
+transport-safe streaming. MCP, extensions, and external agent backends remain
+outside the implemented boundary.
 
 The Electron shell hosts the Office applications; it is not a second Office
 document writer. Shared packages such as `file-parse`, `pdf2docx`,
@@ -121,7 +126,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 2A agent metadata/catalog | IMPLEMENTED     | `nineprofs-agent` descriptors, builtin catalog, minimal SQLite custom metadata persistence |
 | Phase 2A Agent Registry         | IMPLEMENTED     | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates |
 | Phase 2A task lifecycle         | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events       |
-| Real agent execution            | NOT IMPLEMENTED | No AionRS, ACP, CLI probing, process spawning, or backend executor is wired                |
+| Phase 2B1 real agent execution  | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs           |
 | OfficeCLI integration           | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling  |
 | GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
 | Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
@@ -139,8 +144,12 @@ The Phase 1A Rust Core foundation is intentionally limited to:
   It does not import Rust code or replace Electron IPC.
 
 AionCore audit source: commit
-`7ac84f93c5f81e1b1cc41f8119c089df72d63afc` on `main`. Adapted source patterns
-came from `ARCHITECTURE.md`, the root `Cargo.toml`, `crates/aionui-common`,
+`7ac84f93c5f81e1b1cc41f8119c089df72d63afc` on `main`. Phase 2B1 also
+inspected `crates/aionui-ai-agent/src/agent_runtime.rs`, `agent_task.rs`,
+`task_manager.rs`, `factory/`, `manager/`, `protocol/`, `session_context.rs`,
+and service composition. AionCore's pinned root manifest identified the
+AionRS `v0.2.11` dependency boundary. Adapted source patterns came from
+`ARCHITECTURE.md`, the root `Cargo.toml`, `crates/aionui-common`,
 `aionui-api-types`, `aionui-db`, `aionui-realtime`, `aionui-runtime`, and
 `aionui-app`. GenOffice baseline inspection used commit
 `f68df70e222d47aa08211f9a2d7748c610d1d6aa` on `main`.
@@ -180,7 +189,9 @@ runtime composition/API boundaries:
   unavailable, disabled, or resolved outcomes; Assistant does not depend on
   executor/process types.
 - Read-only HTTP catalog endpoints are available at `/api/agents` and
-  `/api/agents/:id`. No run-agent endpoint exists.
+  `/api/agents/:id`. Phase 2B1 adds `POST /api/agent-runs`,
+  `GET /api/agent-runs/:run_id`, `GET /api/agent-runs/:run_id/tasks`, and
+  `POST /api/agent-tasks/:task_id/cancel`.
 
 The pinned AionCore audit source is
 `7ac84f93c5f81e1b1cc41f8119c089df72d63afc` at the local read-only clone
@@ -195,11 +206,64 @@ availability, serialized registry mutation, and concurrency-safe task
 ownership/lifecycle patterns.
 
 Intentionally deferred: CLI discovery/path resolution, `--version` probes,
-ACP handshakes, AionRS, model discovery, provider health checks, user CLI
-environment management, installer/update behavior, conversation sessions,
-leases, idle cleanup, warmup, background subagents, and every real
-`AgentFactory`/executor. Builtin CLI descriptors remain `unknown` and no
-binary is invoked.
+ACP handshakes, model discovery, provider health checks, user CLI environment
+management, installer/update behavior, conversation sessions, leases, idle
+cleanup, warmup, background subagents, and external `AgentFactory`/executor
+implementations. Builtin Codex/Claude descriptors remain `unknown` and no
+external binary is invoked.
+
+### Phase 2B1 — Real AionRS agent execution
+
+Phase 2B1 is IMPLEMENTED behind a 9Profs-owned execution boundary:
+
+```text
+Assistant -> AgentRegistry -> AgentExecutionService -> AgentExecutor
+          -> AionRsExecutor -> AionRS -> configured LLM provider
+```
+
+- `AgentExecutor` exposes only transport-neutral request, result, event, and
+  cancellation concepts. AionRS, ACP, CLI, and provider SDK types stop at the
+  concrete adapter.
+- `AgentExecutorRegistry` maps backend IDs to executors. The only executable
+  backend is `nineprofs-default`, implemented by `AionRsExecutor`.
+- The adapter uses the pinned AionRS `v0.2.11` engine directly with an empty
+  `aion_tools::ToolRegistry`. This preserves the upstream run/stream loop while
+  explicitly disabling shell, file mutation, subprocess, MCP, sub-agent, and
+  upstream global-skill discovery capabilities.
+- Provider configuration is provider-neutral and launch-scoped: provider,
+  model, optional base URL, and an API-key environment-variable reference are
+  read from `NINEPROFS_AGENT_*` variables. Secrets never enter DTOs, events,
+  logs, or errors.
+- The real-provider smoke test is opt-in with
+  `NINEPROFS_RUN_REAL_AGENT_SMOKE=1`; it runs a tiny exact-output prompt and
+  verifies streaming plus a succeeded task. It skips when configuration is
+  absent and is never required by normal CI.
+- Assistant Rules and ordered SkillCatalog results are materialized into the
+  system instructions before execution. The 9Profs SkillCatalog is the only
+  skill authority.
+- AionRS output callbacks map to `agent.outputStarted`, `agent.outputDelta`,
+  `agent.outputCompleted`, and `agent.error`; Phase 2A remains authoritative
+  for `agent.task*` lifecycle events and terminal state.
+- Cancellation flows from the task manager watch signal into
+  `AgentEngine::abort_current_turn`; no conversation/session persistence is
+  introduced.
+- Active runs and tasks remain memory-only in the Phase 2A `AgentTaskManager`;
+  no chat history, conversation table, resume state, or session lease was
+  added.
+
+Pinned dependency record:
+
+- AionCore: `7ac84f93c5f81e1b1cc41f8119c089df72d63afc`.
+- AionRS: tag `v0.2.11`, resolved commit
+  `8e61a90329fa9f67c4fdf7e97fe02c24dba33f75`.
+- Inspected AionRS `aion-agent`, `aion-config`, `aion-providers`,
+  `aion-types`, `aion-protocol`, `aion-mcp`, and `aion-tools` sources for
+  engine lifecycle, provider selection, streaming, configuration,
+  cancellation, prompt construction, and tool registration.
+
+Still future: ACP/external CLI backends, MCP, Extensions runtime, the
+GenOffice AI bridge, OfficeCLI, Document Gateway implementation, Research
+Domain, and Product Layer.
 
 Dependency direction remains:
 

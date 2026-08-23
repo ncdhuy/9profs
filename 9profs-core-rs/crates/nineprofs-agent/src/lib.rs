@@ -4,13 +4,21 @@
 //! cancellation primitives only. It does not spawn processes, probe CLIs, use
 //! AionRS/ACP, or execute real agents.
 
+mod aionrs;
 mod builtin;
+mod execution;
 mod model;
 mod registry;
 mod repository;
 mod task_manager;
 
+pub use aionrs::AionRsExecutor;
 pub use builtin::BuiltinAgentCatalog;
+pub use execution::{
+    AgentEventSink, AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest,
+    AgentExecutionResult, AgentExecutor, AgentExecutorRegistry, AgentProviderConfig,
+    ExecutionLimits,
+};
 pub use model::{
     AgentBackendDescriptor, AgentBackendId, AgentBackendKind, AgentBackendSource, AgentTask,
     AgentTaskId, AvailabilityState, BackendResolution, RunId, TaskFailure, TaskState,

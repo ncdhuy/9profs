@@ -20,6 +20,9 @@ publish = false
 
 [workspace.dependencies]
 async-trait = "0.1"
+aion-agent = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
+aion-config = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
+aion-tools = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }

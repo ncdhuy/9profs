@@ -11,9 +11,9 @@ impl BuiltinAgentCatalog {
             AgentBackendDescriptor::builtin(
                 "nineprofs-default",
                 "9Profs Default",
-                "Reserved 9Profs backend descriptor; execution is not enabled in Phase 2A.",
+                "9Profs-owned AionRS agent execution backend.",
                 AgentBackendKind::Embedded,
-                ["cancellation"],
+                ["streaming", "cancellation"],
                 0,
             ),
             AgentBackendDescriptor::builtin(

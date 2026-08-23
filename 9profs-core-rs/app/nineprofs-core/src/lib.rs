@@ -7,13 +7,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use nineprofs_agent::AgentBackendDescriptor;
+use nineprofs_agent::{AgentBackendDescriptor, AgentTaskId, RunId, TaskState};
 use nineprofs_api_types::{
+    AgentRunDto, AgentRunRequest, AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto,
     ApiResponse, AssistantDto, CreateAssistantRequest, ErrorResponse, EventEnvelope,
     HealthResponse, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
-use nineprofs_runtime::CoreRuntime;
+use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
 
 #[derive(Clone)]
@@ -94,6 +95,10 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/runtime", get(runtime_info))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
+        .route("/api/agent-runs", post(create_agent_run))
+        .route("/api/agent-runs/{run_id}", get(get_agent_run))
+        .route("/api/agent-runs/{run_id}/tasks", get(list_agent_run_tasks))
+        .route("/api/agent-tasks/{task_id}/cancel", post(cancel_agent_task))
         .route(
             "/api/assistants",
             get(list_assistants).post(create_assistant),
@@ -145,13 +150,28 @@ async fn websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> 
 #[derive(Debug)]
 enum ApiError {
     Assistant(AssistantError),
+    Execution(AgentExecutionServiceError),
+    Task(nineprofs_agent::AgentTaskManagerError),
     NotFound(String),
     AgentNotFound(String),
+    RunNotFound(String),
 }
 
 impl From<AssistantError> for ApiError {
     fn from(error: AssistantError) -> Self {
         Self::Assistant(error)
+    }
+}
+
+impl From<AgentExecutionServiceError> for ApiError {
+    fn from(error: AgentExecutionServiceError) -> Self {
+        Self::Execution(error)
+    }
+}
+
+impl From<nineprofs_agent::AgentTaskManagerError> for ApiError {
+    fn from(error: nineprofs_agent::AgentTaskManagerError) -> Self {
+        Self::Task(error)
     }
 }
 
@@ -168,6 +188,38 @@ impl IntoResponse for ApiError {
                 "not_found",
                 format!("agent backend not found: {id}"),
             ),
+            Self::RunNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                format!("agent run not found: {id}"),
+            ),
+            Self::Task(error) => (
+                if matches!(error, nineprofs_agent::AgentTaskManagerError::NotFound(_)) {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::CONFLICT
+                },
+                "task_error",
+                error.to_string(),
+            ),
+            Self::Execution(error) => {
+                let (status, code) = match &error {
+                    AgentExecutionServiceError::Assistant(AssistantError::NotFound(_)) => {
+                        (StatusCode::NOT_FOUND, "not_found")
+                    }
+                    AgentExecutionServiceError::BackendUnavailable(_, _) => {
+                        (StatusCode::SERVICE_UNAVAILABLE, "agent_execution_error")
+                    }
+                    AgentExecutionServiceError::BackendMissing(_)
+                    | AgentExecutionServiceError::BackendNotConfigured
+                    | AgentExecutionServiceError::BackendDisabled(_)
+                    | AgentExecutionServiceError::ExecutorMissing(_) => {
+                        (StatusCode::BAD_REQUEST, "agent_execution_error")
+                    }
+                    _ => (StatusCode::BAD_REQUEST, "agent_execution_error"),
+                };
+                (status, code, error.to_string())
+            }
             Self::Assistant(error) => match &error {
                 AssistantError::NotFound(_) => {
                     (StatusCode::NOT_FOUND, "not_found", error.to_string())
@@ -192,6 +244,88 @@ impl IntoResponse for ApiError {
             },
         };
         (status, axum::Json(ErrorResponse::new(message, code))).into_response()
+    }
+}
+
+async fn create_agent_run(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<AgentRunRequest>,
+) -> Result<axum::Json<ApiResponse<AgentRunStartedDto>>, ApiError> {
+    let started = state
+        .runtime
+        .execution_service()
+        .start_run(&request.assistant_id, &request.input)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(AgentRunStartedDto {
+        run_id: started.run_id.to_string(),
+        task: task_dto(&started.task),
+    })))
+}
+
+async fn get_agent_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<AgentRunDto>>, ApiError> {
+    let run = RunId::from_string(run_id.clone());
+    let tasks = state.runtime.execution_service().tasks_for_run(&run).await;
+    if tasks.is_empty() {
+        return Err(ApiError::RunNotFound(run_id));
+    }
+    Ok(axum::Json(ApiResponse::ok(AgentRunDto {
+        run_id: run.to_string(),
+        tasks: tasks.iter().map(task_dto).collect(),
+    })))
+}
+
+async fn list_agent_run_tasks(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<AgentTaskDto>>>, ApiError> {
+    let run = RunId::from_string(run_id.clone());
+    let tasks = state.runtime.execution_service().tasks_for_run(&run).await;
+    if tasks.is_empty() {
+        return Err(ApiError::RunNotFound(run_id));
+    }
+    Ok(axum::Json(ApiResponse::ok(
+        tasks.iter().map(task_dto).collect(),
+    )))
+}
+
+async fn cancel_agent_task(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<AgentTaskDto>>, ApiError> {
+    let task = state
+        .runtime
+        .execution_service()
+        .cancel(&AgentTaskId::from_string(task_id))
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(task_dto(&task))))
+}
+
+fn task_dto(task: &nineprofs_agent::AgentTask) -> AgentTaskDto {
+    AgentTaskDto {
+        task_id: task.task_id.to_string(),
+        run_id: task.run_id.to_string(),
+        backend_id: task.backend_id.clone(),
+        state: match task.state {
+            TaskState::Queued => "queued",
+            TaskState::Starting => "starting",
+            TaskState::Running => "running",
+            TaskState::Succeeded => "succeeded",
+            TaskState::Failed => "failed",
+            TaskState::Cancelled => "cancelled",
+        }
+        .to_owned(),
+        created_at_ms: task.created_at_ms,
+        updated_at_ms: task.updated_at_ms,
+        started_at_ms: task.started_at_ms,
+        completed_at_ms: task.completed_at_ms,
+        failure: task.failure.as_ref().map(|failure| AgentTaskFailureDto {
+            code: failure.code.clone(),
+            message: failure.message.clone(),
+        }),
+        cancellation_requested: task.cancellation_requested,
     }
 }
 
@@ -358,7 +492,6 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
-    use futures_util::SinkExt;
     use tokio::net::TcpListener;
     use tokio_tungstenite::connect_async;
     use tower::ServiceExt;
@@ -554,5 +687,63 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(events.recv().await.unwrap().name, "skill.catalogChanged");
+    }
+
+    #[tokio::test]
+    async fn agent_run_routes_validate_and_report_invalid_ids() {
+        let router = test_router().await;
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/agent-runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "assistant_id": "missing-assistant",
+                            "input": "hello"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/agent-runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "assistant_id": "missing-assistant",
+                            "input": "   "
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        for path in [
+            "/api/agent-runs/not-a-run",
+            "/api/agent-runs/not-a-run/tasks",
+            "/api/agent-tasks/not-a-task/cancel",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(if path.ends_with("cancel") {
+                    Request::post(path).body(Body::empty()).unwrap()
+                } else {
+                    Request::get(path).body(Body::empty()).unwrap()
+                })
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
     }
 }

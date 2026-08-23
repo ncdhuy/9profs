@@ -3,7 +3,8 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use nineprofs_agent::{
-    AgentRegistry, AgentRegistryError, AgentTaskManager, BackendResolution, BuiltinAgentCatalog,
+    AgentExecutor, AgentExecutorRegistry, AgentRegistry, AgentRegistryError, AgentTaskManager,
+    AionRsExecutor, AvailabilityState, BackendResolution, BuiltinAgentCatalog,
     SqliteAgentMetadataRepository,
 };
 use nineprofs_api_types::{HealthResponse, RuntimeInfo};
@@ -14,6 +15,12 @@ use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{SkillCatalog, SkillError};
 use thiserror::Error;
+
+mod execution;
+
+pub use execution::{
+    AgentExecutionService, AgentExecutionServiceError, AgentRunStarted, build_system_instructions,
+};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -93,9 +100,10 @@ pub struct CoreRuntime {
     metadata_repository: SqliteMetadataRepository,
     event_bus: Arc<BroadcastEventBus>,
     skill_catalog: Arc<SkillCatalog>,
-    assistant_service: AssistantService,
+    assistant_service: Arc<AssistantService>,
     agent_registry: Arc<AgentRegistry>,
     task_manager: AgentTaskManager,
+    execution_service: Arc<AgentExecutionService>,
 }
 
 impl CoreRuntime {
@@ -121,16 +129,36 @@ impl CoreRuntime {
             Arc::clone(&event_bus),
         ));
         agent_registry.hydrate().await?;
+        let aionrs_executor = Arc::new(AionRsExecutor::from_env());
+        let provider = aionrs_executor.provider().clone();
+        let availability = match aionrs_executor.availability_reason() {
+            Some(reason) => (AvailabilityState::Unavailable, Some(reason)),
+            None => (AvailabilityState::Available, None),
+        };
+        agent_registry
+            .set_availability("nineprofs-default", availability.0, availability.1)
+            .await?;
         let skill_catalog = Arc::new(SkillCatalog::with_configured_roots(
             config.custom_skill_roots.clone(),
         )?);
-        let assistant_service = AssistantService::new(
+        let assistant_service = Arc::new(AssistantService::new(
             SqliteAssistantRepository::new(database.pool().clone()),
             BuiltinAssistantCatalog::load().map_err(AssistantError::from)?,
             Arc::clone(&skill_catalog),
             Arc::clone(&event_bus),
-        )?;
+        )?);
         let task_manager = AgentTaskManager::new(Arc::clone(&event_bus));
+        let executor: Arc<dyn AgentExecutor> = aionrs_executor;
+        let executor_registry = AgentExecutorRegistry::new([executor]);
+        let execution_service = Arc::new(AgentExecutionService::new(
+            Arc::clone(&assistant_service),
+            Arc::clone(&skill_catalog),
+            Arc::clone(&agent_registry),
+            executor_registry,
+            task_manager.clone(),
+            Arc::clone(&event_bus),
+            provider,
+        ));
         Ok(Self {
             config,
             database,
@@ -140,6 +168,7 @@ impl CoreRuntime {
             assistant_service,
             agent_registry,
             task_manager,
+            execution_service,
         })
     }
 
@@ -164,7 +193,11 @@ impl CoreRuntime {
     }
 
     pub fn assistant_service(&self) -> &AssistantService {
-        &self.assistant_service
+        self.assistant_service.as_ref()
+    }
+
+    pub fn assistant_service_arc(&self) -> Arc<AssistantService> {
+        Arc::clone(&self.assistant_service)
     }
 
     pub fn agent_registry(&self) -> Arc<AgentRegistry> {
@@ -173,6 +206,10 @@ impl CoreRuntime {
 
     pub fn task_manager(&self) -> AgentTaskManager {
         self.task_manager.clone()
+    }
+
+    pub fn execution_service(&self) -> Arc<AgentExecutionService> {
+        Arc::clone(&self.execution_service)
     }
 
     pub async fn resolve_assistant_backend(
@@ -202,6 +239,7 @@ impl CoreRuntime {
                 "agents".to_owned(),
                 "assistants".to_owned(),
                 "skills".to_owned(),
+                "agent-execution".to_owned(),
             ],
         }
     }

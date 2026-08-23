@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 nineprofs-agent = { path = "../nineprofs-agent" }
 nineprofs-api-types = { path = "../nineprofs-api-types" }
 nineprofs-assistant = { path = "../nineprofs-assistant" }
@@ -13,5 +14,6 @@ nineprofs-db = { path = "../nineprofs-db" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
 nineprofs-skills = { path = "../nineprofs-skills" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
