@@ -1,6 +1,6 @@
 //! SQLite infrastructure and repository contracts for 9Profs Core.
 //!
-//! Migration 0002 owns persisted custom assistants and ordered skill bindings.
+//! Migrations 0002–0004 own assistants, agent metadata, and MCP server configuration.
 
 use std::path::Path;
 

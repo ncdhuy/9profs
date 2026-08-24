@@ -6,6 +6,8 @@ import type {
   AgentRun,
   AssistantRegistry,
   CoreTransport,
+  CreateMcpServerInput,
+  McpServer,
   SkillProvider,
   ToolProvider,
 } from '../src'
@@ -33,5 +35,16 @@ test('assistant and skill transport boundary stays async and typed', () => {
   >()
   expectTypeOf<CoreTransport['skills']>().returns.toEqualTypeOf<
     Promise<import('../src').CoreSkillCatalog>
+  >()
+})
+
+test('MCP boundary stays transport-neutral and redacted', () => {
+  expectTypeOf<McpServer>().toMatchTypeOf<{
+    id: string
+    status: import('../src').McpServerStatus
+    transport: import('../src').McpTransport
+  }>()
+  expectTypeOf<CoreTransport['createMcpServer']>().toEqualTypeOf<
+    (input: CreateMcpServerInput) => Promise<McpServer>
   >()
 })

@@ -157,4 +157,53 @@ describe('Core transport boundary', () => {
       },
     ])
   })
+
+  it('maps MCP configuration, diagnostics, and tool APIs without exposing secrets', async () => {
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
+    const server = {
+      id: 'local',
+      name: 'Local',
+      description: 'fixture',
+      enabled: false,
+      startup_timeout_ms: 1000,
+      transport: { type: 'stdio', command: 'fixture', args: [], env_keys: ['TOKEN'] },
+      status: 'disconnected',
+      last_connected: null,
+      error: null,
+      supports_resources: false,
+      tools: [],
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    }
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
+      requests.push({ input, method: init?.method, body: init?.body })
+      const data = input.endsWith('/tools')
+        ? []
+        : input.endsWith('/test')
+          ? { success: true, tool_count: 1, supports_resources: false, error: null }
+          : input.endsWith('/api/mcp/servers') && init?.method === undefined
+            ? [server]
+            : server
+      return { ok: true, json: async () => ({ success: true, data }) }
+    })
+
+    await expect(transport.mcpServers()).resolves.toEqual([server])
+    await expect(transport.mcpServer('local')).resolves.toEqual(server)
+    await expect(
+      transport.createMcpServer({
+        name: 'Local',
+        transport: { type: 'stdio', command: 'fixture', env: { TOKEN: 'secret' } },
+      }),
+    ).resolves.toEqual(server)
+    await expect(transport.testMcpServer('local')).resolves.toMatchObject({ success: true })
+    await expect(transport.mcpTools('local')).resolves.toEqual([])
+    expect(requests.map(({ input, method }) => [input, method])).toEqual([
+      ['http://127.0.0.1:39761/api/mcp/servers', undefined],
+      ['http://127.0.0.1:39761/api/mcp/servers/local', undefined],
+      ['http://127.0.0.1:39761/api/mcp/servers', 'POST'],
+      ['http://127.0.0.1:39761/api/mcp/servers/local/test', 'POST'],
+      ['http://127.0.0.1:39761/api/mcp/servers/local/tools', undefined],
+    ])
+    expect(requests[2].body).toContain('secret')
+  })
 })

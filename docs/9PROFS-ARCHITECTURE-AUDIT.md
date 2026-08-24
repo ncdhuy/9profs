@@ -46,6 +46,7 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 1B Assistant domain | `nineprofs-assistant`; builtin/custom assistants, Rules, CRUD persistence, skill bindings, backend metadata reference      | Implemented                                   |
 | Phase 1B Skills catalog   | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary         | Implemented                                   |
 | Phase 2C0 Tool Runtime    | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                 | Implemented                                   |
+| Phase 2C1 MCP provider    | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider | Implemented                              |
 | Research/product backend  | No research domain, OfficeCLI process integration, or account/billing backend                                              | Future                                        |
 
 ## GenOffice inheritance and current divergence
@@ -212,8 +213,8 @@ explicitly authorized 9Profs handlers to the pinned AionRS `ToolRegistry`.
 AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
-Still NOT IMPLEMENTED: ACP/external CLI backends, MCP, full Extensions
-runtime, OfficeCLI integration, GenOffice mutation adapter, research domain,
+Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
+OfficeCLI integration, GenOffice mutation adapter, research domain,
 conversation/session persistence, and the GenOffice AI bridge.
 
 Phase 1B upstream adaptation record: assistant resource/catalog patterns came
@@ -227,8 +228,10 @@ no AionRS, agent runtime, MCP, OfficeCLI, or frontend architecture was copied.
 
 ## Migration conclusion
 
-Next work adds the MCP provider behind the 9Profs Tool Runtime. OfficeCLI is
-introduced as a sidecar with ownership checks. The document gateway then routes
+MCP is now implemented behind the 9Profs Tool Runtime: MCP server ->
+`nineprofs-mcp` -> `nineprofs-tools` -> explicit `ToolSet` ->
+`AionRsToolAdapter`. Direct MCP -> AionRS registry registration is prohibited.
+Next work introduces OfficeCLI as a sidecar with ownership checks. The document gateway then routes
 approved `DocumentChangeSet` values into GenOffice transactions. Research and
 SaaS/product services come after those boundaries are proven.
 

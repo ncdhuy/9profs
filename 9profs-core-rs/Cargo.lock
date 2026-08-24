@@ -2188,6 +2188,7 @@ dependencies = [
  "nineprofs-agent",
  "nineprofs-api-types",
  "nineprofs-assistant",
+ "nineprofs-mcp",
  "nineprofs-realtime",
  "nineprofs-runtime",
  "nineprofs-skills",
@@ -2210,6 +2211,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nineprofs-mcp"
+version = "0.1.0"
+dependencies = [
+ "aion-mcp",
+ "async-trait",
+ "nineprofs-api-types",
+ "nineprofs-common",
+ "nineprofs-db",
+ "nineprofs-realtime",
+ "nineprofs-tools",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "nineprofs-realtime"
 version = "0.1.0"
 dependencies = [
@@ -2229,6 +2249,7 @@ dependencies = [
  "nineprofs-api-types",
  "nineprofs-assistant",
  "nineprofs-db",
+ "nineprofs-mcp",
  "nineprofs-realtime",
  "nineprofs-skills",
  "nineprofs-tools",

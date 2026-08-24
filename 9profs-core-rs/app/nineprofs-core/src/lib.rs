@@ -10,10 +10,16 @@ use axum::{
 use nineprofs_agent::{AgentBackendDescriptor, AgentTaskId, RunId, TaskState};
 use nineprofs_api_types::{
     AgentRunDto, AgentRunRequest, AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto,
-    ApiResponse, AssistantDto, CreateAssistantRequest, ErrorResponse, EventEnvelope,
-    HealthResponse, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
+    ApiResponse, AssistantDto, CreateAssistantRequest, CreateMcpServerRequest, ErrorResponse,
+    EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
+    McpTransportInputDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
+    UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
+use nineprofs_mcp::{
+    CreateMcpServer, McpError, McpServerSnapshot, McpTransportConfig, McpTransportSummary,
+    UpdateMcpServer,
+};
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
 
@@ -88,6 +94,96 @@ mod agent_api_tests {
     }
 }
 
+#[cfg(test)]
+mod mcp_api_tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn mcp_crud_redacts_secrets_and_validates_transport() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        let router = build_router(runtime);
+        let request = Request::post("/api/mcp/servers")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "id": "api-fixture",
+                    "name": "API fixture",
+                    "enabled": false,
+                    "transport": {
+                        "type": "stdio",
+                        "command": "fixture",
+                        "env": {"TOKEN": "never-return-this"}
+                    }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!text.contains("never-return-this"));
+        assert!(text.contains("TOKEN"));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/api/mcp/servers/api-fixture")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"description":"updated"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/mcp/servers/api-fixture/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::delete("/api/mcp/servers/api-fixture")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = router
+            .oneshot(
+                Request::post("/api/mcp/servers")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"name":"invalid","transport":{"type":"sse","url":"file:///tmp"}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
     let state = AppState { runtime };
     Router::new()
@@ -112,6 +208,23 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/skills", get(list_skills))
         .route("/api/skills/{id}", get(get_skill))
         .route("/api/skills/scan", post(scan_skills))
+        .route(
+            "/api/mcp/servers",
+            get(list_mcp_servers).post(create_mcp_server),
+        )
+        .route(
+            "/api/mcp/servers/{id}",
+            get(get_mcp_server)
+                .put(update_mcp_server)
+                .delete(delete_mcp_server),
+        )
+        .route("/api/mcp/servers/{id}/connect", post(connect_mcp_server))
+        .route(
+            "/api/mcp/servers/{id}/disconnect",
+            post(disconnect_mcp_server),
+        )
+        .route("/api/mcp/servers/{id}/test", post(test_mcp_server))
+        .route("/api/mcp/servers/{id}/tools", get(list_mcp_tools))
         .route("/ws", get(websocket))
         .with_state(state)
 }
@@ -151,6 +264,7 @@ async fn websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> 
 enum ApiError {
     Assistant(AssistantError),
     Execution(AgentExecutionServiceError),
+    Mcp(McpError),
     Task(nineprofs_agent::AgentTaskManagerError),
     NotFound(String),
     AgentNotFound(String),
@@ -166,6 +280,12 @@ impl From<AssistantError> for ApiError {
 impl From<AgentExecutionServiceError> for ApiError {
     fn from(error: AgentExecutionServiceError) -> Self {
         Self::Execution(error)
+    }
+}
+
+impl From<McpError> for ApiError {
+    fn from(error: McpError) -> Self {
+        Self::Mcp(error)
     }
 }
 
@@ -217,6 +337,21 @@ impl IntoResponse for ApiError {
                         (StatusCode::BAD_REQUEST, "agent_execution_error")
                     }
                     _ => (StatusCode::BAD_REQUEST, "agent_execution_error"),
+                };
+                (status, code, error.to_string())
+            }
+            Self::Mcp(error) => {
+                let (status, code) = match &error {
+                    McpError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
+                    McpError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+                    McpError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
+                    McpError::Connection(_) => {
+                        (StatusCode::SERVICE_UNAVAILABLE, "mcp_connection_error")
+                    }
+                    McpError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, "mcp_connection_timeout"),
+                    McpError::Database(_) | McpError::ToolRegistry(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
                 };
                 (status, code, error.to_string())
             }
@@ -430,6 +565,193 @@ async fn scan_skills(State(state): State<AppState>) -> axum::Json<ApiResponse<Sk
         serde_json::json!({ "skill_count": catalog.skills.len(), "issue_count": catalog.issues.len() }),
     ));
     axum::Json(ApiResponse::ok(catalog))
+}
+
+async fn list_mcp_servers(
+    State(state): State<AppState>,
+) -> Result<axum::Json<ApiResponse<Vec<McpServerDto>>>, ApiError> {
+    let servers = state
+        .runtime
+        .mcp_service()
+        .list()
+        .await?
+        .iter()
+        .map(mcp_server_dto)
+        .collect();
+    Ok(axum::Json(ApiResponse::ok(servers)))
+}
+
+async fn get_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<McpServerDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(mcp_server_dto(
+        &state.runtime.mcp_service().get(&id).await?,
+    ))))
+}
+
+async fn create_mcp_server(
+    State(state): State<AppState>,
+    axum::Json(request): axum::Json<CreateMcpServerRequest>,
+) -> Result<axum::Json<ApiResponse<McpServerDto>>, ApiError> {
+    let server = state
+        .runtime
+        .mcp_service()
+        .create(CreateMcpServer {
+            id: request.id,
+            name: request.name,
+            description: request.description,
+            enabled: request.enabled,
+            startup_timeout_ms: request.startup_timeout_ms,
+            transport: mcp_transport_config(request.transport),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(mcp_server_dto(&server))))
+}
+
+async fn update_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::Json(request): axum::Json<UpdateMcpServerRequest>,
+) -> Result<axum::Json<ApiResponse<McpServerDto>>, ApiError> {
+    let server = state
+        .runtime
+        .mcp_service()
+        .update(
+            &id,
+            UpdateMcpServer {
+                name: request.name,
+                description: request.description,
+                enabled: request.enabled,
+                startup_timeout_ms: request.startup_timeout_ms,
+                transport: request.transport.map(mcp_transport_config),
+            },
+        )
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(mcp_server_dto(&server))))
+}
+
+async fn delete_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<()>>, ApiError> {
+    state.runtime.mcp_service().delete(&id).await?;
+    Ok(axum::Json(ApiResponse::ok(())))
+}
+
+async fn connect_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<McpServerDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(mcp_server_dto(
+        &state.runtime.mcp_service().connect(&id).await?,
+    ))))
+}
+
+async fn disconnect_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<McpServerDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(mcp_server_dto(
+        &state.runtime.mcp_service().disconnect(&id).await?,
+    ))))
+}
+
+async fn test_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<McpConnectionTestDto>>, ApiError> {
+    let result = state.runtime.mcp_service().test(&id).await?;
+    Ok(axum::Json(ApiResponse::ok(McpConnectionTestDto {
+        success: result.success,
+        tool_count: result.tool_count,
+        supports_resources: result.supports_resources,
+        error: result.error,
+    })))
+}
+
+async fn list_mcp_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<McpToolDto>>>, ApiError> {
+    let tools = state
+        .runtime
+        .mcp_service()
+        .tools(&id)
+        .await?
+        .into_iter()
+        .map(|tool| McpToolDto {
+            id: tool.id,
+            name: tool.name,
+            display_name: tool.display_name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+        })
+        .collect();
+    Ok(axum::Json(ApiResponse::ok(tools)))
+}
+
+fn mcp_transport_config(transport: McpTransportInputDto) -> McpTransportConfig {
+    match transport {
+        McpTransportInputDto::Stdio { command, args, env } => {
+            McpTransportConfig::Stdio { command, args, env }
+        }
+        McpTransportInputDto::Sse { url, headers } => McpTransportConfig::Sse { url, headers },
+        McpTransportInputDto::StreamableHttp { url, headers } => {
+            McpTransportConfig::StreamableHttp { url, headers }
+        }
+    }
+}
+
+fn mcp_server_dto(server: &McpServerSnapshot) -> McpServerDto {
+    McpServerDto {
+        id: server.id.clone(),
+        name: server.name.clone(),
+        description: server.description.clone(),
+        enabled: server.enabled,
+        startup_timeout_ms: server.startup_timeout_ms,
+        transport: match &server.transport {
+            McpTransportSummary::Stdio {
+                command,
+                args,
+                env_keys,
+            } => McpTransportDto::Stdio {
+                command: command.clone(),
+                args: args.clone(),
+                env_keys: env_keys.clone(),
+            },
+            McpTransportSummary::Sse { url, header_names } => McpTransportDto::Sse {
+                url: url.clone(),
+                header_names: header_names.clone(),
+            },
+            McpTransportSummary::StreamableHttp { url, header_names } => {
+                McpTransportDto::StreamableHttp {
+                    url: url.clone(),
+                    header_names: header_names.clone(),
+                }
+            }
+        },
+        status: serde_json::to_value(&server.status)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "disconnected".to_owned()),
+        last_connected: server.last_connected,
+        error: server.error.clone(),
+        supports_resources: server.supports_resources,
+        tools: server
+            .tools
+            .iter()
+            .map(|tool| McpToolDto {
+                id: tool.id.clone(),
+                name: tool.name.clone(),
+                display_name: tool.display_name.clone(),
+                description: tool.description.clone(),
+                input_schema: tool.input_schema.clone(),
+            })
+            .collect(),
+        created_at_ms: server.created_at_ms,
+        updated_at_ms: server.updated_at_ms,
+    }
 }
 
 fn assistant_dto(assistant: &Assistant) -> AssistantDto {

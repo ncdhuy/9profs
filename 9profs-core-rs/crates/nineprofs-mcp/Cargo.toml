@@ -1,21 +1,23 @@
 [package]
-name = "nineprofs-runtime"
+name = "nineprofs-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
+aion-mcp.workspace = true
 async-trait.workspace = true
-nineprofs-agent = { path = "../nineprofs-agent" }
+nineprofs-common = { path = "../nineprofs-common" }
 nineprofs-api-types = { path = "../nineprofs-api-types" }
-nineprofs-assistant = { path = "../nineprofs-assistant" }
-nineprofs-db = { path = "../nineprofs-db" }
-nineprofs-mcp = { path = "../nineprofs-mcp" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
-nineprofs-skills = { path = "../nineprofs-skills" }
 nineprofs-tools = { path = "../nineprofs-tools" }
 serde.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+nineprofs-db = { path = "../nineprofs-db" }

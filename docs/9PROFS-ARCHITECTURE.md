@@ -41,7 +41,7 @@ AI / Agent Core
 ├─ packages/agent-core       current loop, skills, tools, IPC transport
 ├─ packages/ai-provider      current provider protocols and streaming
 ├─ packages/ai-search        current Genspark/Serper/DuckDuckGo search
-└─ future 9Profs runtime, assistants, skills, MCP, extensions
+└─ 9Profs runtime, assistants, skills, MCP; extensions remain future
 
 Document Integration Layer
 ├─ current apps/*/src/*/ai tools and document commands
@@ -127,6 +127,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 2A Agent Registry         | IMPLEMENTED     | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates |
 | Phase 2A task lifecycle         | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events       |
 | Phase 2B1 real agent execution  | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs           |
+| Phase 2C1 MCP Tool Provider      | IMPLEMENTED     | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider |
 | OfficeCLI integration           | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling  |
 | GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
 | Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
@@ -273,9 +274,9 @@ Pinned dependency record:
   engine lifecycle, provider selection, streaming, configuration,
   cancellation, prompt construction, and tool registration.
 
-Still future: ACP/external CLI backends, MCP, Extensions runtime, the
-GenOffice AI bridge, OfficeCLI, Document Gateway implementation, Research
-Domain, and Product Layer.
+Still future: ACP/external CLI backends, Extensions runtime, the GenOffice AI
+bridge, OfficeCLI, Document Gateway implementation, Research Domain, and
+Product Layer.
 
 ### Phase 2C0 — 9Profs Tool Runtime Foundation
 
@@ -314,10 +315,32 @@ policy metadata, enabled state, availability, permissions, and execution
 boundaries. AionRS `ToolRegistry` is an execution adapter only; AionRS bootstrap
 and default tools remain disabled.
 
-Implemented: tool domain, provider/registry, deny-by-default per-run
-authorization, and AionRS adapter. Future: MCP provider, OfficeCLI provider,
-research tools, extension tools, full permission workflow, and external CLI
-agents.
+Phase 2C1 is IMPLEMENTED. MCP configuration CRUD, secret-redacted transport
+summaries, explicit connect/test/disconnect lifecycle, bounded startup timeout,
+stdio/SSE/streamable HTTP client integration, tools/list discovery, stable
+namespaced tool identity, MCP lifecycle events, and MCP-to-ToolProvider
+conversion live in `nineprofs-mcp`. MCP server configuration is persisted in
+SQLite; connection handles and discovered runtime state are not persisted.
+
+The enforced execution path is:
+
+```text
+MCP server
+  -> nineprofs-mcp
+  -> nineprofs-tools ToolRegistry
+  -> explicit per-run ToolSet authorization
+  -> AionRsToolAdapter
+  -> AionRS AgentEngine
+```
+
+MCP tools never register directly in the AionRS registry. AionRS sees only
+authorized registrations copied by `AionRsToolAdapter`; `start_run` remains
+tool-less by default. MCP tools use conservative executable policy metadata,
+and remote HTTP/SSE tools additionally carry `ExternalNetwork`.
+
+Future: OfficeCLI provider, research tools, extension tools, OAuth, full
+permission/confirmation UX, MCP resources, external-agent sync, and external
+CLI agents.
 
 Dependency direction remains:
 
@@ -326,6 +349,7 @@ nineprofs-core app
 ├── nineprofs-runtime
 │   ├── nineprofs-agent
 │   │   └── nineprofs-tools
+│   ├── nineprofs-mcp ── nineprofs-tools
 │   ├── nineprofs-assistant ── nineprofs-skills
 │   ├── nineprofs-db
 │   └── nineprofs-realtime / nineprofs-api-types / nineprofs-common

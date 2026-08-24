@@ -225,6 +225,92 @@ export interface CoreSkillCatalog {
   readonly issues: readonly CoreSkillIssue[]
 }
 
+export type McpServerStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
+
+export type McpTransportInput =
+  | {
+      readonly type: 'stdio'
+      readonly command: string
+      readonly args?: readonly string[]
+      readonly env?: Readonly<Record<string, string>>
+    }
+  | {
+      readonly type: 'sse'
+      readonly url: string
+      readonly headers?: Readonly<Record<string, string>>
+    }
+  | {
+      readonly type: 'streamable-http'
+      readonly url: string
+      readonly headers?: Readonly<Record<string, string>>
+    }
+
+export type McpTransport =
+  | {
+      readonly type: 'stdio'
+      readonly command: string
+      readonly args: readonly string[]
+      readonly env_keys: readonly string[]
+    }
+  | {
+      readonly type: 'sse'
+      readonly url: string
+      readonly header_names: readonly string[]
+    }
+  | {
+      readonly type: 'streamable-http'
+      readonly url: string
+      readonly header_names: readonly string[]
+    }
+
+export interface McpTool {
+  readonly id: ToolId
+  readonly name: string
+  readonly display_name: string
+  readonly description: string
+  readonly input_schema: unknown
+}
+
+export interface McpServer {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly enabled: boolean
+  readonly startup_timeout_ms: number
+  readonly transport: McpTransport
+  readonly status: McpServerStatus
+  readonly last_connected: number | null
+  readonly error: string | null
+  readonly supports_resources: boolean
+  readonly tools: readonly McpTool[]
+  readonly created_at_ms: number
+  readonly updated_at_ms: number
+}
+
+export interface CreateMcpServerInput {
+  readonly id?: string
+  readonly name: string
+  readonly description?: string
+  readonly enabled?: boolean
+  readonly startup_timeout_ms?: number
+  readonly transport: McpTransportInput
+}
+
+export interface UpdateMcpServerInput {
+  readonly name?: string
+  readonly description?: string
+  readonly enabled?: boolean
+  readonly startup_timeout_ms?: number
+  readonly transport?: McpTransportInput
+}
+
+export interface McpConnectionTest {
+  readonly success: boolean
+  readonly tool_count: number
+  readonly supports_resources: boolean
+  readonly error: string | null
+}
+
 /** Registry boundary for assistant definitions and configuration. */
 export interface AssistantRegistry {
   listAssistants(): Promise<readonly AssistantDefinition[]>

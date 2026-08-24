@@ -12,6 +12,7 @@ use nineprofs_assistant::{
     AssistantError, AssistantService, BuiltinAssistantCatalog, SqliteAssistantRepository,
 };
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
+use nineprofs_mcp::{McpError, McpService, SqliteMcpServerRepository};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
@@ -93,6 +94,8 @@ pub enum RuntimeError {
     Assistant(#[from] AssistantError),
     #[error(transparent)]
     AgentRegistry(#[from] AgentRegistryError),
+    #[error(transparent)]
+    Mcp(#[from] McpError),
 }
 
 pub struct CoreRuntime {
@@ -106,6 +109,7 @@ pub struct CoreRuntime {
     task_manager: AgentTaskManager,
     execution_service: Arc<AgentExecutionService>,
     tool_registry: ToolRegistry,
+    mcp_service: Arc<McpService>,
 }
 
 impl CoreRuntime {
@@ -132,6 +136,11 @@ impl CoreRuntime {
         ));
         agent_registry.hydrate().await?;
         let tool_registry = ToolRegistry::new();
+        let mcp_service = Arc::new(McpService::new(
+            SqliteMcpServerRepository::new(database.pool().clone()),
+            tool_registry.clone(),
+            Arc::clone(&event_bus),
+        ));
         let aionrs_executor = Arc::new(AionRsExecutor::from_env_with_tools(tool_registry.clone()));
         let provider = aionrs_executor.provider().clone();
         let availability = match aionrs_executor.availability_reason() {
@@ -173,6 +182,7 @@ impl CoreRuntime {
             task_manager,
             execution_service,
             tool_registry,
+            mcp_service,
         })
     }
 
@@ -220,6 +230,10 @@ impl CoreRuntime {
         self.tool_registry.clone()
     }
 
+    pub fn mcp_service(&self) -> Arc<McpService> {
+        Arc::clone(&self.mcp_service)
+    }
+
     pub async fn resolve_assistant_backend(
         &self,
         assistant_id: &str,
@@ -248,6 +262,7 @@ impl CoreRuntime {
                 "assistants".to_owned(),
                 "skills".to_owned(),
                 "agent-execution".to_owned(),
+                "mcp-tools".to_owned(),
             ],
         }
     }

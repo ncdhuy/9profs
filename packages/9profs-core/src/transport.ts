@@ -12,9 +12,14 @@ import type {
   CoreAssistant,
   CoreSkill,
   CoreSkillCatalog,
+  CreateMcpServerInput,
   CreateAssistantInput,
+  McpConnectionTest,
+  McpServer,
+  McpTool,
   SkillId,
   UpdateAssistantInput,
+  UpdateMcpServerInput,
 } from './types'
 
 export interface CoreResponse<T> {
@@ -66,6 +71,15 @@ export interface CoreTransport {
   skills(): Promise<CoreSkillCatalog>
   skill(id: SkillId): Promise<CoreSkill>
   scanSkills(): Promise<CoreSkillCatalog>
+  mcpServers(): Promise<McpServer[]>
+  mcpServer(id: string): Promise<McpServer>
+  createMcpServer(input: CreateMcpServerInput): Promise<McpServer>
+  updateMcpServer(id: string, input: UpdateMcpServerInput): Promise<McpServer>
+  deleteMcpServer(id: string): Promise<void>
+  connectMcpServer(id: string): Promise<McpServer>
+  disconnectMcpServer(id: string): Promise<McpServer>
+  testMcpServer(id: string): Promise<McpConnectionTest>
+  mcpTools(id: string): Promise<McpTool[]>
   websocketUrl(): string
 }
 
@@ -117,6 +131,21 @@ export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTr
     skills: () => get<CoreSkillCatalog>('/api/skills'),
     skill: (id) => get<CoreSkill>(`/api/skills/${encodeURIComponent(id)}`),
     scanSkills: () => request<CoreSkillCatalog>('/api/skills/scan', 'POST'),
+    mcpServers: () => get<McpServer[]>('/api/mcp/servers'),
+    mcpServer: (id) => get<McpServer>(`/api/mcp/servers/${encodeURIComponent(id)}`),
+    createMcpServer: (input) => request<McpServer>('/api/mcp/servers', 'POST', input),
+    updateMcpServer: (id, input) =>
+      request<McpServer>(`/api/mcp/servers/${encodeURIComponent(id)}`, 'PUT', input),
+    deleteMcpServer: async (id) => {
+      await request<unknown>(`/api/mcp/servers/${encodeURIComponent(id)}`, 'DELETE')
+    },
+    connectMcpServer: (id) =>
+      request<McpServer>(`/api/mcp/servers/${encodeURIComponent(id)}/connect`, 'POST'),
+    disconnectMcpServer: (id) =>
+      request<McpServer>(`/api/mcp/servers/${encodeURIComponent(id)}/disconnect`, 'POST'),
+    testMcpServer: (id) =>
+      request<McpConnectionTest>(`/api/mcp/servers/${encodeURIComponent(id)}/test`, 'POST'),
+    mcpTools: (id) => get<McpTool[]>(`/api/mcp/servers/${encodeURIComponent(id)}/tools`),
     websocketUrl: () => normalizedBaseUrl.replace(/^http/, 'ws') + '/ws',
   }
 }

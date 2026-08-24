@@ -73,6 +73,28 @@ impl ToolRegistry {
         Ok(ids)
     }
 
+    /// Atomically replace all registrations from one tool source.
+    pub fn replace_source(
+        &self,
+        source: crate::ToolSource,
+        registrations: Vec<ToolRegistration>,
+    ) -> Result<Vec<ToolId>, ToolError> {
+        let mut tools = self.tools.write().expect("tool registry lock poisoned");
+        let mut replacement = tools.clone();
+        replacement.retain(|_, registration| registration.definition.source != source);
+        validate_against(&replacement, &registrations)?;
+        for registration in registrations {
+            replacement.insert(registration.definition.id.clone(), registration);
+        }
+        let ids = replacement
+            .values()
+            .filter(|registration| registration.definition.source == source)
+            .map(|registration| registration.definition.id.clone())
+            .collect();
+        *tools = replacement;
+        Ok(ids)
+    }
+
     pub fn list_definitions(&self) -> Vec<ToolDefinition> {
         self.tools
             .read()
@@ -141,6 +163,29 @@ fn validate_definition(definition: &ToolDefinition) -> Result<(), ToolError> {
     }
     if definition.name.trim().is_empty() {
         return Err(ToolError::InvalidToolName);
+    }
+    Ok(())
+}
+
+fn validate_against(
+    existing: &BTreeMap<ToolId, ToolRegistration>,
+    registrations: &[ToolRegistration],
+) -> Result<(), ToolError> {
+    let mut ids = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    for registration in registrations {
+        validate_definition(&registration.definition)?;
+        let definition = &registration.definition;
+        if !ids.insert(definition.id.clone()) || existing.contains_key(&definition.id) {
+            return Err(ToolError::DuplicateToolId(definition.id.clone()));
+        }
+        if !names.insert(definition.name.clone())
+            || existing
+                .values()
+                .any(|existing| existing.definition.name == definition.name)
+        {
+            return Err(ToolError::DuplicateToolName(definition.name.clone()));
+        }
     }
     Ok(())
 }
@@ -296,5 +341,25 @@ mod tests {
             vec![ToolId::new("provider-echo")]
         );
         assert_eq!(registry.list_definitions()[0].source, ToolSource::Builtin);
+    }
+
+    #[test]
+    fn replacing_one_source_removes_stale_registrations_atomically() {
+        let registry = ToolRegistry::new();
+        let mut old = registration("old", EchoHandler);
+        old.definition.source = ToolSource::Mcp;
+        registry.replace_source(ToolSource::Mcp, vec![old]).unwrap();
+
+        let mut current = registration("current", EchoHandler);
+        current.definition.source = ToolSource::Mcp;
+        registry
+            .replace_source(ToolSource::Mcp, vec![current])
+            .unwrap();
+        let ids: Vec<_> = registry
+            .list_definitions()
+            .into_iter()
+            .map(|definition| definition.id)
+            .collect();
+        assert_eq!(ids, vec![ToolId::new("current")]);
     }
 }

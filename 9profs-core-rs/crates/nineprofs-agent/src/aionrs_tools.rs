@@ -189,4 +189,30 @@ mod tests {
             .is_empty()
         );
     }
+
+    #[test]
+    fn mcp_registration_stays_out_of_aionrs_until_explicitly_authorized() {
+        let registry = ToolRegistry::new();
+        let mut registration = echo_registration();
+        registration.definition.id = ToolId::new("mcp/fixture/echo");
+        registration.definition.name = "mcp_fixture_echo".to_owned();
+        registration.definition.source = ToolSource::Mcp;
+        registry.register(registration).unwrap();
+
+        let empty = build_aionrs_tool_registry(
+            &registry,
+            &ToolSet::default(),
+            ToolInvocationContext::new("run", "task"),
+        )
+        .unwrap();
+        assert!(empty.tool_names().is_empty());
+
+        let authorized = build_aionrs_tool_registry(
+            &registry,
+            &ToolSet::from_ids([ToolId::new("mcp/fixture/echo")]),
+            ToolInvocationContext::new("run", "task"),
+        )
+        .unwrap();
+        assert_eq!(authorized.tool_names(), vec!["mcp_fixture_echo".to_owned()]);
+    }
 }
