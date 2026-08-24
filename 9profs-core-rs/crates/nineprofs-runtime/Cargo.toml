@@ -13,6 +13,7 @@ nineprofs-assistant = { path = "../nineprofs-assistant" }
 nineprofs-db = { path = "../nineprofs-db" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
 nineprofs-skills = { path = "../nineprofs-skills" }
+nineprofs-tools = { path = "../nineprofs-tools" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

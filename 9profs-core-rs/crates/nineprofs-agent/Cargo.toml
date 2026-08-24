@@ -8,11 +8,14 @@ publish.workspace = true
 [dependencies]
 aion-agent.workspace = true
 aion-config.workspace = true
+aion-protocol.workspace = true
+aion-types.workspace = true
 aion-tools.workspace = true
 async-trait.workspace = true
 nineprofs-api-types = { path = "../nineprofs-api-types" }
 nineprofs-common = { path = "../nineprofs-common" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
+nineprofs-tools = { path = "../nineprofs-tools" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

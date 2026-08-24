@@ -31,8 +31,11 @@ export type {
   SkillSource,
   UpdateAssistantInput,
   ToolDefinition,
+  ToolEffect,
   ToolId,
+  ToolPolicy,
   ToolProvider,
+  ToolSource,
 } from './types'
 
 export { createCoreTransport } from './transport'

@@ -45,6 +45,7 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Rust Core foundation      | `9profs-core-rs/` common/API/SQLite/realtime/runtime/app crates; loopback HTTP/WebSocket bootstrap                         | Implemented; foundation only                  |
 | Phase 1B Assistant domain | `nineprofs-assistant`; builtin/custom assistants, Rules, CRUD persistence, skill bindings, backend metadata reference      | Implemented                                   |
 | Phase 1B Skills catalog   | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary         | Implemented                                   |
+| Phase 2C0 Tool Runtime    | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                 | Implemented                                   |
 | Research/product backend  | No research domain, OfficeCLI process integration, or account/billing backend                                              | Future                                        |
 
 ## GenOffice inheritance and current divergence
@@ -197,6 +198,20 @@ requires explicit provider and model values, reports invalid configuration as
 unavailable, clears AionRS hooks/configured skill permissions, and defers
 dependency-size optimization; environment configuration remains temporary.
 
+Phase 2C0 Tool Runtime Foundation is IMPLEMENTED in
+`9profs-core-rs/crates/nineprofs-tools/`. It is the 9Profs source of truth for
+transport-neutral tool definitions, provider contributions, deterministic
+concurrency-safe registry lookup, enabled/disabled state, coarse effect
+metadata, handler execution, and future transport-safe tool events. Registry
+availability is not per-run authorization: the default `ToolSet` is empty and
+only an explicit run tool set can grant a registered enabled tool. Assistant
+and Skill composition does not implicitly register or authorize tools.
+
+`nineprofs-agent` contains the narrow `AionRsToolAdapter`. It supplies only
+explicitly authorized 9Profs handlers to the pinned AionRS `ToolRegistry`.
+AionRS remains an execution engine, not the source of truth for tools; its
+bootstrap/default tool registry is still not enabled.
+
 Still NOT IMPLEMENTED: ACP/external CLI backends, MCP, full Extensions
 runtime, OfficeCLI integration, GenOffice mutation adapter, research domain,
 conversation/session persistence, and the GenOffice AI bridge.
@@ -212,9 +227,7 @@ no AionRS, agent runtime, MCP, OfficeCLI, or frontend architecture was copied.
 
 ## Migration conclusion
 
-Next work starts with contracts and V2 proof, then builds 9Profs Core around
-existing GenOffice behavior. Agent runtime/MCP/extensions runtime follow.
-OfficeCLI is
+Next work adds the MCP provider behind the 9Profs Tool Runtime. OfficeCLI is
 introduced as a sidecar with ownership checks. The document gateway then routes
 approved `DocumentChangeSet` values into GenOffice transactions. Research and
 SaaS/product services come after those boundaries are proven.

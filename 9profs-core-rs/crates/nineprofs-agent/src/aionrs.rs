@@ -8,19 +8,21 @@ use std::{
 
 use aion_agent::{engine::AgentEngine, output::OutputSink};
 use aion_config::config::CliArgs;
-use aion_tools::registry::ToolRegistry;
 use async_trait::async_trait;
 use tokio::sync::watch;
 
 use crate::{
     AgentEventSink, AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest,
     AgentExecutionResult, AgentExecutor, AgentProviderConfig,
+    aionrs_tools::build_aionrs_tool_registry,
 };
+use nineprofs_tools::{ToolInvocationContext, ToolRegistry};
 
 pub const NINEPROFS_DEFAULT_BACKEND_ID: &str = "nineprofs-default";
 
 pub struct AionRsExecutor {
     provider: AgentProviderConfig,
+    tools: ToolRegistry,
 }
 
 impl AionRsExecutor {
@@ -29,7 +31,15 @@ impl AionRsExecutor {
     }
 
     pub fn new(provider: AgentProviderConfig) -> Self {
-        Self { provider }
+        Self::with_tools(provider, ToolRegistry::new())
+    }
+
+    pub fn from_env_with_tools(tools: ToolRegistry) -> Self {
+        Self::with_tools(AgentProviderConfig::from_env(), tools)
+    }
+
+    pub fn with_tools(provider: AgentProviderConfig, tools: ToolRegistry) -> Self {
+        Self { provider, tools }
     }
 
     pub fn provider(&self) -> &AgentProviderConfig {
@@ -154,7 +164,13 @@ impl AgentExecutor for AionRsExecutor {
 
         let workspace = request.workspace_root.unwrap_or_else(|| PathBuf::from("."));
         let output: Arc<dyn OutputSink> = Arc::new(AionRsOutputSink::new(event_sink.clone()));
-        let mut engine = AgentEngine::new(config, phase_2b1_tool_registry(), output, workspace);
+        let aionrs_tools = build_aionrs_tool_registry(
+            &self.tools,
+            &request.tool_set,
+            ToolInvocationContext::new(request.run_id.as_str(), request.task_id.as_str()),
+        )
+        .map_err(|error| AgentExecutionError::Configuration(error.to_string()))?;
+        let mut engine = AgentEngine::new(config, aionrs_tools, output, workspace);
         let run = engine.run(&request.input, request.task_id.as_str());
         let result = tokio::select! {
             result = run => result.map_err(|_| AgentExecutionError::Failed)?,
@@ -171,13 +187,6 @@ impl AgentExecutor for AionRsExecutor {
             output: result.text,
         })
     }
-}
-
-fn phase_2b1_tool_registry() -> ToolRegistry {
-    // Phase 2B1 proves provider-backed execution only. Do not inherit the
-    // AionRS bootstrap registry: it includes shell, filesystem, subprocess,
-    // MCP, sub-agent, and upstream skill-discovery capabilities.
-    ToolRegistry::new()
 }
 
 async fn wait_for_cancellation(
@@ -197,6 +206,7 @@ async fn wait_for_cancellation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nineprofs_tools::ToolSet;
 
     #[test]
     fn executor_exposes_only_nineprofs_backend_id() {
@@ -212,7 +222,7 @@ mod tests {
 
     #[test]
     fn phase_2b1_tool_surface_is_empty() {
-        let names = phase_2b1_tool_registry().tool_names();
+        let names = aion_tools::registry::ToolRegistry::new().tool_names();
         assert!(names.is_empty());
         for forbidden in [
             "shell",
@@ -287,6 +297,7 @@ mod tests {
             system_instructions: "Reply concisely and follow the requested exact output."
                 .to_owned(),
             limits: crate::ExecutionLimits::default(),
+            tool_set: ToolSet::default(),
         };
         let result = executor
             .execute(request, event_sink, cancellation)

@@ -5,6 +5,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::{AgentTaskId, RunId};
+use nineprofs_tools::ToolSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentProviderConfig {
@@ -137,6 +138,7 @@ pub struct AgentExecutionRequest {
     pub provider: AgentProviderConfig,
     pub system_instructions: String,
     pub limits: ExecutionLimits,
+    pub tool_set: ToolSet,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

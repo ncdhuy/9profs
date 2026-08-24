@@ -5,6 +5,7 @@
 //! AionRS/ACP, or execute real agents.
 
 mod aionrs;
+mod aionrs_tools;
 mod builtin;
 mod execution;
 mod model;

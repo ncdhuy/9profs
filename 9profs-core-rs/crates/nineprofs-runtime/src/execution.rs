@@ -9,6 +9,7 @@ use nineprofs_api_types::EventEnvelope;
 use nineprofs_assistant::{AssistantError, AssistantService};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{Skill, SkillCatalog};
+use nineprofs_tools::ToolSet;
 use serde_json::json;
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
@@ -80,6 +81,16 @@ impl AgentExecutionService {
         assistant_id: &str,
         input: &str,
     ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
+        self.start_run_with_tool_set(assistant_id, input, ToolSet::default())
+            .await
+    }
+
+    pub async fn start_run_with_tool_set(
+        &self,
+        assistant_id: &str,
+        input: &str,
+        tool_set: ToolSet,
+    ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
         let input = input.trim();
         if input.is_empty() {
             return Err(AgentExecutionServiceError::EmptyInput);
@@ -144,6 +155,7 @@ impl AgentExecutionService {
             provider: self.provider.clone(),
             system_instructions: build_system_instructions(&assistant.rules, &resolved_skills),
             limits: ExecutionLimits::default(),
+            tool_set,
         };
 
         let tasks = self.tasks.clone();
@@ -462,6 +474,7 @@ mod tests {
             provider: AgentProviderConfig::from_env(),
             system_instructions: "test instructions".to_owned(),
             limits: ExecutionLimits::default(),
+            tool_set: ToolSet::default(),
         }
     }
 

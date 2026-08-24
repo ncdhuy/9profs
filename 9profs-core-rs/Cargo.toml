@@ -7,6 +7,7 @@ members = [
     "crates/nineprofs-realtime",
     "crates/nineprofs-skills",
     "crates/nineprofs-assistant",
+    "crates/nineprofs-tools",
     "crates/nineprofs-agent",
     "crates/nineprofs-runtime",
     "app/nineprofs-core",
@@ -22,6 +23,8 @@ publish = false
 async-trait = "0.1"
 aion-agent = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
 aion-config = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
+aion-protocol = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
+aion-types = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
 aion-tools = { git = "https://github.com/iOfficeAI/aionrs.git", tag = "v0.2.11" }
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"

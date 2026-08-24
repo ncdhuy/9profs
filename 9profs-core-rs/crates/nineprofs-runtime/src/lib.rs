@@ -14,6 +14,7 @@ use nineprofs_assistant::{
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{SkillCatalog, SkillError};
+use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
 
 mod execution;
@@ -104,6 +105,7 @@ pub struct CoreRuntime {
     agent_registry: Arc<AgentRegistry>,
     task_manager: AgentTaskManager,
     execution_service: Arc<AgentExecutionService>,
+    tool_registry: ToolRegistry,
 }
 
 impl CoreRuntime {
@@ -129,7 +131,8 @@ impl CoreRuntime {
             Arc::clone(&event_bus),
         ));
         agent_registry.hydrate().await?;
-        let aionrs_executor = Arc::new(AionRsExecutor::from_env());
+        let tool_registry = ToolRegistry::new();
+        let aionrs_executor = Arc::new(AionRsExecutor::from_env_with_tools(tool_registry.clone()));
         let provider = aionrs_executor.provider().clone();
         let availability = match aionrs_executor.availability_reason() {
             Some(reason) => (AvailabilityState::Unavailable, Some(reason)),
@@ -169,6 +172,7 @@ impl CoreRuntime {
             agent_registry,
             task_manager,
             execution_service,
+            tool_registry,
         })
     }
 
@@ -210,6 +214,10 @@ impl CoreRuntime {
 
     pub fn execution_service(&self) -> Arc<AgentExecutionService> {
         Arc::clone(&self.execution_service)
+    }
+
+    pub fn tool_registry(&self) -> ToolRegistry {
+        self.tool_registry.clone()
     }
 
     pub async fn resolve_assistant_backend(

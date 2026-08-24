@@ -277,20 +277,63 @@ Still future: ACP/external CLI backends, MCP, Extensions runtime, the
 GenOffice AI bridge, OfficeCLI, Document Gateway implementation, Research
 Domain, and Product Layer.
 
+### Phase 2C0 — 9Profs Tool Runtime Foundation
+
+Phase 2C0 is IMPLEMENTED. `nineprofs-tools` owns the transport-neutral tool
+domain: `ToolId`, `ToolDefinition`, `ToolProvider`, `ToolRegistry`, handler
+execution, structured invocation/results/errors, coarse effect metadata, and
+transport-safe future tool events. The registry is concurrency-safe, provides
+deterministic lookup, rejects duplicate IDs/names, and keeps disabled tools
+visible without making them executable.
+
+Tool availability and per-run authorization are separate:
+
+```text
+available registry != tools granted to current run
+```
+
+The default `ToolSet` is empty. `AgentExecutionService` can receive an
+explicit per-run `ToolSet`; `start_run` continues to use the empty set so the
+existing Phase 2B1 path remains tool-less. Assistant persona/configuration and
+Skill instruction content do not register or authorize tools automatically.
+
+The execution composition is now:
+
+```text
+Assistant / Skills -> AgentExecutionService -> AgentExecutor
+                                             -> AionRsExecutor
+                                                -> 9Profs Tool Runtime
+                                                   -> AionRS ToolRegistry
+                                                      -> AgentEngine
+```
+
+`AionRsToolAdapter` is the only AionRS tool boundary. It converts authorized
+9Profs handlers into the minimum AionRS `Tool` surface and owns all AionRS
+types. The 9Profs Tool Runtime remains the source of truth for definitions,
+policy metadata, enabled state, availability, permissions, and execution
+boundaries. AionRS `ToolRegistry` is an execution adapter only; AionRS bootstrap
+and default tools remain disabled.
+
+Implemented: tool domain, provider/registry, deny-by-default per-run
+authorization, and AionRS adapter. Future: MCP provider, OfficeCLI provider,
+research tools, extension tools, full permission workflow, and external CLI
+agents.
+
 Dependency direction remains:
 
 ```text
 nineprofs-core app
 ├── nineprofs-runtime
 │   ├── nineprofs-agent
+│   │   └── nineprofs-tools
 │   ├── nineprofs-assistant ── nineprofs-skills
 │   ├── nineprofs-db
 │   └── nineprofs-realtime / nineprofs-api-types / nineprofs-common
 └── packages/9profs-core transport + Phase 0 adapters
 ```
 
-Phase 2B may add runtime probing and real executors behind this registry and
-task boundary. It must preserve Assistant/backend separation, stable IDs,
+Future phases may add runtime probing and real executors behind this registry
+and task boundary. They must preserve Assistant/backend separation, stable IDs,
 round-trip persistence, and the no-process Phase 2A behavior.
 
 Pinned AionCore source remains commit

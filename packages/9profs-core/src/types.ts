@@ -126,9 +126,22 @@ export interface AgentBackendDescriptor {
   readonly updated_at_ms: number | null
 }
 
+export type ToolSource = 'builtin' | 'mcp' | 'officecli' | 'research' | 'extension'
+export type ToolEffect = 'read' | 'write' | 'execute' | 'external_network'
+
+export interface ToolPolicy {
+  readonly effects: readonly ToolEffect[]
+  readonly requires_confirmation: boolean
+}
+
 export interface ToolDefinition {
   readonly id: ToolId
+  readonly name: string
   readonly description: string
+  readonly input_schema: unknown
+  readonly source: ToolSource
+  readonly policy: ToolPolicy
+  readonly enabled: boolean
 }
 
 /** Discovery and resolution boundary for agent tools. MCP is not part of this contract. */
