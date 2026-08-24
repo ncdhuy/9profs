@@ -57,6 +57,9 @@ impl AionRsOutputSink {
 
 impl OutputSink for AionRsOutputSink {
     fn emit_text_delta(&self, text: &str, _msg_id: &str) {
+        if text.is_empty() {
+            return;
+        }
         let _ = self.events.send(AgentExecutionEvent::OutputDelta {
             delta: text.to_owned(),
         });
@@ -106,9 +109,6 @@ impl AgentExecutor for AionRsExecutor {
         event_sink: AgentEventSink,
         mut cancellation: watch::Receiver<bool>,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
-        if let Some(reason) = request.provider.configuration_reason() {
-            return Err(AgentExecutionError::Configuration(reason));
-        }
         if request.input.trim().is_empty() {
             return Err(AgentExecutionError::Configuration(
                 "input must not be empty".to_owned(),
@@ -118,18 +118,10 @@ impl AgentExecutor for AionRsExecutor {
             return Err(AgentExecutionError::Cancelled);
         }
 
-        let secret = std::env::var(&request.provider.api_key_env).map_err(|_| {
-            AgentExecutionError::Configuration(format!(
-                "missing provider secret in {}",
-                request.provider.api_key_env
-            ))
-        })?;
-        if secret.trim().is_empty() {
-            return Err(AgentExecutionError::Configuration(format!(
-                "missing provider secret in {}",
-                request.provider.api_key_env
-            )));
-        }
+        let secret = request
+            .provider
+            .configured_secret()
+            .map_err(|error| AgentExecutionError::Configuration(error.to_string()))?;
 
         let cli_args = CliArgs {
             provider: Some(request.provider.provider.clone()),
@@ -155,6 +147,10 @@ impl AgentExecutor for AionRsExecutor {
         config.mcp.servers.clear();
         config.tools.allow_list.clear();
         config.tools.auto_approve = false;
+        config.tools.skills.allow.clear();
+        config.tools.skills.deny.clear();
+        config.hooks = Default::default();
+        config.shell = Default::default();
 
         let workspace = request.workspace_root.unwrap_or_else(|| PathBuf::from("."));
         let output: Arc<dyn OutputSink> = Arc::new(AionRsOutputSink::new(event_sink.clone()));
@@ -216,7 +212,45 @@ mod tests {
 
     #[test]
     fn phase_2b1_tool_surface_is_empty() {
-        assert!(phase_2b1_tool_registry().tool_names().is_empty());
+        let names = phase_2b1_tool_registry().tool_names();
+        assert!(names.is_empty());
+        for forbidden in [
+            "shell",
+            "filesystem",
+            "write_file",
+            "edit_file",
+            "exec_command",
+            "mcp",
+            "sub_agent",
+            "skills",
+        ] {
+            assert!(!names.iter().any(|name| name == forbidden));
+        }
+    }
+
+    #[test]
+    fn availability_requires_valid_openai_and_anthropic_configuration() {
+        let openai_key = "NINEPROFS_TEST_AIONRS_OPENAI_KEY";
+        unsafe { std::env::set_var(openai_key, "test-secret") };
+        let openai = AionRsExecutor::new(AgentProviderConfig {
+            provider: "openai".to_owned(),
+            model: "gpt-4o-mini".to_owned(),
+            base_url: None,
+            api_key_env: openai_key.to_owned(),
+        });
+        assert!(openai.availability_reason().is_none());
+        unsafe { std::env::remove_var(openai_key) };
+
+        let anthropic_key = "NINEPROFS_TEST_AIONRS_ANTHROPIC_KEY";
+        unsafe { std::env::set_var(anthropic_key, "test-secret") };
+        let anthropic = AionRsExecutor::new(AgentProviderConfig {
+            provider: "anthropic".to_owned(),
+            model: "claude-sonnet-test".to_owned(),
+            base_url: None,
+            api_key_env: anthropic_key.to_owned(),
+        });
+        assert!(anthropic.availability_reason().is_none());
+        unsafe { std::env::remove_var(anthropic_key) };
     }
 
     #[tokio::test]

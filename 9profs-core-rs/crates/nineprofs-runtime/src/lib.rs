@@ -262,6 +262,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn default_backend_availability_matches_provider_configuration() {
+        let runtime = CoreRuntime::initialize_in_memory(RuntimeConfig::default())
+            .await
+            .unwrap();
+        let descriptor = runtime
+            .agent_registry()
+            .get("nineprofs-default")
+            .await
+            .unwrap();
+        let reason = AionRsExecutor::from_env().availability_reason();
+
+        match reason {
+            Some(reason) => {
+                assert_eq!(descriptor.availability, AvailabilityState::Unavailable);
+                assert_eq!(
+                    descriptor.availability_reason.as_deref(),
+                    Some(reason.as_str())
+                );
+            }
+            None => {
+                assert_eq!(descriptor.availability, AvailabilityState::Available);
+                assert_eq!(descriptor.availability_reason, None);
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn assistant_backend_resolution_preserves_missing_and_disabled_states() {
         let runtime = CoreRuntime::initialize_in_memory(RuntimeConfig::default())
             .await

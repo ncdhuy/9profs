@@ -192,7 +192,10 @@ Phase 2B1 real execution is IMPLEMENTED in `nineprofs-agent`,
 registry. Therefore shell, file mutation, subprocess, MCP, sub-agent, and
 upstream global-skill discovery capabilities are disabled. Provider/model
 configuration is launch-scoped through `NINEPROFS_AGENT_*` variables, with the
-API-key environment variable name retained but never the secret.
+API-key environment variable name retained but never the secret. Phase 2B1.1
+requires explicit provider and model values, reports invalid configuration as
+unavailable, clears AionRS hooks/configured skill permissions, and defers
+dependency-size optimization; environment configuration remains temporary.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, MCP, full Extensions
 runtime, OfficeCLI integration, GenOffice mutation adapter, research domain,

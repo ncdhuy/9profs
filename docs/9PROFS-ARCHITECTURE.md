@@ -229,11 +229,14 @@ Assistant -> AgentRegistry -> AgentExecutionService -> AgentExecutor
 - The adapter uses the pinned AionRS `v0.2.11` engine directly with an empty
   `aion_tools::ToolRegistry`. This preserves the upstream run/stream loop while
   explicitly disabling shell, file mutation, subprocess, MCP, sub-agent, and
-  upstream global-skill discovery capabilities.
-- Provider configuration is provider-neutral and launch-scoped: provider,
-  model, optional base URL, and an API-key environment-variable reference are
-  read from `NINEPROFS_AGENT_*` variables. Secrets never enter DTOs, events,
-  logs, or errors.
+  upstream global-skill discovery capabilities. AionRS config hooks, shell
+  settings, and skill permission lists are cleared before construction as well.
+- Provider configuration is provider-neutral and launch-scoped. Provider and
+  model are both required; no implicit model fallback exists. Optional base URL
+  and API-key environment-variable reference are read from `NINEPROFS_AGENT_*`
+  variables. Empty values, unsupported providers, missing credentials, and
+  invalid endpoints make `nineprofs-default` unavailable with an explicit
+  reason. Secrets never enter DTOs, events, logs, or errors.
 - The real-provider smoke test is opt-in with
   `NINEPROFS_RUN_REAL_AGENT_SMOKE=1`; it runs a tiny exact-output prompt and
   verifies streaming plus a succeeded task. It skips when configuration is
@@ -250,6 +253,15 @@ Assistant -> AgentRegistry -> AgentExecutionService -> AgentExecutor
 - Active runs and tasks remain memory-only in the Phase 2A `AgentTaskManager`;
   no chat history, conversation table, resume state, or session lease was
   added.
+
+#### Phase 2B1.1 — Execution hardening
+
+Phase 2B1.1 is an execution-hardening pass, not a new architectural layer. It
+keeps environment-based provider configuration temporary, preserves the empty
+AionRS tool surface, and verifies that Assistant Rules plus ordered 9Profs
+`SkillCatalog` content remain the only instruction sources. AionRS dependency
+size is documented as future optimization; no dependency restructuring is part
+of this phase.
 
 Pinned dependency record:
 

@@ -321,6 +321,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancellation_is_safe_before_start_when_repeated_or_after_completion() {
+        let manager = manager();
+        let queued = manager.register_new(RunId::new(), "codex").await.unwrap();
+        manager.cancel(&queued.task_id).await.unwrap();
+        assert!(matches!(
+            manager.start(&queued.task_id).await,
+            Err(AgentTaskManagerError::InvalidTransition(_))
+        ));
+        assert!(matches!(
+            manager.cancel(&queued.task_id).await,
+            Err(AgentTaskManagerError::InvalidTransition(_))
+        ));
+        assert_eq!(
+            manager.get(&queued.task_id).await.unwrap().state,
+            TaskState::Cancelled
+        );
+
+        let completed = manager.register_new(RunId::new(), "codex").await.unwrap();
+        manager.start(&completed.task_id).await.unwrap();
+        manager.mark_running(&completed.task_id).await.unwrap();
+        manager.complete(&completed.task_id).await.unwrap();
+        assert!(matches!(
+            manager.cancel(&completed.task_id).await,
+            Err(AgentTaskManagerError::InvalidTransition(_))
+        ));
+        assert_eq!(
+            manager.get(&completed.task_id).await.unwrap().state,
+            TaskState::Succeeded
+        );
+    }
+
+    #[tokio::test]
     async fn duplicate_ids_and_parallel_tasks_per_run_are_handled() {
         let manager = manager();
         let run_id = RunId::new();

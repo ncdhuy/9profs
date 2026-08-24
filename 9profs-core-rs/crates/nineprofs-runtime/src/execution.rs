@@ -203,25 +203,28 @@ async fn run_task(
     let (event_sink, mut event_receiver) = mpsc::unbounded_channel();
     let task_id = request.task_id.clone();
     let run_id = request.run_id.clone();
-    let execution = tokio::spawn(async move {
-        executor
-            .execute(request, event_sink, cancellation.clone())
-            .await
-    });
+    let cancellation_state = cancellation.clone();
+    let execution =
+        tokio::spawn(async move { executor.execute(request, event_sink, cancellation).await });
     tokio::pin!(execution);
 
+    let mut event_state = ExecutionEventState::default();
     let result = loop {
         tokio::select! {
             event = event_receiver.recv() => {
                 if let Some(event) = event {
-                    publish_execution_event(&events, &run_id, &task_id, event);
+                    if !*cancellation_state.borrow() {
+                        publish_execution_event(&events, &run_id, &task_id, event, &mut event_state);
+                    }
                 }
             }
             result = &mut execution => break result,
         }
     };
     while let Ok(event) = event_receiver.try_recv() {
-        publish_execution_event(&events, &run_id, &task_id, event);
+        if !*cancellation_state.borrow() {
+            publish_execution_event(&events, &run_id, &task_id, event, &mut event_state);
+        }
     }
 
     let outcome = match result {
@@ -240,28 +243,44 @@ async fn run_task(
             }
         }
         Err(error) => {
-            publish_execution_event(
-                &events,
-                &run_id,
-                &task_id,
-                AgentExecutionEvent::Error {
-                    code: "execution_failed".to_owned(),
-                    message: error.to_string(),
-                },
-            );
-            if !is_terminal(&tasks, &task_id).await {
-                let _ = tasks
-                    .fail(
+            if *cancellation_state.borrow() {
+                if !is_terminal(&tasks, &task_id).await {
+                    let _ = tasks.cancel(&task_id).await;
+                }
+            } else {
+                if !event_state.error_emitted {
+                    publish_execution_event(
+                        &events,
+                        &run_id,
                         &task_id,
-                        TaskFailure {
+                        AgentExecutionEvent::Error {
                             code: "execution_failed".to_owned(),
                             message: error.to_string(),
                         },
-                    )
-                    .await;
+                        &mut event_state,
+                    );
+                }
+                if !is_terminal(&tasks, &task_id).await {
+                    let _ = tasks
+                        .fail(
+                            &task_id,
+                            TaskFailure {
+                                code: "execution_failed".to_owned(),
+                                message: error.to_string(),
+                            },
+                        )
+                        .await;
+                }
             }
         }
     }
+}
+
+#[derive(Default)]
+struct ExecutionEventState {
+    output_started: bool,
+    output_completed: bool,
+    error_emitted: bool,
 }
 
 async fn is_terminal(tasks: &AgentTaskManager, task_id: &nineprofs_agent::AgentTaskId) -> bool {
@@ -276,16 +295,34 @@ fn publish_execution_event(
     run_id: &RunId,
     task_id: &nineprofs_agent::AgentTaskId,
     event: AgentExecutionEvent,
+    state: &mut ExecutionEventState,
 ) {
     let (name, details) = match event {
-        AgentExecutionEvent::OutputStarted => ("agent.outputStarted", json!({})),
+        AgentExecutionEvent::OutputStarted => {
+            if state.output_started || state.output_completed {
+                return;
+            }
+            state.output_started = true;
+            ("agent.outputStarted", json!({}))
+        }
         AgentExecutionEvent::OutputDelta { delta } => {
+            if delta.is_empty() || state.output_completed {
+                return;
+            }
             ("agent.outputDelta", json!({ "delta": delta }))
         }
         AgentExecutionEvent::OutputCompleted { output } => {
+            if state.output_completed {
+                return;
+            }
+            state.output_completed = true;
             ("agent.outputCompleted", json!({ "output": output }))
         }
         AgentExecutionEvent::Error { code, message } => {
+            if state.error_emitted {
+                return;
+            }
+            state.error_emitted = true;
             ("agent.error", json!({ "code": code, "message": message }))
         }
     };
@@ -354,6 +391,9 @@ mod tests {
             mut cancellation: watch::Receiver<bool>,
         ) -> Result<AgentExecutionResult, AgentExecutionError> {
             let _ = sink.send(AgentExecutionEvent::OutputStarted);
+            let _ = sink.send(AgentExecutionEvent::OutputDelta {
+                delta: "partial".to_owned(),
+            });
             loop {
                 cancellation
                     .changed()
@@ -363,6 +403,33 @@ mod tests {
                     return Err(AgentExecutionError::Cancelled);
                 }
             }
+        }
+    }
+
+    struct LateSuccessExecutor;
+
+    #[async_trait]
+    impl AgentExecutor for LateSuccessExecutor {
+        fn backend_id(&self) -> &str {
+            "late-success"
+        }
+
+        async fn execute(
+            &self,
+            _request: AgentExecutionRequest,
+            sink: AgentEventSink,
+            mut cancellation: watch::Receiver<bool>,
+        ) -> Result<AgentExecutionResult, AgentExecutionError> {
+            cancellation
+                .changed()
+                .await
+                .map_err(|_| AgentExecutionError::Cancelled)?;
+            let _ = sink.send(AgentExecutionEvent::OutputCompleted {
+                output: "late success".to_owned(),
+            });
+            Ok(AgentExecutionResult {
+                output: "late success".to_owned(),
+            })
         }
     }
 
@@ -441,11 +508,22 @@ mod tests {
         let mut receiver = events.subscribe();
         let run_id = RunId::new();
         let task_id = nineprofs_agent::AgentTaskId::new();
+        let mut state = ExecutionEventState::default();
         publish_execution_event(
             &events,
             &run_id,
             &task_id,
             AgentExecutionEvent::OutputStarted,
+            &mut state,
+        );
+        publish_execution_event(
+            &events,
+            &run_id,
+            &task_id,
+            AgentExecutionEvent::OutputDelta {
+                delta: String::new(),
+            },
+            &mut state,
         );
         publish_execution_event(
             &events,
@@ -454,6 +532,7 @@ mod tests {
             AgentExecutionEvent::OutputDelta {
                 delta: "delta".to_owned(),
             },
+            &mut state,
         );
         publish_execution_event(
             &events,
@@ -462,6 +541,16 @@ mod tests {
             AgentExecutionEvent::OutputCompleted {
                 output: "complete".to_owned(),
             },
+            &mut state,
+        );
+        publish_execution_event(
+            &events,
+            &run_id,
+            &task_id,
+            AgentExecutionEvent::OutputCompleted {
+                output: "duplicate".to_owned(),
+            },
+            &mut state,
         );
         publish_execution_event(
             &events,
@@ -471,6 +560,17 @@ mod tests {
                 code: "provider_error".to_owned(),
                 message: "provider failed".to_owned(),
             },
+            &mut state,
+        );
+        publish_execution_event(
+            &events,
+            &run_id,
+            &task_id,
+            AgentExecutionEvent::Error {
+                code: "provider_error".to_owned(),
+                message: "duplicate provider failure".to_owned(),
+            },
+            &mut state,
         );
 
         let names = [
@@ -616,6 +716,7 @@ mod tests {
     #[tokio::test]
     async fn run_task_maps_execution_failure_to_failed_terminal_state() {
         let events = Arc::new(BroadcastEventBus::new(32));
+        let mut receiver = events.subscribe();
         let tasks = AgentTaskManager::new(Arc::clone(&events));
         let task = tasks.register_new(RunId::new(), "failing").await.unwrap();
         let cancellation = tasks.cancellation(&task.task_id).await.unwrap();
@@ -632,11 +733,18 @@ mod tests {
         let task = tasks.get(&task.task_id).await.unwrap();
         assert_eq!(task.state, TaskState::Failed);
         assert_eq!(task.failure.as_ref().unwrap().code, "execution_failed");
+        assert_eq!(
+            std::iter::from_fn(|| receiver.try_recv().ok())
+                .filter(|event| event.name == "agent.error")
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]
     async fn run_task_cancellation_stops_executor_and_leaves_terminal_task() {
         let events = Arc::new(BroadcastEventBus::new(32));
+        let mut receiver = events.subscribe();
         let tasks = AgentTaskManager::new(Arc::clone(&events));
         let task = tasks.register_new(RunId::new(), "blocking").await.unwrap();
         let cancellation = tasks.cancellation(&task.task_id).await.unwrap();
@@ -662,5 +770,47 @@ mod tests {
         let task = tasks.get(&task_id).await.unwrap();
         assert_eq!(task.state, TaskState::Cancelled);
         assert!(task.state.is_terminal());
+        assert!(
+            !std::iter::from_fn(|| receiver.try_recv().ok())
+                .any(|event| event.name == "agent.outputCompleted")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_wins_against_late_success_completion() {
+        let events = Arc::new(BroadcastEventBus::new(32));
+        let mut receiver = events.subscribe();
+        let tasks = AgentTaskManager::new(Arc::clone(&events));
+        let task = tasks
+            .register_new(RunId::new(), "late-success")
+            .await
+            .unwrap();
+        let task_id = task.task_id.clone();
+        let cancellation = tasks.cancellation(&task_id).await.unwrap();
+        let execution = tokio::spawn(run_task(
+            tasks.clone(),
+            events,
+            Arc::new(LateSuccessExecutor),
+            test_request(&task),
+            cancellation,
+        ));
+
+        for _ in 0..100 {
+            if tasks.get(&task_id).await.unwrap().state == TaskState::Running {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        tasks.cancel(&task_id).await.unwrap();
+        execution.await.unwrap();
+
+        assert_eq!(
+            tasks.get(&task_id).await.unwrap().state,
+            TaskState::Cancelled
+        );
+        assert!(
+            !std::iter::from_fn(|| receiver.try_recv().ok())
+                .any(|event| event.name == "agent.outputCompleted")
+        );
     }
 }
