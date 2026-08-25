@@ -47,7 +47,8 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 1B Skills catalog   | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary         | Implemented                                   |
 | Phase 2C0 Tool Runtime    | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                 | Implemented                                   |
 | Phase 2C1 MCP provider    | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider | Implemented                              |
-| Research/product backend  | No research domain, OfficeCLI process integration, or account/billing backend                                              | Future                                        |
+| Phase 3A OfficeCLI provider | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, artifact containment, shared registry provider, status API | Implemented |
+| Research/product backend  | No research domain, account/billing backend, or OfficeCLI detached mutation/resident mode                                  | Future                                        |
 
 ## GenOffice inheritance and current divergence
 
@@ -154,14 +155,15 @@ The target architecture proposes these compatible future boundaries:
   document ownership/mutation policy;
 - `packages/genoffice-adapter/` for approved editor transactions and existing
   save/reparse integration;
-- `packages/officecli-adapter/` for pinned OfficeCLI calls and detached-file
-  policy.
+- `packages/officecli-adapter/` for transport-neutral OfficeCLI status,
+  inspection, and artifact-reference contracts.
 
 Phase 0 contract portions are implemented in `packages/9profs-core/` and
 `packages/document-gateway/`. Phase 1A Rust Core foundation and Phase 1B
 Assistant/Skills foundation are implemented in `9profs-core-rs/`;
-`packages/genoffice-adapter/` and
-`packages/officecli-adapter/` are compile-checked skeletons only.
+`packages/genoffice-adapter/` remains a compile-checked skeleton;
+`packages/officecli-adapter/` is a transport-neutral TypeScript boundary.
+Rust process execution lives in `nineprofs-officecli`.
 
 Phase 2A Agent Registry + Task Lifecycle Foundation is implemented in
 `9profs-core-rs/crates/nineprofs-agent/`. It owns metadata-only backend
@@ -214,7 +216,7 @@ AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
-OfficeCLI integration, GenOffice mutation adapter, research domain,
+OfficeCLI detached mutation/resident mode, GenOffice mutation adapter, research domain,
 conversation/session persistence, and the GenOffice AI bridge.
 
 Phase 1B upstream adaptation record: assistant resource/catalog patterns came
@@ -231,8 +233,10 @@ no AionRS, agent runtime, MCP, OfficeCLI, or frontend architecture was copied.
 MCP is now implemented behind the 9Profs Tool Runtime: MCP server ->
 `nineprofs-mcp` -> `nineprofs-tools` -> explicit `ToolSet` ->
 `AionRsToolAdapter`. Direct MCP -> AionRS registry registration is prohibited.
-Next work introduces OfficeCLI as a sidecar with ownership checks. The document gateway then routes
-approved `DocumentChangeSet` values into GenOffice transactions. Research and
+Phase 3A adds OfficeCLI only as a pinned read-only sidecar:
+`OfficeCliToolProvider` -> `OfficeCliRunner` -> OfficeCLI. It cannot mutate
+active GenOffice documents, install skills, self-update, or use OfficeCLI MCP.
+The document gateway routes approved `DocumentChangeSet` values into GenOffice transactions. Research and
 SaaS/product services come after those boundaries are proven.
 
 The full migration matrix and Phase 0–6 sequence are maintained in

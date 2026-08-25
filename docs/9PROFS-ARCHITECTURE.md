@@ -128,7 +128,8 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 2A task lifecycle         | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events       |
 | Phase 2B1 real agent execution  | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs           |
 | Phase 2C1 MCP Tool Provider      | IMPLEMENTED     | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider |
-| OfficeCLI integration           | NOT IMPLEMENTED | `packages/officecli-adapter/` is a contract-only skeleton; no process or command handling  |
+| Phase 3A OfficeCLI read-only provider | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, artifact boundary, status API |
+| Phase 3B OfficeCLI detached mutation | NOT IMPLEMENTED | No create/set/add/remove/save or detached writer surface |
 | GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
 | Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
 
@@ -338,7 +339,34 @@ authorized registrations copied by `AionRsToolAdapter`; `start_run` remains
 tool-less by default. MCP tools use conservative executable policy metadata,
 and remote HTTP/SSE tools additionally carry `ExternalNetwork`.
 
-Future: OfficeCLI provider, research tools, extension tools, OAuth, full
+Phase 3A OfficeCLI is a read/analysis sidecar, never the active document
+authority:
+
+```text
+Agent
+  -> explicit ToolSet authorization
+  -> nineprofs-tools ToolRegistry
+  -> OfficeCliToolProvider
+  -> OfficeCliRunner
+  -> pinned OfficeCLI v1.0.144
+  -> detached artifact or inspection snapshot
+```
+
+The pinned upstream source is
+`1ced45e900782c5083ed550ddf328ee974e425e7`. The sidecar accepts only
+9Profs artifact references, verifies containment and `.docx`/`.xlsx`/`.pptx`
+type, isolates its profile, disables auto-update, and exposes read-only
+`view`, `get`, `query`, `validate`, and render operations. `validate`
+remains distinct from `view issues`. The shared registry contains MCP and
+OfficeCLI registrations; `ToolSet::default()` still authorizes zero tools.
+
+GenOffice remains canonical writer for active documents. Active-document
+mutation is not implemented; future changes must use
+`DocumentChangeSet -> DocumentMutationGateway -> GenOffice adapter ->
+GenOffice transaction/save`. Phase 3B detached mutation, save, and resident
+mode remain deferred.
+
+Future: research tools, extension tools, OAuth, full
 permission/confirmation UX, MCP resources, external-agent sync, and external
 CLI agents.
 
@@ -390,8 +418,9 @@ rules, and ordered skill assignments are persisted.
 No repository package currently establishes:
 
 - real agent execution, backend executors, or provider runtime probing;
-- an MCP layer, extension host, or skill filesystem loader;
+- an extension host or skill filesystem loader;
 - a research/review/citation/regulation domain;
+- detached OfficeCLI mutation/save or resident mode;
 - a GenOffice document adapter that owns AI mutations through editor
   transactions;
 - OfficeCLI process integration or active-document ownership enforcement;
@@ -463,7 +492,7 @@ after contracts stabilize. Proposed names are compatible with `packages/*`.
 | `packages/research-domain/`                    | Review, thesis, citation, regulation, evidence/provenance, methodology workflows                                  | Canonical Office editing or provider SDK details                  |
 | `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                            | Format-specific OOXML/XLSX/PPTX/PDF implementation                |
 | `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                    | Competing writer or presentation DOM mutation                     |
-| `packages/officecli-adapter/`                  | Pinned OfficeCLI process/API boundary, inspect/query/outline/validate/render/generate calls, detached-file policy | Canonical writes to active GenOffice-owned files                  |
+| `packages/officecli-adapter/`                  | Transport-neutral status, inspection results, and artifact references       | CLI process control or canonical writes to active GenOffice-owned files |
 
 Existing app AI directories remain product adapters until these boundaries
 exist. `packages/project-store` can back local workspace history; it does not
@@ -496,7 +525,7 @@ behavior stays intact until a compatible replacement exists and is validated.
 | `apps/slides` + `packages/pptx-*`        | PPTX model, render, canvas, save                    | GenOffice-derived Office Core                                         | Keep; expose gateway later             | 0, 4            |
 | `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                   | 0, 4, 5         |
 | `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                      | 0, 4, 5         |
-| No current module                        | No OfficeCLI or mutation gateway                    | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Add only after contracts are approved  | 0, 3, 4         |
+| `nineprofs-officecli`                      | Pinned read-only OfficeCLI sidecar                 | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer   | 3A, 3B, 4         |
 | No current module                        | No research/review domain                           | `packages/research-domain`                                            | Add after evidence and skill contracts | 5               |
 | No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof  | 6               |
 
@@ -537,13 +566,24 @@ behavior stays intact until a compatible replacement exists and is validated.
 - Adapt current app skills and provider/search adapters incrementally.
 - Preserve existing stream/cancel/tool-call contracts and app fallbacks.
 
-### Phase 3 — OfficeCLI sidecar
+### Phase 3A — OfficeCLI read-only sidecar (IMPLEMENTED)
 
-- Pin OfficeCLI behind `officecli-adapter`.
-- Support inspect/query/outline/validate/render and detached/new-document
-  generation.
-- Add explicit active-file ownership checks and reject competing canonical
-  writes.
+- Pin OfficeCLI v1.0.144 at commit
+  `1ced45e900782c5083ed550ddf328ee974e425e7`.
+- Run through `nineprofs-officecli` and shared `nineprofs-tools`
+  `ToolRegistry`; never use OfficeCLI MCP mode.
+- Verify configured binary/version, isolate profile/update/skill state, bound
+  process output and lifetime, and expose detached artifact/snapshot references
+  only.
+- Support typed text/annotated/outline/stats/issues/get/query/validate and
+  controlled render operations. All tools carry `Read` policy only.
+- Keep default `ToolSet` empty. No active-document or detached mutation.
+
+### Phase 3B — OfficeCLI detached mutation (NOT IMPLEMENTED)
+
+- Future only: create, detached mutation, batch operations, save, and possible
+  resident-mode optimization. Active GenOffice documents remain outside this
+  path.
 
 ### Phase 4 — GenOffice document gateway
 

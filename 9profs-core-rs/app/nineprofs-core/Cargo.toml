@@ -19,6 +19,7 @@ nineprofs-agent = { path = "../../crates/nineprofs-agent" }
 nineprofs-api-types = { path = "../../crates/nineprofs-api-types" }
 nineprofs-assistant = { path = "../../crates/nineprofs-assistant" }
 nineprofs-mcp = { path = "../../crates/nineprofs-mcp" }
+nineprofs-officecli = { path = "../../crates/nineprofs-officecli" }
 nineprofs-realtime = { path = "../../crates/nineprofs-realtime" }
 nineprofs-runtime = { path = "../../crates/nineprofs-runtime" }
 nineprofs-skills = { path = "../../crates/nineprofs-skills" }

@@ -20,6 +20,7 @@ use nineprofs_mcp::{
     CreateMcpServer, McpError, McpServerSnapshot, McpTransportConfig, McpTransportSummary,
     UpdateMcpServer,
 };
+use nineprofs_officecli::OfficeCliStatus;
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
 
@@ -184,11 +185,48 @@ mod mcp_api_tests {
     }
 }
 
+#[cfg(test)]
+mod officecli_api_tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn officecli_status_is_safe_and_core_starts_without_sidecar() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        let router = build_router(runtime);
+        let response = router
+            .oneshot(
+                Request::get("/api/officecli/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["success"], true);
+        assert!(payload["data"]["supported_version"] == "1.0.144");
+        assert!(payload["data"].get("binary_path").is_none());
+        assert!(payload["data"].get("profile_root").is_none());
+    }
+}
+
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
     let state = AppState { runtime };
     Router::new()
         .route("/api/health", get(health))
         .route("/api/runtime", get(runtime_info))
+        .route("/api/officecli/status", get(officecli_status))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
         .route("/api/agent-runs", post(create_agent_run))
@@ -231,6 +269,12 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
 
 async fn health(State(state): State<AppState>) -> axum::Json<ApiResponse<HealthResponse>> {
     axum::Json(ApiResponse::ok(state.runtime.health()))
+}
+
+async fn officecli_status(
+    State(state): State<AppState>,
+) -> axum::Json<ApiResponse<OfficeCliStatus>> {
+    axum::Json(ApiResponse::ok(state.runtime.officecli_status()))
 }
 
 async fn runtime_info(State(state): State<AppState>) -> axum::Json<ApiResponse<RuntimeInfo>> {

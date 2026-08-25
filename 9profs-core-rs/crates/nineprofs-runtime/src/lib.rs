@@ -13,6 +13,9 @@ use nineprofs_assistant::{
 };
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
 use nineprofs_mcp::{McpError, McpService, SqliteMcpServerRepository};
+use nineprofs_officecli::{
+    ArtifactResolver, OfficeCliConfig, OfficeCliRunner, OfficeCliStatus, OfficeCliToolProvider,
+};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
@@ -110,6 +113,7 @@ pub struct CoreRuntime {
     execution_service: Arc<AgentExecutionService>,
     tool_registry: ToolRegistry,
     mcp_service: Arc<McpService>,
+    officecli_runner: Arc<OfficeCliRunner>,
 }
 
 impl CoreRuntime {
@@ -141,6 +145,15 @@ impl CoreRuntime {
             tool_registry.clone(),
             Arc::clone(&event_bus),
         ));
+        let officecli_runner =
+            Arc::new(OfficeCliRunner::initialize(OfficeCliConfig::from_env()).await);
+        let officecli_provider = OfficeCliToolProvider::new(
+            Arc::clone(&officecli_runner),
+            Arc::new(ArtifactResolver::new([config.data_dir.clone()])),
+        );
+        if officecli_runner.is_available() {
+            let _ = tool_registry.register_provider(&officecli_provider).await;
+        }
         let aionrs_executor = Arc::new(AionRsExecutor::from_env_with_tools(tool_registry.clone()));
         let provider = aionrs_executor.provider().clone();
         let availability = match aionrs_executor.availability_reason() {
@@ -183,6 +196,7 @@ impl CoreRuntime {
             execution_service,
             tool_registry,
             mcp_service,
+            officecli_runner,
         })
     }
 
@@ -234,6 +248,10 @@ impl CoreRuntime {
         Arc::clone(&self.mcp_service)
     }
 
+    pub fn officecli_status(&self) -> OfficeCliStatus {
+        self.officecli_runner.status()
+    }
+
     pub async fn resolve_assistant_backend(
         &self,
         assistant_id: &str,
@@ -263,6 +281,7 @@ impl CoreRuntime {
                 "skills".to_owned(),
                 "agent-execution".to_owned(),
                 "mcp-tools".to_owned(),
+                "officecli-tools".to_owned(),
             ],
         }
     }

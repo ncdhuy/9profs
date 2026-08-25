@@ -8,6 +8,7 @@ members = [
     "crates/nineprofs-skills",
     "crates/nineprofs-assistant",
     "crates/nineprofs-tools",
+    "crates/nineprofs-officecli",
     "crates/nineprofs-mcp",
     "crates/nineprofs-agent",
     "crates/nineprofs-runtime",
@@ -34,6 +35,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 tower = "0.5"
 uuid = { version = "1", features = ["v4"] }
