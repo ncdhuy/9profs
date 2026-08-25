@@ -85,12 +85,17 @@ impl ArtifactResolver {
 
 impl DocumentResolver for ArtifactResolver {
     fn resolve(&self, reference: &DocumentReference) -> Result<ResolvedDocument, ArtifactError> {
-        self.artifacts
+        let mut artifact = self
+            .artifacts
             .read()
             .expect("OfficeCLI artifact lock poisoned")
             .get(&reference.artifact_id)
             .cloned()
-            .ok_or(ArtifactError::UnknownArtifact)
+            .ok_or(ArtifactError::UnknownArtifact)?;
+        artifact.path = canonical_document_path(&artifact.path)?;
+        ensure_supported_extension(&artifact.path)?;
+        ensure_contained(&artifact.path, &self.roots)?;
+        Ok(artifact)
     }
 }
 
@@ -189,5 +194,58 @@ mod tests {
             }),
             Err(ArtifactError::UnknownArtifact)
         ));
+    }
+
+    #[test]
+    fn registered_artifact_is_revalidated_after_move() {
+        let root = temp_dir();
+        let document = root.join("registered.docx");
+        fs::write(&document, b"fixture").unwrap();
+        let moved = root.join("moved.docx");
+        let resolver = ArtifactResolver::new([root.clone()]);
+        resolver.register_detached("fixture", &document).unwrap();
+        fs::rename(&document, &moved).unwrap();
+
+        assert!(matches!(
+            resolver.resolve(&DocumentReference {
+                artifact_id: "fixture".to_owned(),
+            }),
+            Err(ArtifactError::Missing(_))
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn registered_artifact_rejects_post_registration_escape_link() {
+        let root = temp_dir();
+        let approved = root.join("approved");
+        let outside = root.join("outside");
+        fs::create_dir_all(&approved).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let registered = approved.join("registered.docx");
+        let escaped = outside.join("escaped.docx");
+        fs::write(&registered, b"approved").unwrap();
+        fs::write(&escaped, b"outside").unwrap();
+        let resolver = ArtifactResolver::new([approved]);
+        resolver.register_detached("fixture", &registered).unwrap();
+        fs::remove_file(&registered).unwrap();
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&escaped, &registered).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&escaped, &registered).is_ok();
+        if !linked {
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+
+        assert!(matches!(
+            resolver.resolve(&DocumentReference {
+                artifact_id: "fixture".to_owned(),
+            }),
+            Err(ArtifactError::OutsideApprovedRoots)
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 }

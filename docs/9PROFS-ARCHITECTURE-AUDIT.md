@@ -47,7 +47,7 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 1B Skills catalog   | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary         | Implemented                                   |
 | Phase 2C0 Tool Runtime    | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                 | Implemented                                   |
 | Phase 2C1 MCP provider    | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider | Implemented                              |
-| Phase 3A OfficeCLI provider | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, artifact containment, shared registry provider, status API | Implemented |
+| Phase 3A OfficeCLI provider | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, artifact containment, shared registry provider, status API | Implemented; real qualification blocked by the pinned screenshot renderer in this environment |
 | Research/product backend  | No research domain, account/billing backend, or OfficeCLI detached mutation/resident mode                                  | Future                                        |
 
 ## GenOffice inheritance and current divergence
@@ -241,3 +241,57 @@ SaaS/product services come after those boundaries are proven.
 
 The full migration matrix and Phase 0–6 sequence are maintained in
 [9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md).
+## Phase 3A OfficeCLI qualification status
+
+The Phase 3A sidecar remains read-only and deny-by-default. The exact
+qualification binary used for this audit was the Windows x64 v1.0.144 release
+asset from pinned upstream commit
+`1ced45e900782c5083ed550ddf328ee974e425e7`, downloaded from the upstream
+release URL into the external temporary path
+`C:\Users\ncdhuy\AppData\Local\Temp\9profs-officecli-qualification\officecli-win-x64.exe`.
+It was never copied into this repository or used as the global installation.
+
+Run the explicit fail-closed gate with:
+
+```powershell
+$env:NINEPROFS_OFFICECLI_PATH = '<external path to the exact v1.0.144 binary>'
+npm run test:officecli:qualification
+```
+
+The command verifies the exact version through `OfficeCliRunner::initialize`,
+executes the real typed read-only operations, checks source-byte equality, and
+exercises screenshot containment. Ordinary tests remain binary independent
+and skip the real qualification test when the opt-in variable is absent.
+
+Real v1.0.144 accepted the typed mappings for `view text`, `view annotated`,
+`view outline`, `view stats`, `view issues`, `get`, `query`, and `validate`.
+The pinned CLI uses `--limit` for `view` but does not accept `--limit` for
+`query`; the adapter reflects that distinction. Successful DOCX read-only
+operations preserved `fixtures/generated/simple.docx` byte-for-byte. The
+qualification also prepares a temporary XLSX fixture and uses the existing
+PPTX fixture, without adding binary-heavy test data.
+
+The real screenshot command is currently an environmental blocker, not a
+passing qualification result. v1.0.144 successfully generates HTML, but its
+headless screenshot path does not return in this Windows environment; forcing
+the native path reports that Microsoft Word is unavailable. The runner timeout
+and cancellation path terminate the invocation, and the qualification must
+remain failed until a real screenshot completes and its artifact is proven to
+stay under the configured artifact root. No browser window is requested by
+the adapter.
+
+The isolated environment sets `HOME`, `USERPROFILE`, `APPDATA`,
+`LOCALAPPDATA`, and XDG paths beneath the 9Profs-owned profile, disables
+auto-install, auto-update, and OfficeCLI auto-resident mode, and keeps output
+under the controlled artifact root. A read-only audit found the existing real
+user `.officecli` profile unchanged, no global OfficeCLI skill directories or
+binary, and no repository-sidecar copy. Windows subprocesses are additionally
+wrapped in a kill-on-job-close process boundary so timeout, cancellation, and
+normal one-shot completion do not leave descendants behind.
+
+`ArtifactResolver::resolve` is the trusted execution boundary: registration
+does not permanently trust a path. Resolution re-canonicalizes the current
+target, rechecks existence, supported extension, approved-root containment,
+and link escape, with deterministic move and symlink replacement tests.
+OfficeCLI mutation commands, resident mode, MCP, skill installation, update,
+and Tool authorization changes are intentionally outside this phase.

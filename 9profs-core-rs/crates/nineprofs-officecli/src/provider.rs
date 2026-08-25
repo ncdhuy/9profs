@@ -162,7 +162,6 @@ struct GetArgs {
 struct QueryArgs {
     artifact_id: String,
     selector: String,
-    limit: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,7 +233,6 @@ fn operation_from_arguments(id: &str, arguments: Value) -> Result<OfficeCliOpera
             OfficeCliOperation::Query(QueryRequest {
                 document: document(args.artifact_id),
                 selector: args.selector,
-                limit: args.limit,
             })
         })),
         OFFICE_VALIDATE => parse(
@@ -279,7 +277,7 @@ fn schema_get() -> Value {
 }
 
 fn schema_query() -> Value {
-    json!({"type":"object","additionalProperties":false,"required":["artifact_id","selector"],"properties":{"artifact_id":{"type":"string","minLength":1},"selector":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1}}})
+    json!({"type":"object","additionalProperties":false,"required":["artifact_id","selector"],"properties":{"artifact_id":{"type":"string","minLength":1},"selector":{"type":"string","minLength":1}}})
 }
 
 fn schema_screenshot() -> Value {

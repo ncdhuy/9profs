@@ -45,7 +45,6 @@ pub struct GetRequest {
 pub struct QueryRequest {
     pub document: DocumentReference,
     pub selector: String,
-    pub limit: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -104,9 +103,6 @@ impl OfficeCliOperation {
                 if let Some(issue_type) = &request.issue_type {
                     args.extend(["--type", issue_type].map(OsString::from));
                 }
-                if let Some(limit) = request.limit {
-                    args.extend(["--limit", &limit.to_string()].map(OsString::from));
-                }
             }
             Self::Get(request) => {
                 args.extend(
@@ -123,9 +119,6 @@ impl OfficeCliOperation {
                     ]
                     .map(OsString::from),
                 );
-                if let Some(limit) = request.limit {
-                    args.extend(["--limit", &limit.to_string()].map(OsString::from));
-                }
             }
             Self::Validate(_) => {
                 args.extend(["validate", path.to_str().unwrap_or_default()].map(OsString::from));
@@ -163,6 +156,6 @@ fn view_args(args: &mut Vec<OsString>, path: &Path, mode: &str, request: &ViewRe
         args.extend(["--end", &end.to_string()].map(OsString::from));
     }
     if let Some(limit) = request.limit {
-        args.extend(["--max-lines", &limit.to_string()].map(OsString::from));
+        args.extend(["--limit", &limit.to_string()].map(OsString::from));
     }
 }

@@ -1,5 +1,8 @@
 use std::{ffi::OsString, path::PathBuf, process::Stdio};
 
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
 use async_trait::async_trait;
 use thiserror::Error;
 use tokio::{
@@ -45,6 +48,110 @@ impl SubprocessBackend {
     }
 }
 
+#[cfg(windows)]
+#[derive(Debug)]
+struct ProcessTreeGuard {
+    job: Option<OwnedHandle>,
+}
+
+#[cfg(windows)]
+impl ProcessTreeGuard {
+    fn new(process: std::os::windows::io::RawHandle) -> Result<Self, std::io::Error> {
+        let job = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let job = unsafe { OwnedHandle::from_raw_handle(job) };
+
+        let mut limits: JobObjectExtendedLimitInformation = unsafe { std::mem::zeroed() };
+        limits.basic.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                &mut limits as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32,
+            )
+        };
+        if configured == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let assigned = unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) };
+        if assigned == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(Self { job: Some(job) })
+    }
+
+    fn close(&mut self) {
+        // Closing a job configured with KILL_ON_JOB_CLOSE terminates the
+        // OfficeCLI process and any resident descendants it created.
+        self.job.take();
+    }
+}
+
+#[cfg(windows)]
+const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: u32 = 9;
+#[cfg(windows)]
+const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+
+#[cfg(windows)]
+#[repr(C)]
+struct JobObjectBasicLimitInformation {
+    per_process_user_time_limit: i64,
+    per_job_user_time_limit: i64,
+    limit_flags: u32,
+    minimum_working_set_size: usize,
+    maximum_working_set_size: usize,
+    active_process_limit: u32,
+    affinity: usize,
+    priority_class: u32,
+    scheduling_class: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct IoCounters {
+    read_operation_count: u64,
+    write_operation_count: u64,
+    other_operation_count: u64,
+    read_transfer_count: u64,
+    write_transfer_count: u64,
+    other_transfer_count: u64,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct JobObjectExtendedLimitInformation {
+    basic: JobObjectBasicLimitInformation,
+    io: IoCounters,
+    process_memory_limit: usize,
+    job_memory_limit: usize,
+    peak_process_memory_used: usize,
+    peak_job_memory_used: usize,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CreateJobObjectW(
+        job_attributes: *mut std::ffi::c_void,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
+    fn SetInformationJobObject(
+        job: *mut std::ffi::c_void,
+        information_class: u32,
+        information: *mut std::ffi::c_void,
+        information_length: u32,
+    ) -> i32;
+    fn AssignProcessToJobObject(
+        job: *mut std::ffi::c_void,
+        process: std::os::windows::io::RawHandle,
+    ) -> i32;
+}
+
 #[async_trait]
 impl ProcessBackend for SubprocessBackend {
     async fn run(
@@ -63,11 +170,17 @@ impl ProcessBackend for SubprocessBackend {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         let mut child = command.spawn().map_err(ProcessError::Spawn)?;
+        #[cfg(windows)]
+        let mut process_tree_guard =
+            ProcessTreeGuard::new(child.raw_handle().ok_or(ProcessError::Reader)?)
+                .map_err(ProcessError::Io)?;
         let stdout = child.stdout.take().ok_or(ProcessError::Reader)?;
         let stderr = child.stderr.take().ok_or(ProcessError::Reader)?;
         let stdout_task = tokio::spawn(read_limited(stdout, max_output_bytes));
         let stderr_task = tokio::spawn(read_limited(stderr, max_output_bytes));
         let status = child.wait().await.map_err(ProcessError::Io)?;
+        #[cfg(windows)]
+        process_tree_guard.close();
         let stdout = stdout_task.await.map_err(|_| ProcessError::Reader)??;
         let stderr = stderr_task.await.map_err(|_| ProcessError::Reader)??;
         Ok(ProcessOutput {

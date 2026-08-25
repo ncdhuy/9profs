@@ -81,6 +81,7 @@ impl OfficeCliConfig {
 
         let mut environment = BTreeMap::new();
         environment.insert("OFFICECLI_NO_AUTO_INSTALL".to_owned(), OsString::from("1"));
+        environment.insert("OFFICECLI_NO_AUTO_RESIDENT".to_owned(), OsString::from("1"));
         environment.insert("OFFICECLI_SKIP_UPDATE".to_owned(), OsString::from("1"));
         for key in ["PATH", "SystemRoot", "SYSTEMROOT", "COMSPEC"] {
             if let Some(value) = std::env::var_os(key) {
@@ -227,6 +228,12 @@ mod tests {
         assert_eq!(
             environment
                 .get("OFFICECLI_NO_AUTO_INSTALL")
+                .map(OsString::as_os_str),
+            Some(OsStr::new("1"))
+        );
+        assert_eq!(
+            environment
+                .get("OFFICECLI_NO_AUTO_RESIDENT")
                 .map(OsString::as_os_str),
             Some(OsStr::new("1"))
         );

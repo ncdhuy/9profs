@@ -2,7 +2,8 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 use nineprofs_officecli::{
     ArtifactResolver, DocumentReference, GetRequest, IssuesRequest, OfficeCliConfig,
-    OfficeCliOperation, OfficeCliRunner, QueryRequest, ValidateRequest, ViewRequest,
+    OfficeCliOperation, OfficeCliRunner, QueryRequest, ScreenshotRequest, ValidateRequest,
+    ViewRequest,
 };
 
 #[tokio::test]
@@ -70,9 +71,16 @@ async fn docx_read_only_operations_preserve_bytes() {
         OfficeCliOperation::Query(QueryRequest {
             document: document.clone(),
             selector: "/body".to_owned(),
-            limit: Some(50),
         }),
         OfficeCliOperation::Validate(ValidateRequest { document }),
+        OfficeCliOperation::Screenshot(ScreenshotRequest {
+            document: DocumentReference {
+                artifact_id: "simple-docx".to_owned(),
+            },
+            page: Some(1),
+            width: None,
+            height: None,
+        }),
     ];
 
     for operation in operations {
