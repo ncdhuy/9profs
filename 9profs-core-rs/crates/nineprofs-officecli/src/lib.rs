@@ -9,6 +9,7 @@ mod config;
 mod operations;
 mod process;
 mod provider;
+mod rasterizer;
 mod runner;
 
 pub use artifact::{
@@ -23,6 +24,10 @@ pub use provider::{
     OFFICE_FIND_ISSUES, OFFICE_GET, OFFICE_INSPECT_ANNOTATED, OFFICE_INSPECT_OUTLINE,
     OFFICE_INSPECT_STATS, OFFICE_INSPECT_TEXT, OFFICE_QUERY, OFFICE_RENDER, OFFICE_VALIDATE,
     OfficeCliToolProvider,
+};
+pub use rasterizer::{
+    ElectronHtmlRasterizer, HtmlArtifact, HtmlRasterizer, ImageArtifact, RasterLimits,
+    RasterRequest, RasterizerError, RenderResult,
 };
 pub use runner::{
     ArtifactReference, OfficeCliCancellation, OfficeCliError, OfficeCliResponse, OfficeCliRunner,

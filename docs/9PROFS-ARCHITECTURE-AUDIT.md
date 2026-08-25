@@ -47,7 +47,7 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 1B Skills catalog   | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary         | Implemented                                   |
 | Phase 2C0 Tool Runtime    | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                 | Implemented                                   |
 | Phase 2C1 MCP provider    | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider | Implemented                              |
-| Phase 3A OfficeCLI provider | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, artifact containment, shared registry provider, status API | Implemented; real qualification blocked by the pinned screenshot renderer in this environment |
+| Phase 3A OfficeCLI provider | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, HTML-to-PNG raster boundary, artifact containment, shared registry provider, status API | Implemented; real DOCX/XLSX/PPTX production qualification passes |
 | Research/product backend  | No research domain, account/billing backend, or OfficeCLI detached mutation/resident mode                                  | Future                                        |
 
 ## GenOffice inheritance and current divergence
@@ -260,34 +260,37 @@ npm run test:officecli:qualification
 
 The command verifies the exact version through `OfficeCliRunner::initialize`,
 executes the real typed read-only operations, checks source-byte equality, and
-exercises screenshot containment. Ordinary tests remain binary independent
-and skip the real qualification test when the opt-in variable is absent.
+exercises production HTML-to-PNG artifact containment. Ordinary tests remain
+binary independent and skip the real qualification test when the opt-in variable
+is absent.
 
 Real v1.0.144 accepted the typed mappings for `view text`, `view annotated`,
-`view outline`, `view stats`, `view issues`, `get`, `query`, and `validate`.
-The pinned CLI uses `--limit` for `view` but does not accept `--limit` for
-`query`; the adapter reflects that distinction. Successful DOCX read-only
-operations preserved `fixtures/generated/simple.docx` byte-for-byte. The
-qualification also prepares a temporary XLSX fixture and uses the existing
-PPTX fixture, without adding binary-heavy test data.
+`view outline`, `view stats`, `view issues`, `get`, `query`, `validate`, and
+`view <file> html`. HTML is returned on stdout, not as a path. Observed output
+is one HTML document containing logical `.page`, `.sheet-content[data-sheet]`,
+or `.slide-container[data-slide]` nodes; the rasterizer returns one PNG
+artifact reference per selected logical node. DOCX HTML retained external
+KaTeX stylesheet/script URLs; XLSX and PPTX qualification HTML had no external
+references. Rasterization blocks all HTTP(S)/WebSocket requests, so those
+remote KaTeX URLs are intentionally unavailable rather than unrestricted.
 
-The real screenshot command is currently an environmental blocker, not a
-passing qualification result. v1.0.144 successfully generates HTML, but its
-headless screenshot path does not return in this Windows environment; forcing
-the native path reports that Microsoft Word is unavailable. The runner timeout
-and cancellation path terminate the invocation, and the qualification must
-remain failed until a real screenshot completes and its artifact is proven to
-stay under the configured artifact root. No browser window is requested by
-the adapter.
+Production visual qualification now passes with the exact pinned binary:
+DOCX HTML plus PNG, XLSX HTML plus PNG, and PPTX HTML plus PNG all succeed;
+all three source files remain byte-identical. The existing Electron 43.3.0
+runtime is reused through a hidden/offscreen `BrowserWindow` and
+`capturePage`; no Playwright browser installation was added. OfficeCLI-native
+`view screenshot` remains a diagnostic only: the prior v1.0.144 Windows run
+timed out, and native Word-backed rendering is unavailable in this environment.
 
 The isolated environment sets `HOME`, `USERPROFILE`, `APPDATA`,
 `LOCALAPPDATA`, and XDG paths beneath the 9Profs-owned profile, disables
-auto-install, auto-update, and OfficeCLI auto-resident mode, and keeps output
-under the controlled artifact root. A read-only audit found the existing real
-user `.officecli` profile unchanged, no global OfficeCLI skill directories or
-binary, and no repository-sidecar copy. Windows subprocesses are additionally
-wrapped in a kill-on-job-close process boundary so timeout, cancellation, and
-normal one-shot completion do not leave descendants behind.
+auto-install, auto-update, and OfficeCLI auto-resident mode, and keeps HTML,
+PNG, manifest, Electron user data, and cache output under controlled roots.
+Raster limits are 16 MiB HTML, 4096 physical pixels per dimension, 64 logical
+pages/slides/sheets, 64 MiB total PNG output, and a 30-second end-to-end
+render timeout. Page load, capture, and settle waits are bounded; cancellation
+or timeout drops the process future, and Windows subprocesses use a kill-on-job-close
+boundary so OfficeCLI/Electron descendants do not survive.
 
 `ArtifactResolver::resolve` is the trusted execution boundary: registration
 does not permanently trust a path. Resolution re-canonicalizes the current

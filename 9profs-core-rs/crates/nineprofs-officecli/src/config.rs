@@ -9,6 +9,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::rasterizer::RasterLimits;
+
 pub const SUPPORTED_VERSION: &str = "1.0.144";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_OUTPUT_LIMIT: usize = 1024 * 1024;
@@ -18,8 +20,11 @@ pub struct OfficeCliConfig {
     pub binary_path: Option<PathBuf>,
     pub profile_root: PathBuf,
     pub artifact_root: PathBuf,
+    pub electron_path: Option<PathBuf>,
+    pub rasterizer_script: Option<PathBuf>,
     pub timeout: Duration,
     pub max_output_bytes: usize,
+    pub raster_limits: RasterLimits,
 }
 
 impl Default for OfficeCliConfig {
@@ -29,8 +34,11 @@ impl Default for OfficeCliConfig {
             binary_path: None,
             profile_root: root.join("profile"),
             artifact_root: root.join("artifacts"),
+            electron_path: None,
+            rasterizer_script: None,
             timeout: DEFAULT_TIMEOUT,
             max_output_bytes: DEFAULT_OUTPUT_LIMIT,
+            raster_limits: RasterLimits::default(),
         }
     }
 }
@@ -45,6 +53,9 @@ impl OfficeCliConfig {
         if let Some(root) = std::env::var_os("NINEPROFS_OFFICECLI_ARTIFACT_ROOT") {
             config.artifact_root = PathBuf::from(root);
         }
+        config.electron_path = std::env::var_os("NINEPROFS_ELECTRON_PATH").map(PathBuf::from);
+        config.rasterizer_script =
+            std::env::var_os("NINEPROFS_HTML_RASTERIZER_SCRIPT").map(PathBuf::from);
         if let Ok(value) = std::env::var("NINEPROFS_OFFICECLI_TIMEOUT_MS")
             && let Ok(milliseconds) = value.parse::<u64>()
         {
@@ -54,6 +65,26 @@ impl OfficeCliConfig {
             && let Ok(bytes) = value.parse::<usize>()
         {
             config.max_output_bytes = bytes.max(1);
+        }
+        if let Ok(value) = std::env::var("NINEPROFS_OFFICECLI_MAX_HTML_BYTES")
+            && let Ok(bytes) = value.parse::<usize>()
+        {
+            config.raster_limits.max_html_bytes = bytes.max(1);
+        }
+        if let Ok(value) = std::env::var("NINEPROFS_OFFICECLI_MAX_RASTER_DIMENSION")
+            && let Ok(dimension) = value.parse::<u32>()
+        {
+            config.raster_limits.max_dimension = dimension.max(1);
+        }
+        if let Ok(value) = std::env::var("NINEPROFS_OFFICECLI_MAX_RENDERED_PAGES")
+            && let Ok(pages) = value.parse::<u32>()
+        {
+            config.raster_limits.max_pages = pages.max(1);
+        }
+        if let Ok(value) = std::env::var("NINEPROFS_OFFICECLI_MAX_RENDERED_BYTES")
+            && let Ok(bytes) = value.parse::<u64>()
+        {
+            config.raster_limits.max_total_bytes = bytes.max(1);
         }
         config
     }
@@ -115,6 +146,16 @@ impl OfficeCliConfig {
         self.binary_path
             .as_deref()
             .is_some_and(|path| path.is_file() && executable(path))
+    }
+
+    pub(crate) fn rasterizer_is_usable(&self) -> bool {
+        self.electron_path
+            .as_deref()
+            .is_some_and(|path| path.is_file())
+            && self
+                .rasterizer_script
+                .as_deref()
+                .is_some_and(|path| path.is_file())
     }
 }
 

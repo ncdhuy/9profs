@@ -89,7 +89,7 @@ impl OfficeCliOperation {
         }
     }
 
-    pub(crate) fn args(&self, path: &Path, screenshot_output: Option<&Path>) -> Vec<OsString> {
+    pub(crate) fn args(&self, path: &Path, html_output: Option<&Path>) -> Vec<OsString> {
         let mut args = vec![OsString::from("--json")];
         match self {
             Self::ViewText(request) => view_args(&mut args, path, "text", request),
@@ -125,22 +125,11 @@ impl OfficeCliOperation {
             }
             Self::Screenshot(request) => {
                 args.extend(
-                    ["view", path.to_str().unwrap_or_default(), "screenshot"].map(OsString::from),
+                    ["view", path.to_str().unwrap_or_default(), "html"].map(OsString::from),
                 );
-                if let Some(page) = request.page {
-                    args.extend(["--page", &page.to_string()].map(OsString::from));
-                }
-                if let Some(width) = request.width {
-                    args.extend(["--screenshot-width", &width.to_string()].map(OsString::from));
-                }
-                if let Some(height) = request.height {
-                    args.extend(["--screenshot-height", &height.to_string()].map(OsString::from));
-                }
-                if let Some(output) = screenshot_output {
-                    args.extend(["--out", output.to_str().unwrap_or_default()].map(OsString::from));
-                }
-                // Never emit OfficeCLI's --browser option. Render remains a
-                // local headless sidecar operation in 9Profs.
+                // OfficeCLI-native screenshot stays diagnostic only. Production
+                // rendering consumes this HTML through the 9Profs rasterizer.
+                let _ = (request, html_output);
             }
         }
         args

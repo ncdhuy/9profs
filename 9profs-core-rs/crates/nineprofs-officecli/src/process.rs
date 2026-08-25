@@ -179,10 +179,10 @@ impl ProcessBackend for SubprocessBackend {
         let stdout_task = tokio::spawn(read_limited(stdout, max_output_bytes));
         let stderr_task = tokio::spawn(read_limited(stderr, max_output_bytes));
         let status = child.wait().await.map_err(ProcessError::Io)?;
-        #[cfg(windows)]
-        process_tree_guard.close();
         let stdout = stdout_task.await.map_err(|_| ProcessError::Reader)??;
         let stderr = stderr_task.await.map_err(|_| ProcessError::Reader)??;
+        #[cfg(windows)]
+        process_tree_guard.close();
         Ok(ProcessOutput {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),

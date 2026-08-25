@@ -80,7 +80,7 @@ impl ToolProvider for OfficeCliToolProvider {
             ),
             (
                 OFFICE_RENDER,
-                "Render a document page to a controlled artifact",
+                "Render document pages, sheets, or slides to controlled PNG artifacts",
                 schema_screenshot(),
             ),
         ];

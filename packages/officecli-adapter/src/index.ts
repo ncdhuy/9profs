@@ -29,7 +29,7 @@ export type OfficeCliInspectionOperation =
 
 export interface OfficeCliArtifactReference {
   readonly id: string
-  readonly kind: 'office-screenshot'
+  readonly kind: 'office-render'
 }
 
 export interface OfficeCliInspectionResult {
@@ -37,6 +37,7 @@ export interface OfficeCliInspectionResult {
   readonly document_id: string
   readonly data: unknown
   readonly artifact?: OfficeCliArtifactReference
+  readonly artifacts?: readonly OfficeCliArtifactReference[]
 }
 
 /** Transport-neutral boundary. It exposes no CLI flags, process handles, or file paths. */

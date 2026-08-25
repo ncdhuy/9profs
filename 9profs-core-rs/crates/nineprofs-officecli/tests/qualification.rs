@@ -47,6 +47,7 @@ async fn pinned_officecli_real_qualification() {
     let status = runner.status();
     assert_eq!(status.availability, OfficeCliAvailability::Available);
     assert_eq!(status.detected_version.as_deref(), Some(SUPPORTED_VERSION));
+    assert!(runner.can_render(), "9Profs HTML rasterizer is unavailable");
 
     let resolver = Arc::new(ArtifactResolver::new([
         docx.parent().unwrap().to_path_buf(),
@@ -72,15 +73,28 @@ async fn pinned_officecli_real_qualification() {
         &docx,
         "qualification-docx",
         "/body",
+        &config.artifact_root,
+        1,
     )
     .await;
-    qualify_document(&runner, resolver.as_ref(), &xlsx, "qualification-xlsx", "/").await;
+    qualify_document(
+        &runner,
+        resolver.as_ref(),
+        &xlsx,
+        "qualification-xlsx",
+        "/",
+        &config.artifact_root,
+        1,
+    )
+    .await;
     qualify_document(
         &runner,
         resolver.as_ref(),
         &pptx,
         "qualification-pptx",
         "/slide[1]",
+        &config.artifact_root,
+        1,
     )
     .await;
 
@@ -141,6 +155,8 @@ async fn qualify_document(
     path: &Path,
     id: &str,
     selector: &str,
+    artifact_root: &Path,
+    minimum_artifacts: usize,
 ) {
     let operations = [
         OfficeCliOperation::ViewText(ViewRequest {
@@ -207,6 +223,20 @@ async fn qualify_document(
         assert!(response.data.is_object() || response.data.is_string());
         if response.operation == "screenshot" {
             assert!(response.artifact.is_some());
+            assert!(response.artifacts.len() >= minimum_artifacts);
+            assert!(!response.artifacts.is_empty());
+            let root = fs::canonicalize(artifact_root).unwrap();
+            for artifact in &response.artifacts {
+                let output = artifact_root.join(format!("{}.png", artifact.id));
+                let canonical = fs::canonicalize(&output).unwrap();
+                assert!(canonical.starts_with(&root), "PNG escaped artifact root");
+                let bytes = fs::read(&canonical).unwrap();
+                assert!(bytes.len() > 100, "PNG artifact is empty or trivial");
+                assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+                let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+                let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+                assert!(width > 0 && height > 0, "PNG dimensions are empty");
+            }
         }
     }
 }

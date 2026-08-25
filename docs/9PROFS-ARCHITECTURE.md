@@ -5,8 +5,8 @@ Status: canonical architecture and migration baseline for the current
 and a read-only comparison with `baseline/genoffice`.
 
 This document describes what exists, what remains GenOffice-derived, and the
-target boundaries for 9Profs. OfficeCLI, research workflows, and SaaS services
-remain future work; Phase 2B1 now provides the first real agent execution path.
+target boundaries for 9Profs. The pinned OfficeCLI read-only sidecar is
+implemented; research workflows and SaaS services remain future work.
 
 ## Non-negotiable rules
 
@@ -128,7 +128,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 2A task lifecycle         | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events       |
 | Phase 2B1 real agent execution  | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs           |
 | Phase 2C1 MCP Tool Provider      | IMPLEMENTED     | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider |
-| Phase 3A OfficeCLI read-only provider | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, artifact boundary, status API |
+| Phase 3A OfficeCLI read-only provider | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API |
 | Phase 3B OfficeCLI detached mutation | NOT IMPLEMENTED | No create/set/add/remove/save or detached writer surface |
 | GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
 | Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
@@ -359,6 +359,24 @@ type, isolates its profile, disables auto-update, and exposes read-only
 `view`, `get`, `query`, `validate`, and render operations. `validate`
 remains distinct from `view issues`. The shared registry contains MCP and
 OfficeCLI registrations; `ToolSet::default()` still authorizes zero tools.
+
+Production visual rendering is deliberately split:
+
+```text
+OfficeCLI v1.0.144: Office document -> HTML stdout
+9Profs HtmlRasterizer: controlled HTML artifact -> PNG artifact references
+```
+
+`office.render` uses the existing Electron 43.3.0 runtime through a hidden,
+offscreen window and bounded `capturePage` calls. Playwright remains an audited
+test dependency only; no browser install was added. All external HTTP(S) and
+WebSocket requests are blocked. Limits are 16 MiB HTML, 4096 physical pixels
+per dimension, 64 logical pages/slides/sheets, 64 MiB total PNGs, and a
+30-second render timeout. OfficeCLI-native screenshot is retained only as an
+upstream diagnostic because v1.0.144 timed out on this Windows host.
+
+The real qualification gate passes DOCX, XLSX, and PPTX HTML generation,
+production PNG rasterization, containment, and source byte preservation.
 
 GenOffice remains canonical writer for active documents. Active-document
 mutation is not implemented; future changes must use
