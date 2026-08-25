@@ -15,6 +15,8 @@ export default defineConfig({
       '@genoffice/ai-provider': local('../../packages/ai-provider/src/index.ts'),
       '@genoffice/i18n': local('../../packages/i18n/src/index.ts'),
       '@genoffice/ui': local('../../packages/ui/src/index.ts'),
+      '@genoffice/document-gateway': local('../../packages/document-gateway/src/index.ts'),
+      '@genoffice/genoffice-adapter': local('../../packages/genoffice-adapter/src/index.ts'),
     },
   },
   test: {

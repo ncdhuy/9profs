@@ -4,11 +4,13 @@ import type {
   DocumentAuthority,
   DocumentChange,
   DocumentId,
+  DocumentVersion,
   ProposedDocumentChangeSet,
   RejectedDocumentChangeSet,
 } from '../src'
 
 const documentId: DocumentId = 'document-1'
+const version: DocumentVersion = 0
 const activeAuthority: Extract<DocumentAuthority, { kind: 'genoffice-active' }> = {
   kind: 'genoffice-active',
   documentId,
@@ -39,6 +41,7 @@ const approved: ApprovedDocumentChangeSet = {
   target: activeAuthority,
   changes: proposed.changes,
   status: 'approved',
+  baseVersion: version,
   approval: { approvedBy: 'reviewer-1', approvedAt: '2026-08-23T00:00:00Z' },
 }
 const rejected: RejectedDocumentChangeSet = {
@@ -67,6 +70,7 @@ describe('document gateway contracts', () => {
     expect(proposed.status).toBe('proposed')
     expect(approved.status).toBe('approved')
     expect(approved.approval.approvedBy).toBe('reviewer-1')
+    expect(approved.baseVersion).toBe(version)
     expect(rejected.status).toBe('rejected')
     expect(rejected.rejection.reason).toBe('Needs review')
     expect(proposed.changes[0]).toEqual(changes[0])

@@ -18,6 +18,8 @@ export const EMPTY_HF_VARIANTS: HfVariantsState = {
 
 export interface DocState {
   parsed: ParsedDocFull
+  /** opaque active-editor identity; never derived from the local file path */
+  documentId: string
   /** null until a new document is saved for the first time */
   filePath: string | null
   fileName: string
@@ -26,6 +28,10 @@ export interface DocState {
   isBlank?: boolean
   /** desired open password is set for the next save; toggled via Review > Protect */
   encrypted?: boolean
+}
+
+export function createDocumentId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `genoffice-${Date.now()}-${Math.random()}`
 }
 
 /** A restored recovery snapshot has not reached the original path yet. */

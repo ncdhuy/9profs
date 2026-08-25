@@ -40,6 +40,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { OpenDocxResult } from '../shared/ipc'
 import {
   hfVariantsFromParsed,
+  createDocumentId,
   openedFileStartsDirty,
   type DocState,
   type HfVariantKey,
@@ -260,6 +261,7 @@ export async function loadFile(
     noteDocumentSwapped()
     ctx.setDoc({
       parsed,
+      documentId: createDocumentId(),
       filePath: result.path,
       fileName: result.name,
       hash: result.hash,
@@ -371,7 +373,14 @@ export async function newFile(ctx: FileActionContext): Promise<boolean | undefin
     ctx.editor.commands.setContent(blocksToPmDoc(parsed.blocks, readSections(parsed)) as never)
     resetEditorHistory(ctx.editor)
     noteDocumentSwapped()
-    ctx.setDoc({ parsed, filePath: null, fileName: t('appUntitledDocx'), hash: '', isBlank: true })
+    ctx.setDoc({
+      parsed,
+      documentId: createDocumentId(),
+      filePath: null,
+      fileName: t('appUntitledDocx'),
+      hash: '',
+      isBlank: true,
+    })
     // a fresh blank draft starts unencrypted: drop any pending password left by
     // the previous draft (its DocState, including the encrypted flag, is gone)
     discardStalePasswordIntents()
@@ -764,6 +773,7 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
         ? {
             ...prev,
             parsed: reparsed,
+            documentId: createDocumentId(),
             filePath: savedPath,
             fileName: savedPath?.split(/[\\/]/).pop() ?? prev.fileName,
           }

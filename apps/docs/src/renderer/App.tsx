@@ -13,6 +13,7 @@ import type { Editor } from '@tiptap/core'
 import { DOMParser as PmDOMParser, type Mark as PmMark } from '@tiptap/pm/model'
 import { NodeSelection } from '@tiptap/pm/state'
 import { Dropdown } from '@genoffice/ui'
+import { createGenOfficeDocsAdapter, type GenOfficeDocsAdapter } from '@genoffice/genoffice-adapter'
 import { markdownPasteHtml } from './editor/markdown-paste'
 import {
   BLANK_BULLET_NUM_ID,
@@ -38,6 +39,8 @@ import {
 import type { AiSettings, OpenDocxResult } from '../shared/ipc'
 import { AI_PROVIDERS } from '../shared/ipc'
 import { AiPanel } from './ai/AiPanel'
+import { executeCommands, type Command } from './ai/commands'
+import { buildDocumentContext } from './ai/protocol'
 import { asianCharCount, countWords, nonAsianWordCount } from './word-count'
 import { CommentsPanel } from './components/CommentsPanel'
 import { EquationModal } from './components/EquationModal'
@@ -672,6 +675,7 @@ export function App() {
   const saveIncompleteRef = useRef(false)
 
   const editorRef = useRef<Editor | null>(null)
+  const activeDocsAdapterRef = useRef<GenOfficeDocsAdapter | null>(null)
   const presentationGeometryRef = useRef<PresentationGeometry | null>(null)
   const presentationGeometrySourceRef = useRef<(() => PresentationGeometrySource) | null>(null)
   const editor = useEditor({
@@ -777,6 +781,47 @@ export function App() {
       forceRender()
     },
   })
+
+  // Phase 4A adapter: bind one opaque document session to existing Docs
+  // command/read primitives. No save or presentation API crosses this seam.
+  useEffect(() => {
+    if (!editor || !doc?.documentId) {
+      activeDocsAdapterRef.current = null
+      return
+    }
+    const adapter = createGenOfficeDocsAdapter({
+      documentId: doc.documentId,
+      runtime: {
+        subscribeToTransactions: (listener) => {
+          const onTransaction = ({
+            transaction,
+          }: {
+            transaction: import('@tiptap/pm/state').Transaction
+          }) => listener(transaction)
+          editor.on('transaction', onTransaction)
+          const unsubscribeSubEditor = subscribeSubEditorState((docChanged) =>
+            listener({ docChanged }),
+          )
+          return () => {
+            editor.off('transaction', onTransaction)
+            unsubscribeSubEditor()
+          }
+        },
+        buildDocumentContext: () => buildDocumentContext(editor),
+        getSelectionContext: () => {
+          const { from, to, empty } = editor.state.selection
+          return { from, to, empty }
+        },
+        executeCommands: (commands, context) =>
+          executeCommands(editor, { commands: commands as Command[] }, context),
+      },
+    })
+    activeDocsAdapterRef.current = adapter
+    return () => {
+      adapter.dispose()
+      if (activeDocsAdapterRef.current === adapter) activeDocsAdapterRef.current = null
+    }
+  }, [doc?.documentId, editor])
 
   // textbox sub-editors: re-render the ribbon on focus/selection changes and
   // mark the document dirty when their content changes

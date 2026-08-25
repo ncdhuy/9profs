@@ -7,6 +7,11 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 // silently bundle the other checkout's (possibly stale) code.
 const localAlias = {
   '@genoffice/docx-engine': resolve(__dirname, '../../packages/docx-engine/src/index.ts'),
+  '@genoffice/document-gateway': resolve(__dirname, '../../packages/document-gateway/src/index.ts'),
+  '@genoffice/genoffice-adapter': resolve(
+    __dirname,
+    '../../packages/genoffice-adapter/src/index.ts',
+  ),
 }
 
 export default defineConfig({

@@ -120,19 +120,21 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 
 ### Phase 0 status
 
-| Area                            | Status          | Evidence                                                                                   |
-| ------------------------------- | --------------- | ------------------------------------------------------------------------------------------ |
-| Phase 0 contracts               | IMPLEMENTED     | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams   |
-| Phase 1A Rust Core              | IMPLEMENTED     | `9profs-core-rs/` transport/runtime foundation; no product domains                         |
-| Phase 2A agent metadata/catalog | IMPLEMENTED     | `nineprofs-agent` descriptors, builtin catalog, minimal SQLite custom metadata persistence |
-| Phase 2A Agent Registry         | IMPLEMENTED     | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates |
-| Phase 2A task lifecycle         | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events       |
-| Phase 2B1 real agent execution  | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs           |
-| Phase 2C1 MCP Tool Provider      | IMPLEMENTED     | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider |
-| Phase 3A OfficeCLI read-only provider | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API |
-| Phase 3B OfficeCLI detached mutation | IMPLEMENTED | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion |
-| GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
-| Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
+| Area                                   | Status          | Evidence                                                                                                                                 |
+| -------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0 contracts                      | IMPLEMENTED     | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams                                                 |
+| Phase 1A Rust Core                     | IMPLEMENTED     | `9profs-core-rs/` transport/runtime foundation; no product domains                                                                       |
+| Phase 2A agent metadata/catalog        | IMPLEMENTED     | `nineprofs-agent` descriptors, builtin catalog, minimal SQLite custom metadata persistence                                               |
+| Phase 2A Agent Registry                | IMPLEMENTED     | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates                                               |
+| Phase 2A task lifecycle                | IMPLEMENTED     | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events                                                     |
+| Phase 2B1 real agent execution         | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs                                                          |
+| Phase 2C1 MCP Tool Provider            | IMPLEMENTED     | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider                                             |
+| Phase 3A OfficeCLI read-only provider  | IMPLEMENTED     | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API        |
+| Phase 3B OfficeCLI detached mutation   | IMPLEMENTED     | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion    |
+| Phase 4A active DOCX GenOffice adapter | IMPLEMENTED     | Active inspection, DocumentVersion/preconditions, stale-change protection, approved mutation gateway, existing Docs command engine reuse |
+| Phase 4B Rust Core ↔ renderer bridge   | NOT IMPLEMENTED | No active-document transport or renderer bridge                                                                                          |
+| Phase 4C proposal/approval/live commit | NOT IMPLEMENTED | No active-document proposal, review, or approval UI                                                                                      |
+| Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
 
@@ -390,10 +392,12 @@ GenOffice remains the only canonical writer for active documents. Tool
 authorization is not document write authority: an explicitly authorized write
 tool still rejects inspection snapshots, active GenOffice references, and
 other read-only artifacts. OfficeCLI may write only detached, unowned, or
-newly-created controlled artifacts. Active-document mutation is not
-implemented; future changes must use
-`DocumentChangeSet -> DocumentMutationGateway -> GenOffice adapter ->
-GenOffice transaction/save`. Phase 3B uses sequential typed OfficeCLI calls
+newly-created controlled artifacts. Phase 4A implements
+`DocumentChangeSet -> DocumentMutationGateway -> GenOffice Docs adapter ->
+existing Docs command engine -> GenOffice transaction/save`. OfficeCLI writes
+detached artifacts; GenOffice writes active documents. AI active-document
+mutation uses existing GenOffice editor commands, not OfficeCLI and not a new
+mutation engine. Phase 3B uses sequential typed OfficeCLI calls
 inside the 9Profs copy-on-write transaction; it does not rely on upstream batch
 rollback for atomicity. Resident mode remains deferred, and confirmation
 metadata is declared but runtime confirmation enforcement/UI remains deferred.
@@ -453,9 +457,9 @@ No repository package currently establishes:
 - an extension host or skill filesystem loader;
 - a research/review/citation/regulation domain;
 - OfficeCLI resident mode;
-- a GenOffice document adapter that owns AI mutations through editor
-  transactions;
-- the GenOffice active-document mutation adapter or live editor ownership bridge;
+- the Rust Core ↔ renderer active-document bridge;
+- an active-document ToolProvider, proposal/approval workflow, or review UI;
+- Sheets or Slides adapters;
 - account, subscription, credits, remote workspace, or SaaS billing services.
 
 These are future architecture, not current capabilities.
@@ -513,18 +517,18 @@ session owns that file.
 Start with explicit modules under a small package surface; split packages only
 after contracts stabilize. Proposed names are compatible with `packages/*`.
 
-| Proposed boundary                              | Owns                                                                                                              | Must not own                                                      |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `packages/9profs-core/`                        | Runtime configuration, workspace/project service contracts, events, policy, usage hooks, service composition      | Office bytes, editor transactions, provider-specific wire formats |
-| `packages/9profs-core/src/agent-runtime/`      | Agent run lifecycle, context assembly, cancellation, tool execution policy; wraps/adapts `packages/agent-core`    | DOCX XML, DOM mutation, canonical save                            |
-| `packages/9profs-core/src/assistant-registry/` | Assistant descriptors, allowed skills, model/policy selection, versioning                                         | Direct provider secrets or Office persistence                     |
-| `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                             | Product-specific editor internals                                 |
-| `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                     | Unmediated active-document writes                                 |
-| `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                     | Loading arbitrary code into the Docs persistence boundary         |
-| `packages/research-domain/`                    | Review, thesis, citation, regulation, evidence/provenance, methodology workflows                                  | Canonical Office editing or provider SDK details                  |
-| `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                            | Format-specific OOXML/XLSX/PPTX/PDF implementation                |
-| `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                    | Competing writer or presentation DOM mutation                     |
-| `packages/officecli-adapter/`                  | Transport-neutral status, inspection results, and artifact references       | CLI process control or canonical writes to active GenOffice-owned files |
+| Proposed boundary                              | Owns                                                                                                           | Must not own                                                            |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `packages/9profs-core/`                        | Runtime configuration, workspace/project service contracts, events, policy, usage hooks, service composition   | Office bytes, editor transactions, provider-specific wire formats       |
+| `packages/9profs-core/src/agent-runtime/`      | Agent run lifecycle, context assembly, cancellation, tool execution policy; wraps/adapts `packages/agent-core` | DOCX XML, DOM mutation, canonical save                                  |
+| `packages/9profs-core/src/assistant-registry/` | Assistant descriptors, allowed skills, model/policy selection, versioning                                      | Direct provider secrets or Office persistence                           |
+| `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                          | Product-specific editor internals                                       |
+| `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                  | Unmediated active-document writes                                       |
+| `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                  | Loading arbitrary code into the Docs persistence boundary               |
+| `packages/research-domain/`                    | Review, thesis, citation, regulation, evidence/provenance, methodology workflows                               | Canonical Office editing or provider SDK details                        |
+| `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                         | Format-specific OOXML/XLSX/PPTX/PDF implementation                      |
+| `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                 | Competing writer or presentation DOM mutation                           |
+| `packages/officecli-adapter/`                  | Transport-neutral status, inspection results, and artifact references                                          | CLI process control or canonical writes to active GenOffice-owned files |
 
 Existing app AI directories remain product adapters until these boundaries
 exist. `packages/project-store` can back local workspace history; it does not
@@ -557,7 +561,7 @@ behavior stays intact until a compatible replacement exists and is validated.
 | `apps/slides` + `packages/pptx-*`        | PPTX model, render, canvas, save                    | GenOffice-derived Office Core                                         | Keep; expose gateway later             | 0, 4            |
 | `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                   | 0, 4, 5         |
 | `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                      | 0, 4, 5         |
-| `nineprofs-officecli`                      | Pinned read-only OfficeCLI sidecar                 | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer   | 3A, 3B, 4         |
+| `nineprofs-officecli`                    | Pinned read-only OfficeCLI sidecar                  | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer    | 3A, 3B, 4       |
 | No current module                        | No research/review domain                           | `packages/research-domain`                                            | Add after evidence and skill contracts | 5               |
 | No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof  | 6               |
 
@@ -632,13 +636,37 @@ behavior stays intact until a compatible replacement exists and is validated.
 - Active GenOffice mutation, resident mode, raw/raw-set/add-part, arbitrary CLI
   passthrough, and OfficeCLI built-in skills remain deferred.
 
-### Phase 4 — GenOffice document gateway
+### Phase 4A — active DOCX GenOffice adapter (IMPLEMENTED)
 
-- Implement `DocumentChangeSet` validation and `DocumentMutationGateway`.
-- Add a narrow GenOffice adapter that converts approved changes into editor
-  commands/transactions, then uses existing save/reparse paths.
-- Start with Docs; prove dirty state, undo/caret, comments/revisions, OOXML
-  identity, and round-trip preservation before other products.
+`packages/genoffice-adapter/` now binds one active Docs document session to the
+existing `buildDocumentContext` and `executeCommands` primitives. Inspection
+returns the opaque document identity, `genoffice-active` authority, structured
+context/selection, and current `DocumentVersion`. Approved
+`docs.commandEnvelope` changes carry `baseVersion`; stale versions return an
+explicit conflict result. The adapter combines multiple envelopes and calls
+the existing command engine once, preserving whole-envelope validation,
+Track Changes, dirty/save, presentation invalidation, and history behavior.
+
+Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
+`DocumentVersion` — IMPLEMENTED; stale ChangeSet protection — IMPLEMENTED;
+approved active DOCX mutation gateway — IMPLEMENTED; existing GenOffice
+command engine reuse — IMPLEMENTED.
+
+OfficeCLI writes detached artifacts. GenOffice writes active documents. The
+adapter never writes DOCX bytes, calls `saveDocx`, edits presentation DOM, or
+owns a second mutation engine.
+
+### Phase 4B — Rust Core ↔ renderer live-document bridge (NOT IMPLEMENTED)
+
+- Connect `nineprofs-core-rs`/`AgentExecutionService` to the renderer.
+- Add an active-document transport and ToolProvider only after Phase 4A.
+
+### Phase 4C — proposal/approval/live commit (NOT IMPLEMENTED)
+
+- Add proposal, diff, Accept/Reject, and confirmation UI.
+- Consume already-approved change sets through the Phase 4A gateway.
+
+Sheets and Slides adapters remain future work.
 
 ### Phase 5 — research/review domain
 
