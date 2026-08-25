@@ -48,7 +48,8 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 2C0 Tool Runtime    | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                 | Implemented                                   |
 | Phase 2C1 MCP provider    | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider | Implemented                              |
 | Phase 3A OfficeCLI provider | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, HTML-to-PNG raster boundary, artifact containment, shared registry provider, status API | Implemented; real DOCX/XLSX/PPTX production qualification passes |
-| Research/product backend  | No research domain, account/billing backend, or OfficeCLI detached mutation/resident mode                                  | Future                                        |
+| Phase 3B OfficeCLI detached mutation | `office.create`, `office.mutate_detached`, writable eligibility, copy-on-write revision transaction, structural validation, HTML-to-PNG render gate, atomic promotion | Implemented; real DOCX/XLSX/PPTX create/mutation qualification passes |
+| Research/product backend  | No research domain, account/billing backend, or OfficeCLI resident mode                                  | Future                                        |
 
 ## GenOffice inheritance and current divergence
 
@@ -133,8 +134,10 @@ No package is removed, phased out, or replaced by this audit.
 5. Current search/provider/native integrations are adapters, not an Office
    ownership layer.
 6. No research domain owns evidence or review state yet.
-7. OfficeCLI must be introduced as an inspection/rendering/detached-generation
-   sidecar, never as a competing writer for an active GenOffice file.
+7. OfficeCLI is an inspection/rendering/detached-generation and detached-
+   mutation sidecar, never a competing writer for an active GenOffice file.
+   Tool authorization is distinct from document write authority: only
+   detached, unowned, or newly-created controlled artifacts are writable.
 
 ## Required future boundaries
 
@@ -156,7 +159,8 @@ The target architecture proposes these compatible future boundaries:
 - `packages/genoffice-adapter/` for approved editor transactions and existing
   save/reparse integration;
 - `packages/officecli-adapter/` for transport-neutral OfficeCLI status,
-  inspection, and artifact-reference contracts.
+  inspection, typed mutation, revision, validation, render, and
+  artifact-reference contracts.
 
 Phase 0 contract portions are implemented in `packages/9profs-core/` and
 `packages/document-gateway/`. Phase 1A Rust Core foundation and Phase 1B
@@ -216,7 +220,7 @@ AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
-OfficeCLI detached mutation/resident mode, GenOffice mutation adapter, research domain,
+OfficeCLI resident mode, GenOffice mutation adapter, research domain,
 conversation/session persistence, and the GenOffice AI bridge.
 
 Phase 1B upstream adaptation record: assistant resource/catalog patterns came
@@ -296,5 +300,25 @@ boundary so OfficeCLI/Electron descendants do not survive.
 does not permanently trust a path. Resolution re-canonicalizes the current
 target, rechecks existence, supported extension, approved-root containment,
 and link escape, with deterministic move and symlink replacement tests.
-OfficeCLI mutation commands, resident mode, MCP, skill installation, update,
-and Tool authorization changes are intentionally outside this phase.
+Resident mode, MCP mode, skill installation, update, and active GenOffice
+mutation remain intentionally outside this phase. Phase 3B mutation is
+available only through the typed ToolProvider; raw/raw-set/add-part and
+generic CLI passthrough are not exposed.
+
+## Pinned OfficeCLI v1.0.144 mutation audit
+
+The exact upstream source at commit
+`1ced45e900782c5083ed550ddf328ee974e425e7` was audited before adding the
+adapter. `create` dispatches to the pinned OpenXML blank-document creators for
+`.docx`, `.xlsx`, and `.pptx`. The semantic handler surface includes `set`,
+`add`, `remove`, `move`, `copy`, `swap`, `validate`, and `save`; the 9Profs
+adapter owns all CLI flag and selector translation internally.
+
+With the default non-resident invocation, mutations are persisted eagerly by
+OfficeCLI and `save` is an explicit flush command. Upstream `batch` reports
+atomic rollback by default, while `--best-effort` intentionally permits
+partial success; 9Profs therefore does not depend on upstream batch rollback.
+It applies the typed operations to a same-root working revision and makes the
+filesystem promotion/cleanup boundary authoritative. `raw`, `raw-set`,
+`add-part`, arbitrary imports, generic CLI arguments, resident mode, MCP mode,
+auto-update, and skill installation are outside the Phase 3B provider.

@@ -1,10 +1,223 @@
-use std::{ffi::OsString, path::Path};
+use std::{collections::BTreeMap, ffi::OsString, path::Path};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DocumentReference {
     pub artifact_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OfficeDocumentType {
+    Docx,
+    Xlsx,
+    Pptx,
+}
+
+impl OfficeDocumentType {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Docx => "docx",
+            Self::Xlsx => "xlsx",
+            Self::Pptx => "pptx",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OfficeMutation {
+    Set {
+        selector: String,
+        properties: BTreeMap<String, String>,
+    },
+    Add {
+        parent: String,
+        element_type: String,
+        properties: BTreeMap<String, String>,
+    },
+    Remove {
+        selector: String,
+    },
+    Move {
+        selector: String,
+        target: String,
+        index: Option<u32>,
+    },
+    Copy {
+        selector: String,
+        target: String,
+        index: Option<u32>,
+    },
+    Swap {
+        first: String,
+        second: String,
+    },
+}
+
+impl OfficeMutation {
+    pub fn validate(&self) -> Result<(), MutationValidationError> {
+        match self {
+            Self::Set {
+                selector,
+                properties,
+            } => {
+                validate_selector(selector)?;
+                validate_properties(properties)
+            }
+            Self::Add {
+                parent,
+                element_type,
+                properties,
+            } => {
+                validate_selector(parent)?;
+                validate_token(element_type, "element type")?;
+                validate_properties(properties)
+            }
+            Self::Remove { selector } => validate_selector(selector),
+            Self::Move {
+                selector, target, ..
+            }
+            | Self::Copy {
+                selector, target, ..
+            } => {
+                validate_selector(selector)?;
+                validate_selector(target)
+            }
+            Self::Swap { first, second } => {
+                validate_selector(first)?;
+                validate_selector(second)
+            }
+        }
+    }
+
+    pub(crate) fn args(&self, path: &Path) -> Vec<OsString> {
+        let path = path.to_string_lossy();
+        let path = path.as_ref();
+        let mut args = vec![OsString::from("--json")];
+        match self {
+            Self::Set {
+                selector,
+                properties,
+            } => {
+                args.extend(["set", &path, selector].map(OsString::from));
+                add_properties(&mut args, properties);
+            }
+            Self::Add {
+                parent,
+                element_type,
+                properties,
+            } => {
+                args.extend(["add", &path, parent].map(OsString::from));
+                args.extend(["--type", element_type].map(OsString::from));
+                add_properties(&mut args, properties);
+            }
+            Self::Remove { selector } => {
+                args.extend(["remove", &path, selector].map(OsString::from));
+            }
+            Self::Move {
+                selector,
+                target,
+                index,
+            } => {
+                args.extend(["move", &path, selector].map(OsString::from));
+                args.extend(["--to", target].map(OsString::from));
+                if let Some(index) = index {
+                    args.extend(["--index", &index.to_string()].map(OsString::from));
+                }
+            }
+            Self::Copy {
+                selector,
+                target,
+                index,
+            } => {
+                args.extend(["copy", &path, selector].map(OsString::from));
+                args.extend(["--to", target].map(OsString::from));
+                if let Some(index) = index {
+                    args.extend(["--index", &index.to_string()].map(OsString::from));
+                }
+            }
+            Self::Swap { first, second } => {
+                args.extend(["swap", &path, first, second].map(OsString::from));
+            }
+        }
+        args
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Set { .. } => "set",
+            Self::Add { .. } => "add",
+            Self::Remove { .. } => "remove",
+            Self::Move { .. } => "move",
+            Self::Copy { .. } => "copy",
+            Self::Swap { .. } => "swap",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum MutationValidationError {
+    #[error("document selector must be an absolute semantic path")]
+    InvalidSelector,
+    #[error("document selector exceeds 4096 bytes")]
+    SelectorTooLong,
+    #[error("{0} is invalid")]
+    InvalidToken(String),
+    #[error("mutation property count exceeds 64")]
+    TooManyProperties,
+    #[error("mutation property is too large")]
+    PropertyTooLarge,
+}
+
+fn validate_selector(selector: &str) -> Result<(), MutationValidationError> {
+    if selector.len() > 4096 {
+        return Err(MutationValidationError::SelectorTooLong);
+    }
+    if selector.is_empty()
+        || !selector.starts_with('/')
+        || selector.contains('\0')
+        || selector.contains("..")
+        || selector.contains('\\')
+    {
+        return Err(MutationValidationError::InvalidSelector);
+    }
+    Ok(())
+}
+
+fn validate_token(value: &str, label: &str) -> Result<(), MutationValidationError> {
+    if value.is_empty()
+        || value.len() > 128
+        || value.starts_with('-')
+        || value.contains('\0')
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err(MutationValidationError::InvalidToken(label.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_properties(
+    properties: &BTreeMap<String, String>,
+) -> Result<(), MutationValidationError> {
+    if properties.len() > 64 {
+        return Err(MutationValidationError::TooManyProperties);
+    }
+    for (key, value) in properties {
+        validate_token(key, "property name")?;
+        if value.len() > 16 * 1024 || value.contains('\0') {
+            return Err(MutationValidationError::PropertyTooLarge);
+        }
+    }
+    Ok(())
+}
+
+fn add_properties(args: &mut Vec<OsString>, properties: &BTreeMap<String, String>) {
+    for (key, value) in properties {
+        args.extend(["--prop", &format!("{key}={value}")].map(OsString::from));
+    }
 }
 
 #[derive(Clone, Debug)]

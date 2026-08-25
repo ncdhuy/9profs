@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::{sync::Notify, time::sleep};
@@ -18,7 +18,7 @@ use tokio::{sync::Notify, time::sleep};
 use crate::{
     artifact::{ArtifactError, DocumentResolver},
     config::{OfficeCliAvailability, OfficeCliConfig, OfficeCliStatus, SUPPORTED_VERSION},
-    operations::OfficeCliOperation,
+    operations::{OfficeCliOperation, OfficeMutation},
     process::{ProcessBackend, SubprocessBackend},
     rasterizer::{ElectronHtmlRasterizer, HtmlArtifact, HtmlRasterizer, RasterRequest},
 };
@@ -66,10 +66,10 @@ impl Default for OfficeCliCancellation {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArtifactReference {
     pub id: String,
-    pub kind: &'static str,
+    pub kind: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -158,6 +158,104 @@ impl OfficeCliRunner {
         self.is_available() && self.rasterizer.is_some()
     }
 
+    pub(crate) async fn execute_mutation(
+        &self,
+        path: &Path,
+        mutation: &OfficeMutation,
+        cancellation: Option<OfficeCliCancellation>,
+    ) -> Result<Value, OfficeCliError> {
+        mutation
+            .validate()
+            .map_err(|error| OfficeCliError::InvalidMutation(error.to_string()))?;
+        self.execute_json_process(&mutation.args(path), cancellation)
+            .await
+    }
+
+    pub(crate) async fn create_document(
+        &self,
+        path: &Path,
+        cancellation: Option<OfficeCliCancellation>,
+    ) -> Result<Value, OfficeCliError> {
+        let args = vec![
+            OsString::from("--json"),
+            OsString::from("create"),
+            path.as_os_str().to_owned(),
+        ];
+        self.execute_json_process(&args, cancellation).await
+    }
+
+    pub(crate) async fn save_path(
+        &self,
+        path: &Path,
+        cancellation: Option<OfficeCliCancellation>,
+    ) -> Result<Value, OfficeCliError> {
+        let args = vec![
+            OsString::from("--json"),
+            OsString::from("save"),
+            path.as_os_str().to_owned(),
+        ];
+        self.execute_json_process(&args, cancellation).await
+    }
+
+    pub(crate) async fn validate_path(
+        &self,
+        path: &Path,
+        cancellation: Option<OfficeCliCancellation>,
+    ) -> Result<Value, OfficeCliError> {
+        let args = vec![
+            OsString::from("--json"),
+            OsString::from("validate"),
+            path.as_os_str().to_owned(),
+        ];
+        self.execute_json_process(&args, cancellation).await
+    }
+
+    pub(crate) async fn render_path(
+        &self,
+        path: &Path,
+        request: crate::operations::ScreenshotRequest,
+        cancellation: Option<OfficeCliCancellation>,
+    ) -> Result<OfficeCliResponse, OfficeCliError> {
+        let operation = OfficeCliOperation::Screenshot(request);
+        let document = crate::artifact::ResolvedDocument {
+            id: "working-revision".to_owned(),
+            path: path.to_path_buf(),
+            kind: crate::artifact::ArtifactKind::Detached,
+        };
+        self.execute_render(
+            &operation,
+            &document,
+            match &operation {
+                OfficeCliOperation::Screenshot(request) => request.clone(),
+                _ => unreachable!(),
+            },
+            cancellation,
+        )
+        .await
+    }
+
+    pub(crate) fn cleanup_render_artifacts(&self, response: &OfficeCliResponse) {
+        for artifact in &response.artifacts {
+            let path = self
+                .config
+                .artifact_root
+                .join(format!("{}.png", artifact.id));
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    fn cleanup_render_prefix(&self, prefix: &str, html_path: &Path) {
+        let _ = std::fs::remove_file(html_path);
+        let Ok(entries) = std::fs::read_dir(&self.config.artifact_root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(prefix) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
     pub async fn execute_readonly(
         &self,
         operation: OfficeCliOperation,
@@ -197,6 +295,31 @@ impl OfficeCliRunner {
         })
     }
 
+    async fn execute_json_process(
+        &self,
+        args: &[OsString],
+        cancellation: Option<OfficeCliCancellation>,
+    ) -> Result<Value, OfficeCliError> {
+        if !self.is_available() {
+            return Err(match self.status.availability {
+                OfficeCliAvailability::VersionMismatch => OfficeCliError::VersionMismatch,
+                OfficeCliAvailability::Unavailable | OfficeCliAvailability::Available => {
+                    OfficeCliError::Unavailable
+                }
+            });
+        }
+        let output = self
+            .run_process(args, self.config.timeout, cancellation)
+            .await?;
+        if output.exit_code != Some(0) {
+            return Err(OfficeCliError::ProcessFailed);
+        }
+        if output.stdout.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&output.stdout).map_err(|_| OfficeCliError::InvalidJson)
+    }
+
     async fn execute_render(
         &self,
         operation: &OfficeCliOperation,
@@ -211,11 +334,13 @@ impl OfficeCliRunner {
         let prefix = format!("office-render-{}-{number}", std::process::id());
         let html_path =
             controlled_output_path(&self.config.artifact_root, &format!("{prefix}.html"))?;
+        let cleanup_prefix = prefix.clone();
+        let cleanup_html = html_path.clone();
         let future = self.render_pipeline(operation, document, request, prefix, html_path);
         tokio::pin!(future);
         let timeout = sleep(self.config.timeout);
         tokio::pin!(timeout);
-        match cancellation {
+        let result = match cancellation {
             Some(cancellation) => {
                 tokio::select! {
                     result = &mut future => result,
@@ -229,7 +354,11 @@ impl OfficeCliRunner {
                     _ = &mut timeout => Err(OfficeCliError::Timeout),
                 }
             }
+        };
+        if result.is_err() {
+            self.cleanup_render_prefix(&cleanup_prefix, &cleanup_html);
         }
+        result
     }
 
     async fn render_pipeline(
@@ -244,7 +373,7 @@ impl OfficeCliRunner {
         let output = self
             .run_backend(&self.backend, &args)
             .await
-            .map_err(OfficeCliError::Process)?;
+            .map_err(|error| OfficeCliError::Process(error.to_string()))?;
         if output.exit_code != Some(0) {
             return Err(OfficeCliError::ProcessFailed);
         }
@@ -278,7 +407,7 @@ impl OfficeCliRunner {
             .into_iter()
             .map(|artifact| ArtifactReference {
                 id: artifact.id,
-                kind: "office-render",
+                kind: "office-render".to_owned(),
             })
             .collect();
         let _ = std::fs::remove_file(&html_path);
@@ -310,14 +439,18 @@ impl OfficeCliRunner {
         match cancellation {
             Some(cancellation) => {
                 tokio::select! {
-                    result = &mut future => result.map_err(OfficeCliError::Process),
+                    result = &mut future => {
+                        result.map_err(|error| OfficeCliError::Process(error.to_string()))
+                    },
                     _ = &mut timeout => Err(OfficeCliError::Timeout),
                     _ = cancellation.cancelled() => Err(OfficeCliError::Cancelled),
                 }
             }
             None => {
                 tokio::select! {
-                    result = &mut future => result.map_err(OfficeCliError::Process),
+                    result = &mut future => {
+                        result.map_err(|error| OfficeCliError::Process(error.to_string()))
+                    },
                     _ = &mut timeout => Err(OfficeCliError::Timeout),
                 }
             }
@@ -343,8 +476,8 @@ pub enum OfficeCliError {
     VersionMismatch,
     #[error("OfficeCLI document artifact is not approved")]
     Artifact(#[source] ArtifactError),
-    #[error("OfficeCLI process failed")]
-    Process(#[source] crate::process::ProcessError),
+    #[error("OfficeCLI process failed: {0}")]
+    Process(String),
     #[error("OfficeCLI process timed out")]
     Timeout,
     #[error("OfficeCLI process was cancelled")]
@@ -353,6 +486,8 @@ pub enum OfficeCliError {
     ProcessFailed,
     #[error("OfficeCLI returned invalid structured output")]
     InvalidJson,
+    #[error("OfficeCLI mutation is invalid: {0}")]
+    InvalidMutation(String),
     #[error("OfficeCLI did not produce the requested artifact")]
     ArtifactOutputUnavailable,
     #[error("OfficeCLI HTML output could not be written")]
@@ -444,7 +579,7 @@ pub(crate) fn test_runner(
 }
 
 #[cfg(test)]
-fn test_runner_with_rasterizer(
+pub(crate) fn test_runner_with_rasterizer(
     config: OfficeCliConfig,
     backend: Arc<dyn ProcessBackend>,
     status: OfficeCliStatus,

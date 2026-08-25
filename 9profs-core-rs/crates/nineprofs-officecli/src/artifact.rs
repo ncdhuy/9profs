@@ -12,6 +12,9 @@ use crate::operations::DocumentReference;
 pub enum ArtifactKind {
     Detached,
     InspectionSnapshot,
+    GenOfficeActive,
+    ReadOnly,
+    NewlyCreated,
 }
 
 #[derive(Clone, Debug)]
@@ -23,6 +26,34 @@ pub struct ResolvedDocument {
 
 pub trait DocumentResolver: Send + Sync {
     fn resolve(&self, reference: &DocumentReference) -> Result<ResolvedDocument, ArtifactError>;
+
+    fn resolve_writable(
+        &self,
+        reference: &DocumentReference,
+    ) -> Result<WritableDetachedArtifact, ArtifactError> {
+        let document = self.resolve(reference)?;
+        match document.kind {
+            ArtifactKind::Detached | ArtifactKind::NewlyCreated => {
+                Ok(WritableDetachedArtifact { document })
+            }
+            ArtifactKind::InspectionSnapshot
+            | ArtifactKind::GenOfficeActive
+            | ArtifactKind::ReadOnly => Err(ArtifactError::NotWritable),
+        }
+    }
+
+    fn writable_root(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn register_detached_revision(&self, _id: String, _path: PathBuf) -> Result<(), ArtifactError> {
+        Err(ArtifactError::RegistrationUnavailable)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct WritableDetachedArtifact {
+    pub document: ResolvedDocument,
 }
 
 #[derive(Clone, Default)]
@@ -53,6 +84,30 @@ impl ArtifactResolver {
         path: impl Into<PathBuf>,
     ) -> Result<(), ArtifactError> {
         self.register(id, path.into(), ArtifactKind::InspectionSnapshot)
+    }
+
+    pub fn register_genoffice_active(
+        &self,
+        id: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Result<(), ArtifactError> {
+        self.register(id, path.into(), ArtifactKind::GenOfficeActive)
+    }
+
+    pub fn register_read_only(
+        &self,
+        id: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Result<(), ArtifactError> {
+        self.register(id, path.into(), ArtifactKind::ReadOnly)
+    }
+
+    pub fn register_newly_created(
+        &self,
+        id: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Result<(), ArtifactError> {
+        self.register(id, path.into(), ArtifactKind::NewlyCreated)
     }
 
     fn register(
@@ -97,6 +152,31 @@ impl DocumentResolver for ArtifactResolver {
         ensure_contained(&artifact.path, &self.roots)?;
         Ok(artifact)
     }
+
+    fn resolve_writable(
+        &self,
+        reference: &DocumentReference,
+    ) -> Result<WritableDetachedArtifact, ArtifactError> {
+        let document = self.resolve(reference)?;
+        match document.kind {
+            ArtifactKind::Detached | ArtifactKind::NewlyCreated => {
+                Ok(WritableDetachedArtifact { document })
+            }
+            ArtifactKind::InspectionSnapshot
+            | ArtifactKind::GenOfficeActive
+            | ArtifactKind::ReadOnly => Err(ArtifactError::NotWritable),
+        }
+    }
+
+    fn writable_root(&self) -> Option<PathBuf> {
+        self.roots
+            .iter()
+            .find_map(|root| std::fs::canonicalize(root).ok())
+    }
+
+    fn register_detached_revision(&self, id: String, path: PathBuf) -> Result<(), ArtifactError> {
+        self.register(id, path, ArtifactKind::Detached)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -109,6 +189,10 @@ pub enum ArtifactError {
     Missing(#[source] std::io::Error),
     #[error("document artifact path is outside approved roots")]
     OutsideApprovedRoots,
+    #[error("document artifact is not writable")]
+    NotWritable,
+    #[error("document resolver cannot register a new artifact revision")]
+    RegistrationUnavailable,
     #[error("document file type is not supported")]
     UnsupportedExtension,
 }
@@ -182,6 +266,50 @@ mod tests {
             resolver.register_detached("unsupported", unsupported),
             Err(ArtifactError::UnsupportedExtension)
         ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writable_resolution_rejects_snapshot_active_and_read_only_artifacts() {
+        let root = temp_dir();
+        for name in ["snapshot", "active", "read-only"] {
+            fs::write(root.join(format!("{name}.docx")), b"fixture").unwrap();
+        }
+        let resolver = ArtifactResolver::new([root.clone()]);
+        resolver
+            .register_inspection_snapshot("snapshot", root.join("snapshot.docx"))
+            .unwrap();
+        resolver
+            .register_genoffice_active("active", root.join("active.docx"))
+            .unwrap();
+        resolver
+            .register_read_only("read-only", root.join("read-only.docx"))
+            .unwrap();
+        for id in ["snapshot", "active", "read-only"] {
+            assert!(matches!(
+                resolver.resolve_writable(&DocumentReference {
+                    artifact_id: id.to_owned(),
+                }),
+                Err(ArtifactError::NotWritable)
+            ));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn newly_created_artifact_is_writable() {
+        let root = temp_dir();
+        let path = root.join("created.docx");
+        fs::write(&path, b"fixture").unwrap();
+        let resolver = ArtifactResolver::new([root.clone()]);
+        resolver.register_newly_created("created", &path).unwrap();
+        assert!(
+            resolver
+                .resolve_writable(&DocumentReference {
+                    artifact_id: "created".to_owned(),
+                })
+                .is_ok()
+        );
         let _ = fs::remove_dir_all(root);
     }
 

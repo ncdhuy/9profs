@@ -87,6 +87,13 @@ impl ToolPolicy {
             requires_confirmation: false,
         }
     }
+
+    pub fn write_requires_confirmation() -> Self {
+        Self {
+            effects: BTreeSet::from([ToolEffect::Write]),
+            requires_confirmation: true,
+        }
+    }
 }
 
 /// Metadata advertised by the 9Profs runtime.

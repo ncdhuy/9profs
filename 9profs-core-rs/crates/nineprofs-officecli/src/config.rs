@@ -215,6 +215,8 @@ impl OfficeCliStatus {
                 "query".to_owned(),
                 "validate".to_owned(),
                 "screenshot".to_owned(),
+                "create".to_owned(),
+                "mutate_detached".to_owned(),
             ],
         }
     }

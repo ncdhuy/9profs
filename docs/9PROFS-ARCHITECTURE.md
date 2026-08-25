@@ -5,8 +5,9 @@ Status: canonical architecture and migration baseline for the current
 and a read-only comparison with `baseline/genoffice`.
 
 This document describes what exists, what remains GenOffice-derived, and the
-target boundaries for 9Profs. The pinned OfficeCLI read-only sidecar is
-implemented; research workflows and SaaS services remain future work.
+target boundaries for 9Profs. The pinned OfficeCLI sidecar is implemented for
+read-only inspection plus transactional detached creation and mutation;
+research workflows and SaaS services remain future work.
 
 ## Non-negotiable rules
 
@@ -129,7 +130,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 2B1 real agent execution  | IMPLEMENTED     | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs           |
 | Phase 2C1 MCP Tool Provider      | IMPLEMENTED     | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider |
 | Phase 3A OfficeCLI read-only provider | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API |
-| Phase 3B OfficeCLI detached mutation | NOT IMPLEMENTED | No create/set/add/remove/save or detached writer surface |
+| Phase 3B OfficeCLI detached mutation | IMPLEMENTED | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion |
 | GenOffice mutation adapter      | NOT IMPLEMENTED | `packages/genoffice-adapter/` is a contract-only skeleton; no editor integration           |
 | Research domain                 | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                      |
 
@@ -339,17 +340,19 @@ authorized registrations copied by `AionRsToolAdapter`; `start_run` remains
 tool-less by default. MCP tools use conservative executable policy metadata,
 and remote HTTP/SSE tools additionally carry `ExternalNetwork`.
 
-Phase 3A OfficeCLI is a read/analysis sidecar, never the active document
-authority:
+Phase 3A/3B OfficeCLI is an inspection and detached-artifact sidecar, never
+the active document authority:
 
 ```text
 Agent
   -> explicit ToolSet authorization
   -> nineprofs-tools ToolRegistry
   -> OfficeCliToolProvider
-  -> OfficeCliRunner
+  -> OfficeCliToolProvider
+  -> writable detached-artifact eligibility
+  -> copy-on-write mutation transaction
   -> pinned OfficeCLI v1.0.144
-  -> detached artifact or inspection snapshot
+  -> validate -> HTML -> PNG render gate -> atomic artifact revision
 ```
 
 The pinned upstream source is
@@ -357,8 +360,13 @@ The pinned upstream source is
 9Profs artifact references, verifies containment and `.docx`/`.xlsx`/`.pptx`
 type, isolates its profile, disables auto-update, and exposes read-only
 `view`, `get`, `query`, `validate`, and render operations. `validate`
-remains distinct from `view issues`. The shared registry contains MCP and
-OfficeCLI registrations; `ToolSet::default()` still authorizes zero tools.
+remains distinct from `view issues`. Phase 3B adds only typed `office.create`
+and `office.mutate_detached` operations (`set`, `add`, `remove`, `move`,
+`copy`, and `swap`) that are executed against a controlled working revision.
+Raw XML, raw package-part mutation, arbitrary CLI passthrough, and OfficeCLI
+MCP/skill installation remain unreachable from the provider. The shared
+registry contains MCP and OfficeCLI registrations; `ToolSet::default()` still
+authorizes zero tools.
 
 Production visual rendering is deliberately split:
 
@@ -378,11 +386,17 @@ upstream diagnostic because v1.0.144 timed out on this Windows host.
 The real qualification gate passes DOCX, XLSX, and PPTX HTML generation,
 production PNG rasterization, containment, and source byte preservation.
 
-GenOffice remains canonical writer for active documents. Active-document
-mutation is not implemented; future changes must use
+GenOffice remains the only canonical writer for active documents. Tool
+authorization is not document write authority: an explicitly authorized write
+tool still rejects inspection snapshots, active GenOffice references, and
+other read-only artifacts. OfficeCLI may write only detached, unowned, or
+newly-created controlled artifacts. Active-document mutation is not
+implemented; future changes must use
 `DocumentChangeSet -> DocumentMutationGateway -> GenOffice adapter ->
-GenOffice transaction/save`. Phase 3B detached mutation, save, and resident
-mode remain deferred.
+GenOffice transaction/save`. Phase 3B uses sequential typed OfficeCLI calls
+inside the 9Profs copy-on-write transaction; it does not rely on upstream batch
+rollback for atomicity. Resident mode remains deferred, and confirmation
+metadata is declared but runtime confirmation enforcement/UI remains deferred.
 
 Future: research tools, extension tools, OAuth, full
 permission/confirmation UX, MCP resources, external-agent sync, and external
@@ -438,10 +452,10 @@ No repository package currently establishes:
 - real agent execution, backend executors, or provider runtime probing;
 - an extension host or skill filesystem loader;
 - a research/review/citation/regulation domain;
-- detached OfficeCLI mutation/save or resident mode;
+- OfficeCLI resident mode;
 - a GenOffice document adapter that owns AI mutations through editor
   transactions;
-- OfficeCLI process integration or active-document ownership enforcement;
+- the GenOffice active-document mutation adapter or live editor ownership bridge;
 - account, subscription, credits, remote workspace, or SaaS billing services.
 
 These are future architecture, not current capabilities.
@@ -595,13 +609,28 @@ behavior stays intact until a compatible replacement exists and is validated.
   only.
 - Support typed text/annotated/outline/stats/issues/get/query/validate and
   controlled render operations. All tools carry `Read` policy only.
-- Keep default `ToolSet` empty. No active-document or detached mutation.
+- Keep default `ToolSet` empty. No active-document mutation; detached mutation
+  is implemented in Phase 3B below.
 
-### Phase 3B — OfficeCLI detached mutation (NOT IMPLEMENTED)
+### Phase 3B — OfficeCLI create and detached mutation (IMPLEMENTED)
 
-- Future only: create, detached mutation, batch operations, save, and possible
-  resident-mode optimization. Active GenOffice documents remain outside this
-  path.
+- Create DOCX, XLSX, and PPTX only inside the controlled artifact root.
+- Resolve detached, unowned, and newly-created artifacts through the explicit
+  writable eligibility boundary; inspection snapshots, active GenOffice
+  references, and read-only references fail before any OfficeCLI process runs.
+- Copy an existing base to a same-root working revision, apply the typed
+  semantic mutation model, save, structurally validate, render through the
+  qualified OfficeCLI HTML -> Electron PNG path, and atomically promote a new
+  revision. The base remains byte-identical on success and failure.
+- Expose `office.create` and `office.mutate_detached` with `Write` policy and
+  `requires_confirmation = true` metadata. The current metadata is not a
+  confirmation workflow.
+- Bound operation count, serialized mutation arguments, process/render output,
+  cancellation, timeout, and working-copy cleanup. Independent mutations of
+  the same base revision may proceed as independent copy-on-write revisions;
+  no global mutation lock is used.
+- Active GenOffice mutation, resident mode, raw/raw-set/add-part, arbitrary CLI
+  passthrough, and OfficeCLI built-in skills remain deferred.
 
 ### Phase 4 — GenOffice document gateway
 
