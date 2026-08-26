@@ -1,6 +1,6 @@
 //! SQLite infrastructure and repository contracts for 9Profs Core.
 //!
-//! Migrations 0002–0005 own assistants, agent metadata, MCP configuration, and
+//! Migrations 0002–0006 own assistants, agent metadata, MCP configuration, and
 //! persistent research evidence/provenance state.
 
 use std::path::Path;

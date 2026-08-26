@@ -6,12 +6,16 @@
   "type": "module",
   "description": "9Profs-owned generic application and agent contracts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./research-pdf": "./src/research-pdf.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@genoffice/file-parse": "*"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

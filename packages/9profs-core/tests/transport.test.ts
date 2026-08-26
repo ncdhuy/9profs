@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { extractResearchPdfPages } from '../src/research-pdf'
 import { createCoreTransport } from '../src/transport'
 
 describe('Core transport boundary', () => {
@@ -112,7 +113,12 @@ describe('Core transport boundary', () => {
   })
 
   it('maps Docs conversation APIs with trusted writes and safe metadata', async () => {
-    const requests: Array<{ input: string; method?: string; headers?: Record<string, string>; body?: string }> = []
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }> = []
     const conversation = {
       conversationId: 'docs-conversation-1',
       assistantId: 'document-foundation',
@@ -122,13 +128,17 @@ describe('Core transport boundary', () => {
       createdAtMs: 1,
       updatedAtMs: 2,
     }
-    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
-      requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
-      const data = input.endsWith('/runs')
-        ? { run_id: 'run-1', task: { task_id: 'task-1' } }
-        : conversation
-      return { ok: true, json: async () => ({ success: true, data }) }
-    }, { sessionSecret: 'test-only-secret' })
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+        const data = input.endsWith('/runs')
+          ? { run_id: 'run-1', task: { task_id: 'task-1' } }
+          : conversation
+        return { ok: true, json: async () => ({ success: true, data }) }
+      },
+      { sessionSecret: 'test-only-secret' },
+    )
 
     await expect(
       transport.createDocumentAgentConversation({
@@ -139,7 +149,9 @@ describe('Core transport boundary', () => {
     await expect(
       transport.createDocumentAgentConversationRun('docs-conversation-1', { input: 'continue' }),
     ).resolves.toMatchObject({ run_id: 'run-1' })
-    await expect(transport.documentAgentConversation('docs-conversation-1')).resolves.toEqual(conversation)
+    await expect(transport.documentAgentConversation('docs-conversation-1')).resolves.toEqual(
+      conversation,
+    )
 
     expect(requests).toEqual([
       {
@@ -491,13 +503,17 @@ describe('Core transport boundary', () => {
       method?: string
       headers?: Record<string, string>
     }> = []
-    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
-      requests.push({ input, method: init?.method, headers: init?.headers })
-      return {
-        ok: true,
-        json: async () => ({ success: true, data: { caseId: 'case-1' } }),
-      }
-    }, { sessionSecret: 'research-secret' })
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers })
+        return {
+          ok: true,
+          json: async () => ({ success: true, data: { caseId: 'case-1' } }),
+        }
+      },
+      { sessionSecret: 'research-secret' },
+    )
 
     await transport.researchCases()
     await transport.researchCase('case/1')
@@ -551,5 +567,81 @@ describe('Core transport boundary', () => {
         'x-nineprofs-session-secret': 'research-secret',
       })
     }
+  })
+
+  it('maps streamed reference PDF ingestion and exact evidence APIs', async () => {
+    const requests: Array<{
+      input: string
+      init?: {
+        method?: string
+        headers?: Record<string, string>
+        body?: string
+        rawBody?: Uint8Array
+      }
+    }> = []
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, init })
+        return {
+          ok: true,
+          json: async () => ({ success: true, data: {} }),
+        }
+      },
+      { sessionSecret: 'research-secret' },
+    )
+    const bytes = new Uint8Array([37, 80, 68, 70, 45, 49])
+
+    await transport.ingestReferencePdf('case/1', bytes, {
+      filename: 'reference.pdf',
+      label: 'Reference',
+    })
+    await transport.recordResearchPdfExtraction('snapshot/1', {
+      extractor: 'pdfjs',
+      extractorVersion: '4.0.0',
+      pageCount: 1,
+      status: 'ready',
+      pages: [{ page: 1, text: 'Evidence' }],
+    })
+    await transport.researchPdfExtraction('snapshot/1')
+    await transport.researchPdfPages('extraction/1', 25)
+    await transport.researchPdfPage('extraction/1', 1)
+    await transport.captureResearchPdfEvidence({
+      researchCaseId: 'case-1',
+      sourceSnapshotId: 'snapshot-1',
+      extractionId: 'extraction-1',
+      page: 1,
+      start: 0,
+      end: 8,
+    })
+
+    expect(requests[0]).toEqual({
+      input: 'http://127.0.0.1:39761/api/research/cases/case%2F1/reference-pdfs',
+      init: {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/pdf',
+          'x-nineprofs-original-filename': 'reference.pdf',
+          'x-nineprofs-source-label': 'Reference',
+          'x-nineprofs-session-secret': 'research-secret',
+        },
+        rawBody: bytes,
+      },
+    })
+    expect(requests[1].init?.body).toBe(
+      JSON.stringify({
+        extractor: 'pdfjs',
+        extractorVersion: '4.0.0',
+        pageCount: 1,
+        status: 'ready',
+        pages: [{ page: 1, text: 'Evidence' }],
+      }),
+    )
+    expect(requests[5].init?.body).not.toContain('Evidence')
+    expect(requests[5].init?.body).toContain('"start":0')
+    await expect(extractResearchPdfPages(new Uint8Array([1, 2, 3]))).resolves.toMatchObject({
+      status: 'failed',
+      pages: [],
+    })
   })
 })

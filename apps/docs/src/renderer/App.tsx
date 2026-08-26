@@ -837,10 +837,14 @@ export function App() {
             createCoreTransport(
               config.httpBaseUrl,
               async (input, init) => {
+                const body =
+                  init?.rawBody === undefined
+                    ? init?.body
+                    : (Uint8Array.from(init.rawBody).buffer as ArrayBuffer)
                 const response = await fetch(input, {
                   method: init?.method,
                   headers: init?.headers,
-                  body: init?.body,
+                  body,
                 })
                 return { ok: response.ok, json: () => response.json() }
               },

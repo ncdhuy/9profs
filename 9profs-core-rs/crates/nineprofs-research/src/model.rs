@@ -14,6 +14,10 @@ pub const MAX_RATIONALE_BYTES: usize = 16 * 1024;
 pub const MAX_METADATA_BYTES: usize = 8 * 1024;
 pub const MAX_LOCATOR_BYTES: usize = 4 * 1024;
 pub const MAX_PROVENANCE_TEXT_BYTES: usize = 1_024;
+pub const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_PDF_PAGES: u32 = 10_000;
+pub const MAX_PDF_PAGE_TEXT_BYTES: usize = 1024 * 1024;
+pub const MAX_PDF_EXTRACTION_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum ResearchError {
@@ -25,6 +29,8 @@ pub enum ResearchError {
     Database(#[from] sqlx::Error),
     #[error("research serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("research artifact storage failed: {0}")]
+    Artifact(String),
 }
 
 macro_rules! id_type {
@@ -59,6 +65,7 @@ macro_rules! id_type {
 id_type!(ResearchCaseId, "case ID");
 id_type!(ResearchSourceId, "source ID");
 id_type!(ResearchSourceSnapshotId, "source snapshot ID");
+id_type!(ResearchPdfExtractionId, "PDF extraction ID");
 id_type!(ResearchEvidenceId, "evidence ID");
 id_type!(ResearchClaimId, "claim ID");
 id_type!(ClaimEvidenceLinkId, "claim-evidence link ID");
@@ -151,6 +158,70 @@ pub struct ResearchSourceSnapshot {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResearchArtifact {
+    pub id: String,
+    pub content_hash: ContentHash,
+    pub size_bytes: u64,
+    pub media_type: String,
+    pub original_filename: String,
+    pub created_at_ms: TimestampMs,
+}
+
+/// Hash and identity returned only by the trusted artifact writer.
+#[derive(Clone, Debug)]
+pub struct VerifiedArtifact {
+    artifact: ResearchArtifact,
+}
+
+impl VerifiedArtifact {
+    pub(crate) fn new(artifact: ResearchArtifact) -> Self {
+        Self { artifact }
+    }
+
+    pub fn artifact(&self) -> &ResearchArtifact {
+        &self.artifact
+    }
+
+    pub fn artifact_id(&self) -> &str {
+        &self.artifact.id
+    }
+
+    pub fn content_hash(&self) -> &ContentHash {
+        &self.artifact.content_hash
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PdfExtractionStatus {
+    Ready,
+    NoExtractableText,
+    Failed,
+    PasswordRequired,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResearchPdfExtraction {
+    pub id: ResearchPdfExtractionId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub artifact_id: String,
+    pub extractor: String,
+    pub extractor_version: String,
+    pub page_count: u32,
+    pub extraction_hash: ContentHash,
+    pub extracted_at_ms: TimestampMs,
+    pub status: PdfExtractionStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResearchPdfPage {
+    pub extraction_id: ResearchPdfExtractionId,
+    pub page: u32,
+    pub text: String,
+    pub text_hash: ContentHash,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EvidenceLocator {
     TextRange {
@@ -160,6 +231,13 @@ pub enum EvidenceLocator {
     Pdf {
         page: u32,
         end_page: Option<u32>,
+    },
+    /// Page-relative Unicode scalar/code-point offsets. They are not UTF-8 byte
+    /// offsets and not JavaScript UTF-16 indexes.
+    PdfTextRange {
+        page: u32,
+        start: u64,
+        end: u64,
     },
     Manuscript {
         block_id: String,
@@ -193,6 +271,7 @@ pub struct ResearchEvidence {
     pub excerpt_hash: ContentHash,
     pub captured_at_ms: TimestampMs,
     pub capture_method: CaptureMethod,
+    pub pdf_extraction_id: Option<ResearchPdfExtractionId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -271,6 +350,32 @@ pub struct CaptureSourceSnapshot {
     pub capture_method: CaptureMethod,
     pub origin: SourceOrigin,
     pub metadata: SafeMetadata,
+}
+
+#[derive(Clone, Debug)]
+pub struct CapturePdfExtraction {
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub extractor: String,
+    pub extractor_version: Option<String>,
+    pub page_count: u32,
+    pub status: PdfExtractionStatus,
+    pub pages: Vec<CapturePdfPage>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CapturePdfPage {
+    pub page: u32,
+    pub text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CapturePdfEvidence {
+    pub research_case_id: ResearchCaseId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub extraction_id: ResearchPdfExtractionId,
+    pub page: u32,
+    pub start: u64,
+    pub end: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -382,6 +487,14 @@ impl EvidenceLocator {
                         "PDF locator page range is invalid".to_owned(),
                     ));
                 }
+            }
+            Self::PdfTextRange { page, start, end } => {
+                if *page == 0 {
+                    return Err(ResearchError::Invalid(
+                        "PDF text locator page must be positive".to_owned(),
+                    ));
+                }
+                validate_range(*start, *end)?;
             }
             Self::Manuscript {
                 block_id,

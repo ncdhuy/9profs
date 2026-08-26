@@ -28,6 +28,8 @@ import type {
   UpdateMcpServerInput,
   DocumentProposal,
   ClaimEvidenceLink,
+  CaptureResearchPdfEvidenceInput,
+  CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
   CreateClaimEvidenceLinkInput,
   CreateResearchCaseInput,
@@ -35,10 +37,15 @@ import type {
   CreateResearchEvidenceInput,
   CreateResearchSourceInput,
   ResearchCase,
+  ResearchCaseId,
   ResearchClaim,
   ResearchEvidence,
+  ResearchPdfExtraction,
+  ResearchPdfPage,
   ResearchSource,
   ResearchSourceSnapshot,
+  ReferencePdfIngestion,
+  ResearchSourceSnapshotId,
 } from './types'
 
 export interface CoreResponse<T> {
@@ -63,6 +70,8 @@ export interface CoreRequestInit {
   method?: string
   headers?: Record<string, string>
   body?: string
+  /** Binary request body for streamed artifact uploads. */
+  rawBody?: Uint8Array
 }
 
 export interface CoreTransportOptions {
@@ -131,6 +140,19 @@ export interface CoreTransport {
   captureResearchSourceSnapshot(
     input: CaptureResearchSourceSnapshotInput,
   ): Promise<ResearchSourceSnapshot>
+  ingestReferencePdf(
+    researchCaseId: ResearchCaseId,
+    bytes: Uint8Array,
+    options?: { readonly filename?: string; readonly label?: string },
+  ): Promise<ReferencePdfIngestion>
+  recordResearchPdfExtraction(
+    snapshotId: ResearchSourceSnapshotId,
+    input: CaptureResearchPdfExtractionInput,
+  ): Promise<ResearchPdfExtraction>
+  researchPdfExtraction(snapshotId: ResearchSourceSnapshotId): Promise<ResearchPdfExtraction>
+  researchPdfPages(extractionId: string, limit?: number): Promise<ResearchPdfPage[]>
+  researchPdfPage(extractionId: string, page: number): Promise<ResearchPdfPage>
+  captureResearchPdfEvidence(input: CaptureResearchPdfEvidenceInput): Promise<ResearchEvidence>
   researchEvidence(researchCaseId?: string, sourceSnapshotId?: string): Promise<ResearchEvidence[]>
   researchEvidenceById(id: string): Promise<ResearchEvidence>
   createResearchEvidence(input: CreateResearchEvidenceInput): Promise<ResearchEvidence>
@@ -188,6 +210,30 @@ export function createCoreTransport(
       method,
       headers: Object.keys(headers).length === 0 ? undefined : headers,
       body: value === undefined ? undefined : JSON.stringify(value),
+    })
+    if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
+
+    const body = (await response.json()) as CoreResponse<T>
+    if (!body.success || body.data === undefined)
+      throw new Error(`9Profs Core response failed: ${path}`)
+    return body.data
+  }
+
+  async function trustedBinaryRequest<T>(
+    path: string,
+    bytes: Uint8Array,
+    headers: Record<string, string>,
+  ): Promise<T> {
+    const response = await fetcher(`${normalizedBaseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/pdf',
+        ...headers,
+        ...(options.sessionSecret === undefined
+          ? {}
+          : { 'x-nineprofs-session-secret': options.sessionSecret }),
+      },
+      rawBody: bytes,
     })
     if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
 
@@ -297,18 +343,48 @@ export function createCoreTransport(
       get<ResearchSource[]>(
         queryPath('/api/research/sources', [['researchCaseId', researchCaseId]]),
       ),
-    researchSource: (id) =>
-      get<ResearchSource>(`/api/research/sources/${encodeURIComponent(id)}`),
+    researchSource: (id) => get<ResearchSource>(`/api/research/sources/${encodeURIComponent(id)}`),
     createResearchSource: (input) =>
       trustedRequest<ResearchSource>('/api/research/sources', 'POST', input),
     researchSnapshots: (sourceId) =>
-      get<ResearchSourceSnapshot[]>(
-        queryPath('/api/research/snapshots', [['sourceId', sourceId]]),
-      ),
+      get<ResearchSourceSnapshot[]>(queryPath('/api/research/snapshots', [['sourceId', sourceId]])),
     researchSnapshot: (id) =>
       get<ResearchSourceSnapshot>(`/api/research/snapshots/${encodeURIComponent(id)}`),
     captureResearchSourceSnapshot: (input) =>
       trustedRequest<ResearchSourceSnapshot>('/api/research/snapshots', 'POST', input),
+    ingestReferencePdf: (researchCaseId, bytes, options = {}) =>
+      trustedBinaryRequest<ReferencePdfIngestion>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/reference-pdfs`,
+        bytes,
+        {
+          ...(options.filename === undefined
+            ? {}
+            : { 'x-nineprofs-original-filename': options.filename }),
+          ...(options.label === undefined ? {} : { 'x-nineprofs-source-label': options.label }),
+        },
+      ),
+    recordResearchPdfExtraction: (snapshotId, input) =>
+      trustedRequest<ResearchPdfExtraction>(
+        `/api/research/snapshots/${encodeURIComponent(snapshotId)}/pdf-extraction`,
+        'POST',
+        input,
+      ),
+    researchPdfExtraction: (snapshotId) =>
+      get<ResearchPdfExtraction>(
+        `/api/research/snapshots/${encodeURIComponent(snapshotId)}/pdf-extraction`,
+      ),
+    researchPdfPages: (extractionId, limit) =>
+      get<ResearchPdfPage[]>(
+        queryPath(`/api/research/pdf-extractions/${encodeURIComponent(extractionId)}/pages`, [
+          ['limit', limit === undefined ? undefined : String(limit)],
+        ]),
+      ),
+    researchPdfPage: (extractionId, page) =>
+      get<ResearchPdfPage>(
+        `/api/research/pdf-extractions/${encodeURIComponent(extractionId)}/pages/${page}`,
+      ),
+    captureResearchPdfEvidence: (input) =>
+      trustedRequest<ResearchEvidence>('/api/research/pdf-evidence', 'POST', input),
     researchEvidence: (researchCaseId, sourceSnapshotId) =>
       get<ResearchEvidence[]>(
         queryPath('/api/research/evidence', [
@@ -321,11 +397,8 @@ export function createCoreTransport(
     createResearchEvidence: (input) =>
       trustedRequest<ResearchEvidence>('/api/research/evidence', 'POST', input),
     researchClaims: (researchCaseId) =>
-      get<ResearchClaim[]>(
-        queryPath('/api/research/claims', [['researchCaseId', researchCaseId]]),
-      ),
-    researchClaim: (id) =>
-      get<ResearchClaim>(`/api/research/claims/${encodeURIComponent(id)}`),
+      get<ResearchClaim[]>(queryPath('/api/research/claims', [['researchCaseId', researchCaseId]])),
+    researchClaim: (id) => get<ResearchClaim>(`/api/research/claims/${encodeURIComponent(id)}`),
     createResearchClaim: (input) =>
       trustedRequest<ResearchClaim>('/api/research/claims', 'POST', input),
     claimEvidenceLinks: (researchCaseId, claimId, evidenceId) =>

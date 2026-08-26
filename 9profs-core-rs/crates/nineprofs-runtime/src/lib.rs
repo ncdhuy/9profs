@@ -22,7 +22,7 @@ use nineprofs_officecli::{
     ArtifactResolver, OfficeCliConfig, OfficeCliRunner, OfficeCliStatus, OfficeCliToolProvider,
 };
 use nineprofs_realtime::BroadcastEventBus;
-use nineprofs_research::{ResearchService, SqliteResearchRepository};
+use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
@@ -153,10 +153,17 @@ impl CoreRuntime {
     ) -> Result<Self, RuntimeError> {
         let metadata_repository = database.metadata_repository();
         let event_bus = Arc::new(BroadcastEventBus::new(config.event_capacity));
-        let research_service = Arc::new(ResearchService::new(
-            SqliteResearchRepository::new(database.pool().clone()),
-            Arc::clone(&event_bus),
+        let artifact_store = Arc::new(ResearchArtifactStore::new(
+            config.data_dir.join("research-artifacts"),
+            database.pool().clone(),
         ));
+        let research_service = Arc::new(
+            ResearchService::new(
+                SqliteResearchRepository::new(database.pool().clone()),
+                Arc::clone(&event_bus),
+            )
+            .with_artifact_store(artifact_store),
+        );
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),

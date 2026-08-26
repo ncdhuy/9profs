@@ -30,13 +30,15 @@ pub use mcp::{
     McpTransportInputDto, UpdateMcpServerRequest,
 };
 pub use research::{
+    CaptureResearchPdfEvidenceRequest, CaptureResearchPdfExtractionRequest,
     CaptureResearchSourceSnapshotRequest, ClaimEvidenceLinkDto, CreateClaimEvidenceLinkRequest,
     CreateResearchCaseRequest, CreateResearchClaimRequest, CreateResearchEvidenceRequest,
-    CreateResearchSourceRequest, ResearchAssessmentMethodDto, ResearchCaptureMethodDto,
-    ResearchCaseDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto,
-    ResearchContentHashDto, ResearchEvidenceDto, ResearchEvidenceLocatorDto,
-    ResearchHashAlgorithmDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
-    ResearchSourceSnapshotDto,
+    CreateResearchSourceRequest, ReferencePdfIngestionDto, ResearchArtifactDto,
+    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto, ResearchClaimDto,
+    ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
+    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchHashAlgorithmDto,
+    ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
+    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

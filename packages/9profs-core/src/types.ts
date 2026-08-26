@@ -276,12 +276,7 @@ export interface ToolProvider {
 }
 
 export type ResearchSourceKind =
-  | 'reference_pdf'
-  | 'manuscript'
-  | 'dataset'
-  | 'web'
-  | 'regulation'
-  | 'other'
+  'reference_pdf' | 'manuscript' | 'dataset' | 'web' | 'regulation' | 'other'
 export type ResearchCaptureMethod =
   | 'user_provided'
   | 'uploaded_artifact'
@@ -290,6 +285,9 @@ export type ResearchCaptureMethod =
   | 'web_retrieval'
   | 'external_import'
 export type ResearchHashAlgorithm = 'sha256'
+
+export type ResearchPdfExtractionStatus =
+  'ready' | 'no_extractable_text' | 'failed' | 'password_required'
 
 export type ResearchSourceOrigin =
   | {
@@ -322,6 +320,13 @@ export type ResearchEvidenceLocator =
   | { readonly kind: 'text_range'; readonly start: number; readonly end: number }
   | { readonly kind: 'pdf'; readonly page: number; readonly end_page: number | null }
   | {
+      readonly kind: 'pdf_text_range'
+      readonly page: number
+      /** Unicode scalar/code-point offsets, not UTF-8 bytes or UTF-16 indexes. */
+      readonly start: number
+      readonly end: number
+    }
+  | {
       readonly kind: 'manuscript'
       readonly block_id: string
       readonly start: number | null
@@ -353,15 +358,9 @@ export type ResearchClaimOrigin =
   | { readonly kind: 'imported'; readonly source: string }
 
 export type ResearchClaimEvidenceRelation =
-  | 'supports'
-  | 'contradicts'
-  | 'contextualizes'
-  | 'insufficient'
+  'supports' | 'contradicts' | 'contextualizes' | 'insufficient'
 export type ResearchAssessmentMethod =
-  | 'human'
-  | 'deterministic_checker'
-  | 'agent'
-  | 'external_service'
+  'human' | 'deterministic_checker' | 'agent' | 'external_service'
 
 export interface ResearchContentHash {
   readonly algorithm: ResearchHashAlgorithm
@@ -393,6 +392,62 @@ export interface ResearchSourceSnapshot {
   readonly metadata: Readonly<Record<string, string>>
 }
 
+export interface ResearchArtifact {
+  readonly artifactId: string
+  readonly contentHash: ResearchContentHash
+  readonly sizeBytes: number
+  readonly mediaType: 'application/pdf'
+  readonly originalFilename: string
+  readonly createdAtMs: number
+}
+
+export interface ResearchPdfPageInput {
+  readonly page: number
+  readonly text: string
+}
+
+export interface CaptureResearchPdfExtractionInput {
+  readonly extractor: string
+  readonly extractorVersion?: string
+  readonly pageCount: number
+  readonly status: ResearchPdfExtractionStatus
+  readonly pages: readonly ResearchPdfPageInput[]
+}
+
+export interface ResearchPdfExtraction {
+  readonly extractionId: string
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly artifactId: string
+  readonly extractor: string
+  readonly extractorVersion: string
+  readonly pageCount: number
+  readonly extractionHash: ResearchContentHash
+  readonly extractedAtMs: number
+  readonly status: ResearchPdfExtractionStatus
+}
+
+export interface ResearchPdfPage {
+  readonly extractionId: string
+  readonly page: number
+  readonly text: string
+  readonly textHash: ResearchContentHash
+}
+
+export interface ReferencePdfIngestion {
+  readonly artifact: ResearchArtifact
+  readonly source: ResearchSource
+  readonly snapshot: ResearchSourceSnapshot
+}
+
+export interface CaptureResearchPdfEvidenceInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly extractionId: string
+  readonly page: number
+  readonly start: number
+  readonly end: number
+}
+
 export interface ResearchEvidence {
   readonly evidenceId: ResearchEvidenceId
   readonly researchCaseId: ResearchCaseId
@@ -403,6 +458,7 @@ export interface ResearchEvidence {
   readonly excerptHash: ResearchContentHash
   readonly capturedAtMs: number
   readonly captureMethod: ResearchCaptureMethod
+  readonly pdfExtractionId: string | null
 }
 
 export interface ResearchClaim {

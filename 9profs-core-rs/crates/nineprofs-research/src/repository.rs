@@ -6,7 +6,8 @@ use sqlx::{Row, SqlitePool};
 use crate::{
     ClaimEvidenceLink, ClaimEvidenceLinkId, ContentHash, ResearchCase, ResearchCaseId,
     ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence, ResearchEvidenceId,
-    ResearchSource, ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId,
+    ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage, ResearchSource,
+    ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId,
 };
 
 #[async_trait]
@@ -39,6 +40,42 @@ pub trait ResearchRepository: Send + Sync {
         content_hash: &ContentHash,
     ) -> Result<Option<ResearchSourceSnapshot>, ResearchError>;
     async fn insert_snapshot(&self, value: &ResearchSourceSnapshot) -> Result<bool, ResearchError>;
+
+    async fn get_pdf_extraction(
+        &self,
+        id: &ResearchPdfExtractionId,
+    ) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
+    async fn list_pdf_extractions(
+        &self,
+        source_snapshot_id: &ResearchSourceSnapshotId,
+    ) -> Result<Vec<ResearchPdfExtraction>, ResearchError>;
+    async fn find_pdf_extraction(
+        &self,
+        source_snapshot_id: &ResearchSourceSnapshotId,
+        extractor: &str,
+        extractor_version: &str,
+        extraction_hash: &ContentHash,
+    ) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
+    async fn insert_pdf_extraction(
+        &self,
+        value: &ResearchPdfExtraction,
+    ) -> Result<bool, ResearchError>;
+    async fn insert_pdf_extraction_with_pages(
+        &self,
+        extraction: &ResearchPdfExtraction,
+        pages: &[ResearchPdfPage],
+    ) -> Result<bool, ResearchError>;
+    async fn list_pdf_pages(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+        limit: u32,
+    ) -> Result<Vec<ResearchPdfPage>, ResearchError>;
+    async fn get_pdf_page(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+        page: u32,
+    ) -> Result<Option<ResearchPdfPage>, ResearchError>;
+    async fn insert_pdf_page(&self, value: &ResearchPdfPage) -> Result<(), ResearchError>;
 
     async fn list_evidence(
         &self,
@@ -236,6 +273,166 @@ impl ResearchRepository for SqliteResearchRepository {
         Ok(result.rows_affected() == 1)
     }
 
+    async fn get_pdf_extraction(
+        &self,
+        id: &ResearchPdfExtractionId,
+    ) -> Result<Option<ResearchPdfExtraction>, ResearchError> {
+        let row = sqlx::query(&pdf_extraction_select("WHERE id = ?"))
+            .bind(id.as_str())
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(map_pdf_extraction).transpose()
+    }
+
+    async fn list_pdf_extractions(
+        &self,
+        source_snapshot_id: &ResearchSourceSnapshotId,
+    ) -> Result<Vec<ResearchPdfExtraction>, ResearchError> {
+        let rows = sqlx::query(&pdf_extraction_select("WHERE source_snapshot_id = ?"))
+            .bind(source_snapshot_id.as_str())
+            .fetch_all(&self.pool)
+            .await?;
+        rows.into_iter().map(map_pdf_extraction).collect()
+    }
+
+    async fn find_pdf_extraction(
+        &self,
+        source_snapshot_id: &ResearchSourceSnapshotId,
+        extractor: &str,
+        extractor_version: &str,
+        extraction_hash: &ContentHash,
+    ) -> Result<Option<ResearchPdfExtraction>, ResearchError> {
+        let row = sqlx::query(&pdf_extraction_select(
+            "WHERE source_snapshot_id = ? AND extractor = ? AND extractor_version = ? \
+             AND hash_algorithm = ? AND extraction_hash = ?",
+        ))
+        .bind(source_snapshot_id.as_str())
+        .bind(extractor)
+        .bind(extractor_version)
+        .bind(enum_text(&extraction_hash.algorithm))
+        .bind(&extraction_hash.value)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(map_pdf_extraction).transpose()
+    }
+
+    async fn insert_pdf_extraction(
+        &self,
+        value: &ResearchPdfExtraction,
+    ) -> Result<bool, ResearchError> {
+        let result = sqlx::query(
+            "INSERT INTO research_pdf_extractions \
+             (id, source_snapshot_id, artifact_id, extractor, extractor_version, page_count, \
+              hash_algorithm, extraction_hash, extracted_at_ms, status) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(source_snapshot_id, extractor, extractor_version, extraction_hash) DO NOTHING",
+        )
+        .bind(value.id.as_str())
+        .bind(value.source_snapshot_id.as_str())
+        .bind(&value.artifact_id)
+        .bind(&value.extractor)
+        .bind(&value.extractor_version)
+        .bind(value.page_count as i64)
+        .bind(enum_text(&value.extraction_hash.algorithm))
+        .bind(&value.extraction_hash.value)
+        .bind(value.extracted_at_ms)
+        .bind(enum_text(&value.status))
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn insert_pdf_extraction_with_pages(
+        &self,
+        extraction: &ResearchPdfExtraction,
+        pages: &[ResearchPdfPage],
+    ) -> Result<bool, ResearchError> {
+        let mut transaction = self.pool.begin().await?;
+        let result = sqlx::query(
+            "INSERT INTO research_pdf_extractions \
+             (id, source_snapshot_id, artifact_id, extractor, extractor_version, page_count, \
+              hash_algorithm, extraction_hash, extracted_at_ms, status) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(source_snapshot_id, extractor, extractor_version, extraction_hash) DO NOTHING",
+        )
+        .bind(extraction.id.as_str())
+        .bind(extraction.source_snapshot_id.as_str())
+        .bind(&extraction.artifact_id)
+        .bind(&extraction.extractor)
+        .bind(&extraction.extractor_version)
+        .bind(extraction.page_count as i64)
+        .bind(enum_text(&extraction.extraction_hash.algorithm))
+        .bind(&extraction.extraction_hash.value)
+        .bind(extraction.extracted_at_ms)
+        .bind(enum_text(&extraction.status))
+        .execute(&mut *transaction)
+        .await?;
+        if result.rows_affected() == 1 {
+            for page in pages {
+                sqlx::query(
+                    "INSERT INTO research_pdf_pages \
+                     (extraction_id, page, text, hash_algorithm, text_hash) VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(page.extraction_id.as_str())
+                .bind(page.page as i64)
+                .bind(&page.text)
+                .bind(enum_text(&page.text_hash.algorithm))
+                .bind(&page.text_hash.value)
+                .execute(&mut *transaction)
+                .await?;
+            }
+        }
+        transaction.commit().await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn list_pdf_pages(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+        limit: u32,
+    ) -> Result<Vec<ResearchPdfPage>, ResearchError> {
+        let rows = sqlx::query(
+            "SELECT extraction_id, page, text, hash_algorithm, text_hash \
+             FROM research_pdf_pages WHERE extraction_id = ? ORDER BY page ASC LIMIT ?",
+        )
+        .bind(extraction_id.as_str())
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(map_pdf_page).collect()
+    }
+
+    async fn get_pdf_page(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+        page: u32,
+    ) -> Result<Option<ResearchPdfPage>, ResearchError> {
+        let row = sqlx::query(
+            "SELECT extraction_id, page, text, hash_algorithm, text_hash \
+             FROM research_pdf_pages WHERE extraction_id = ? AND page = ?",
+        )
+        .bind(extraction_id.as_str())
+        .bind(page as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(map_pdf_page).transpose()
+    }
+
+    async fn insert_pdf_page(&self, value: &ResearchPdfPage) -> Result<(), ResearchError> {
+        sqlx::query(
+            "INSERT INTO research_pdf_pages \
+             (extraction_id, page, text, hash_algorithm, text_hash) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(value.extraction_id.as_str())
+        .bind(value.page as i64)
+        .bind(&value.text)
+        .bind(enum_text(&value.text_hash.algorithm))
+        .bind(&value.text_hash.value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     async fn list_evidence(
         &self,
         research_case_id: Option<&ResearchCaseId>,
@@ -244,25 +441,25 @@ impl ResearchRepository for SqliteResearchRepository {
         let (query, binds) = match (research_case_id, source_snapshot_id) {
             (Some(case_id), Some(snapshot_id)) => (
                 "SELECT id, research_case_id, source_snapshot_id, verbatim_excerpt, normalized_text, \
-                 locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method \
+                  locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method, pdf_extraction_id \
                  FROM research_evidence WHERE research_case_id = ? AND source_snapshot_id = ? ORDER BY id ASC",
                 Some((case_id.as_str().to_owned(), snapshot_id.as_str().to_owned())),
             ),
             (Some(case_id), None) => (
                 "SELECT id, research_case_id, source_snapshot_id, verbatim_excerpt, normalized_text, \
-                 locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method \
+                  locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method, pdf_extraction_id \
                  FROM research_evidence WHERE research_case_id = ? ORDER BY id ASC",
                 Some((case_id.as_str().to_owned(), String::new())),
             ),
             (None, Some(snapshot_id)) => (
                 "SELECT id, research_case_id, source_snapshot_id, verbatim_excerpt, normalized_text, \
-                 locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method \
+                  locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method, pdf_extraction_id \
                  FROM research_evidence WHERE source_snapshot_id = ? ORDER BY id ASC",
                 Some((snapshot_id.as_str().to_owned(), String::new())),
             ),
             (None, None) => (
                 "SELECT id, research_case_id, source_snapshot_id, verbatim_excerpt, normalized_text, \
-                 locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method \
+                  locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method, pdf_extraction_id \
                  FROM research_evidence ORDER BY id ASC",
                 None,
             ),
@@ -284,7 +481,7 @@ impl ResearchRepository for SqliteResearchRepository {
     ) -> Result<Option<ResearchEvidence>, ResearchError> {
         let row = sqlx::query(
             "SELECT id, research_case_id, source_snapshot_id, verbatim_excerpt, normalized_text, \
-             locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method \
+             locator_json, hash_algorithm, excerpt_hash, captured_at_ms, capture_method, pdf_extraction_id \
              FROM research_evidence WHERE id = ?",
         )
         .bind(id.as_str())
@@ -297,8 +494,8 @@ impl ResearchRepository for SqliteResearchRepository {
         sqlx::query(
             "INSERT INTO research_evidence \
              (id, research_case_id, source_snapshot_id, verbatim_excerpt, normalized_text, locator_json, \
-              hash_algorithm, excerpt_hash, captured_at_ms, capture_method) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              hash_algorithm, excerpt_hash, captured_at_ms, capture_method, pdf_extraction_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(value.id.as_str())
         .bind(value.research_case_id.as_str())
@@ -310,6 +507,7 @@ impl ResearchRepository for SqliteResearchRepository {
         .bind(&value.excerpt_hash.value)
         .bind(value.captured_at_ms)
         .bind(enum_text(&value.capture_method))
+        .bind(value.pdf_extraction_id.as_ref().map(|id| id.as_str()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -536,6 +734,60 @@ fn map_evidence(row: sqlx::sqlite::SqliteRow) -> Result<ResearchEvidence, Resear
             format!("\"{}\"", row.get::<String, _>("capture_method")),
             "evidence capture method",
         )?,
+        pdf_extraction_id: row
+            .get::<Option<String>, _>("pdf_extraction_id")
+            .map(ResearchPdfExtractionId::parse)
+            .transpose()?,
+    })
+}
+
+fn pdf_extraction_select(where_clause: &str) -> String {
+    format!(
+        "SELECT id, source_snapshot_id, artifact_id, extractor, extractor_version, page_count, \
+         hash_algorithm, extraction_hash, extracted_at_ms, status \
+         FROM research_pdf_extractions {where_clause} ORDER BY extracted_at_ms DESC, id ASC"
+    )
+}
+
+fn map_pdf_extraction(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<ResearchPdfExtraction, ResearchError> {
+    Ok(ResearchPdfExtraction {
+        id: ResearchPdfExtractionId::parse(row.get::<String, _>("id"))?,
+        source_snapshot_id: ResearchSourceSnapshotId::parse(
+            row.get::<String, _>("source_snapshot_id"),
+        )?,
+        artifact_id: row.get("artifact_id"),
+        extractor: row.get("extractor"),
+        extractor_version: row.get("extractor_version"),
+        page_count: row.get::<i64, _>("page_count") as u32,
+        extraction_hash: ContentHash {
+            algorithm: json_column(
+                format!("\"{}\"", row.get::<String, _>("hash_algorithm")),
+                "PDF extraction hash algorithm",
+            )?,
+            value: row.get("extraction_hash"),
+        },
+        extracted_at_ms: row.get("extracted_at_ms"),
+        status: json_column(
+            format!("\"{}\"", row.get::<String, _>("status")),
+            "PDF extraction status",
+        )?,
+    })
+}
+
+fn map_pdf_page(row: sqlx::sqlite::SqliteRow) -> Result<ResearchPdfPage, ResearchError> {
+    Ok(ResearchPdfPage {
+        extraction_id: ResearchPdfExtractionId::parse(row.get::<String, _>("extraction_id"))?,
+        page: row.get::<i64, _>("page") as u32,
+        text: row.get("text"),
+        text_hash: ContentHash {
+            algorithm: json_column(
+                format!("\"{}\"", row.get::<String, _>("hash_algorithm")),
+                "PDF page hash algorithm",
+            )?,
+            value: row.get("text_hash"),
+        },
     })
 }
 

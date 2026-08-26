@@ -1,28 +1,33 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     Router,
+    body::Body,
     extract::{Path, Query, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use futures_util::StreamExt;
 use nineprofs_agent::{AgentBackendDescriptor, AgentRunContext, AgentTaskId, RunId, TaskState};
 use nineprofs_api_types::{
     ActiveDocsAgentRunRequest, ActiveDocumentDto, AgentRunContextDto, AgentRunDto, AgentRunRequest,
     AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
+    CaptureResearchPdfEvidenceRequest, CaptureResearchPdfExtractionRequest,
     CaptureResearchSourceSnapshotRequest, ClaimEvidenceLinkDto, CreateAssistantRequest,
     CreateClaimEvidenceLinkRequest, CreateDocumentAgentConversationRequest,
     CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
     CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
     DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
     ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
-    McpTransportDto, McpTransportInputDto, ResearchAssessmentMethodDto, ResearchCaptureMethodDto,
-    ResearchCaseDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto,
-    ResearchContentHashDto, ResearchEvidenceDto, ResearchEvidenceLocatorDto,
-    ResearchHashAlgorithmDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
-    ResearchSourceSnapshotDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
-    UpdateAssistantRequest, UpdateMcpServerRequest,
+    McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
+    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto, ResearchClaimDto,
+    ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
+    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchHashAlgorithmDto,
+    ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
+    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
+    RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
+    UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -36,10 +41,11 @@ use nineprofs_mcp::{
 };
 use nineprofs_officecli::OfficeCliStatus;
 use nineprofs_research::{
-    AssessmentMethod, CaptureMethod, CaptureSourceSnapshot, ClaimEvidenceRelation, ClaimOrigin,
-    CreateClaimEvidenceLink, CreateResearchCase, CreateResearchClaim, CreateResearchEvidence,
-    CreateResearchSource, EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim,
-    ResearchError, ResearchEvidence, ResearchSource, ResearchSourceSnapshot, SourceKind,
+    AssessmentMethod, CaptureMethod, CapturePdfEvidence, CapturePdfExtraction, CapturePdfPage,
+    CaptureSourceSnapshot, ClaimEvidenceRelation, ClaimOrigin, CreateClaimEvidenceLink,
+    CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
+    EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim, ResearchError, ResearchEvidence,
+    ResearchPdfExtraction, ResearchPdfPage, ResearchSource, ResearchSourceSnapshot, SourceKind,
     SourceOrigin,
 };
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
@@ -590,6 +596,163 @@ mod document_proposal_api_tests {
     }
 }
 
+#[cfg(test)]
+mod research_pdf_api_tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn reference_pdf_api_streams_authenticates_and_derives_exact_evidence() {
+        let root = std::env::temp_dir().join(format!(
+            "9profs-core-reference-pdf-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.data_dir = root.clone();
+        config.database_path = root.join("core.db");
+        config.session_secret = Some(Arc::from("api-test-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let case = runtime
+            .research_service()
+            .create_case(CreateResearchCase {
+                title: "Reference PDF API".to_owned(),
+            })
+            .await
+            .unwrap();
+        let router = build_router(runtime);
+        let pdf = b"%PDF-1.7\nfixture".to_vec();
+        let upload_path = format!("/api/research/cases/{}/reference-pdfs", case.id.as_str());
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&upload_path)
+                    .header("content-type", "application/pdf")
+                    .body(Body::from(pdf.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&upload_path)
+                    .header("content-type", "application/pdf")
+                    .header(TRUSTED_DECISION_HEADER, "api-test-secret")
+                    .header(
+                        "x-nineprofs-original-filename",
+                        r"C:\\imports\\reference.pdf",
+                    )
+                    .header("x-nineprofs-source-label", "Reference PDF")
+                    .body(Body::from(pdf))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert!(body["data"]["artifact"]["artifactId"].is_string());
+        assert!(body["data"]["snapshot"]["contentHash"]["value"].is_string());
+        assert!(body.get("path").is_none());
+        assert!(!body.to_string().contains("C:\\\\imports"));
+        let snapshot_id = body["data"]["snapshot"]["snapshotId"].as_str().unwrap();
+
+        let page_text = "Điều trị giảm tử vong 😀 20%.";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/api/research/snapshots/{snapshot_id}/pdf-extraction"
+                ))
+                .header("content-type", "application/json")
+                .header(TRUSTED_DECISION_HEADER, "api-test-secret")
+                .body(Body::from(
+                    serde_json::json!({
+                        "extractor": "pdfjs",
+                        "extractorVersion": "api-test",
+                        "pageCount": 1,
+                        "status": "ready",
+                        "pages": [{ "page": 1, "text": page_text }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        let extraction_id = body["data"]["extractionId"].as_str().unwrap();
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/pdf-extractions/{extraction_id}/pages/1"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(page["data"]["text"], page_text);
+
+        let start = page_text[..page_text.find("giảm tử vong").unwrap()]
+            .chars()
+            .count() as u64;
+        let end = start + "giảm tử vong".chars().count() as u64;
+        let response = router
+            .oneshot(
+                Request::post("/api/research/pdf-evidence")
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "api-test-secret")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "researchCaseId": case.id.as_str(),
+                            "sourceSnapshotId": snapshot_id,
+                            "extractionId": extraction_id,
+                            "page": 1,
+                            "start": start,
+                            "end": end
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let evidence: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(evidence["data"]["verbatimExcerpt"], "giảm tử vong");
+        assert_eq!(evidence["data"]["locator"]["kind"], "pdf_text_range");
+        assert_eq!(evidence["data"]["pdfExtractionId"], extraction_id);
+        assert_eq!(evidence["data"]["sourceSnapshotId"], snapshot_id);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
     let state = AppState { runtime };
     Router::new()
@@ -680,6 +843,26 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             get(list_research_snapshots).post(capture_research_snapshot),
         )
         .route("/api/research/snapshots/{id}", get(get_research_snapshot))
+        .route(
+            "/api/research/cases/{id}/reference-pdfs",
+            post(ingest_reference_pdf),
+        )
+        .route(
+            "/api/research/snapshots/{id}/pdf-extraction",
+            get(get_research_pdf_extraction).post(capture_research_pdf_extraction),
+        )
+        .route(
+            "/api/research/pdf-extractions/{id}/pages",
+            get(list_research_pdf_pages),
+        )
+        .route(
+            "/api/research/pdf-extractions/{id}/pages/{page}",
+            get(get_research_pdf_page),
+        )
+        .route(
+            "/api/research/pdf-evidence",
+            post(capture_research_pdf_evidence),
+        )
         .route(
             "/api/research/evidence",
             get(list_research_evidence).post(create_research_evidence),
@@ -1092,7 +1275,9 @@ impl IntoResponse for ApiError {
                     "invalid_request",
                     error.to_string(),
                 ),
-                ResearchError::Database(_) | ResearchError::Serialization(_) => (
+                ResearchError::Database(_)
+                | ResearchError::Serialization(_)
+                | ResearchError::Artifact(_) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     error.to_string(),
@@ -1635,6 +1820,11 @@ struct ResearchLinksQuery {
     evidence_id: Option<String>,
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResearchPdfPagesQuery {
+    limit: Option<u32>,
+}
+
 async fn list_research_cases(
     State(state): State<AppState>,
 ) -> Result<axum::Json<ApiResponse<Vec<ResearchCaseDto>>>, ApiError> {
@@ -1742,6 +1932,168 @@ async fn get_research_snapshot(
     Ok(axum::Json(ApiResponse::ok(research_snapshot_dto(
         state.runtime.research_service().get_snapshot(&id).await?,
     ))))
+}
+
+async fn ingest_reference_pdf(
+    State(state): State<AppState>,
+    Path(case_id): Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<axum::Json<ApiResponse<ReferencePdfIngestionDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    if let Some(content_type) = header_text(&headers, "content-type")? {
+        let media_type = content_type.split(';').next().unwrap_or("").trim();
+        if !media_type.eq_ignore_ascii_case("application/pdf") {
+            return Err(ApiError::InvalidRequest(
+                "reference PDF upload must use application/pdf".to_owned(),
+            ));
+        }
+    }
+    let original_filename = safe_upload_label(
+        header_text(&headers, "x-nineprofs-original-filename")?.as_deref(),
+        "reference.pdf",
+    )?;
+    let source_label = safe_upload_label(
+        header_text(&headers, "x-nineprofs-source-label")?.as_deref(),
+        &original_filename,
+    )?;
+    let service = state.runtime.research_service();
+    let research_case_id = nineprofs_research::ResearchCaseId::parse(case_id)?;
+    service.get_case(research_case_id.as_str()).await?;
+    let store = service
+        .artifact_store()
+        .ok_or_else(|| ApiError::InvalidRequest("PDF artifact store is unavailable".to_owned()))?;
+    let mut upload = store.begin_upload(&original_filename)?;
+    let mut chunks = body.into_data_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|error| ApiError::InvalidRequest(error.to_string()))?;
+        upload.append(&chunk)?;
+    }
+    let artifact = upload.finish().await?;
+    let source = service
+        .create_source(CreateResearchSource {
+            research_case_id,
+            kind: SourceKind::ReferencePdf,
+            label: source_label,
+        })
+        .await?;
+    let snapshot = service
+        .capture_verified_artifact_snapshot(source.id.clone(), &artifact, BTreeMap::new())
+        .await?;
+    let _ = state.runtime.event_bus().publish(EventEnvelope::new(
+        "research.pdfIngested",
+        serde_json::json!({
+            "artifact_id": artifact.artifact_id(),
+            "source_id": source.id,
+            "snapshot_id": snapshot.id,
+            "size_bytes": artifact.artifact().size_bytes,
+            "content_hash": artifact.content_hash().value,
+        }),
+    ));
+    Ok(axum::Json(ApiResponse::ok(ReferencePdfIngestionDto {
+        artifact: research_artifact_dto(artifact.artifact().clone()),
+        source: research_source_dto(source),
+        snapshot: research_snapshot_dto(snapshot),
+    })))
+}
+
+async fn capture_research_pdf_extraction(
+    State(state): State<AppState>,
+    Path(snapshot_id): Path<String>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CaptureResearchPdfExtractionRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchPdfExtractionDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let extraction = state
+        .runtime
+        .research_service()
+        .capture_pdf_extraction(CapturePdfExtraction {
+            source_snapshot_id: nineprofs_research::ResearchSourceSnapshotId::parse(snapshot_id)?,
+            extractor: request.extractor,
+            extractor_version: request.extractor_version,
+            page_count: request.page_count,
+            status: pdf_extraction_status(request.status),
+            pages: request
+                .pages
+                .into_iter()
+                .map(|page| CapturePdfPage {
+                    page: page.page,
+                    text: page.text,
+                })
+                .collect(),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_pdf_extraction_dto(
+        extraction,
+    ))))
+}
+
+async fn get_research_pdf_extraction(
+    State(state): State<AppState>,
+    Path(snapshot_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchPdfExtractionDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_pdf_extraction_dto(
+        state
+            .runtime
+            .research_service()
+            .get_pdf_extraction(&snapshot_id)
+            .await?,
+    ))))
+}
+
+async fn list_research_pdf_pages(
+    State(state): State<AppState>,
+    Path(extraction_id): Path<String>,
+    Query(query): Query<ResearchPdfPagesQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchPdfPageDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_pdf_pages(&extraction_id, query.limit.unwrap_or(25))
+            .await?
+            .into_iter()
+            .map(research_pdf_page_dto)
+            .collect(),
+    )))
+}
+
+async fn get_research_pdf_page(
+    State(state): State<AppState>,
+    Path((extraction_id, page)): Path<(String, u32)>,
+) -> Result<axum::Json<ApiResponse<ResearchPdfPageDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_pdf_page_dto(
+        state
+            .runtime
+            .research_service()
+            .get_pdf_page(&extraction_id, page)
+            .await?,
+    ))))
+}
+
+async fn capture_research_pdf_evidence(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CaptureResearchPdfEvidenceRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchEvidenceDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let evidence = state
+        .runtime
+        .research_service()
+        .capture_pdf_evidence(CapturePdfEvidence {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            source_snapshot_id: nineprofs_research::ResearchSourceSnapshotId::parse(
+                request.source_snapshot_id,
+            )?,
+            extraction_id: nineprofs_research::ResearchPdfExtractionId::parse(
+                request.extraction_id,
+            )?,
+            page: request.page,
+            start: request.start,
+            end: request.end,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_evidence_dto(evidence))))
 }
 
 async fn capture_research_snapshot(
@@ -1909,6 +2261,98 @@ async fn create_claim_evidence_link(
     Ok(axum::Json(ApiResponse::ok(claim_evidence_link_dto(link))))
 }
 
+fn header_text(headers: &HeaderMap, name: &str) -> Result<Option<String>, ApiError> {
+    headers
+        .get(name)
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::to_owned)
+                .map_err(|_| ApiError::InvalidRequest(format!("invalid {name} header")))
+        })
+        .transpose()
+}
+
+fn safe_upload_label(value: Option<&str>, fallback: &str) -> Result<String, ApiError> {
+    let value = value.unwrap_or(fallback);
+    let label = value.rsplit(['/', '\\']).next().unwrap_or(value).trim();
+    if label.is_empty() || label.len() > nineprofs_research::MAX_SOURCE_LABEL_BYTES {
+        return Err(ApiError::InvalidRequest(
+            "PDF filename/label is empty or too long".to_owned(),
+        ));
+    }
+    if label.chars().any(char::is_control) {
+        return Err(ApiError::InvalidRequest(
+            "PDF filename/label contains control characters".to_owned(),
+        ));
+    }
+    Ok(label.to_owned())
+}
+
+fn research_artifact_dto(value: nineprofs_research::ResearchArtifact) -> ResearchArtifactDto {
+    ResearchArtifactDto {
+        artifact_id: value.id,
+        content_hash: research_content_hash_dto(value.content_hash),
+        size_bytes: value.size_bytes,
+        media_type: value.media_type,
+        original_filename: value.original_filename,
+        created_at_ms: value.created_at_ms,
+    }
+}
+
+fn research_pdf_extraction_dto(value: ResearchPdfExtraction) -> ResearchPdfExtractionDto {
+    ResearchPdfExtractionDto {
+        extraction_id: value.id.to_string(),
+        source_snapshot_id: value.source_snapshot_id.to_string(),
+        artifact_id: value.artifact_id,
+        extractor: value.extractor,
+        extractor_version: value.extractor_version,
+        page_count: value.page_count,
+        extraction_hash: research_content_hash_dto(value.extraction_hash),
+        extracted_at_ms: value.extracted_at_ms,
+        status: pdf_extraction_status_dto(value.status),
+    }
+}
+
+fn research_pdf_page_dto(value: ResearchPdfPage) -> ResearchPdfPageDto {
+    ResearchPdfPageDto {
+        extraction_id: value.extraction_id.to_string(),
+        page: value.page,
+        text: value.text,
+        text_hash: research_content_hash_dto(value.text_hash),
+    }
+}
+
+fn pdf_extraction_status(
+    value: ResearchPdfExtractionStatusDto,
+) -> nineprofs_research::PdfExtractionStatus {
+    match value {
+        ResearchPdfExtractionStatusDto::Ready => nineprofs_research::PdfExtractionStatus::Ready,
+        ResearchPdfExtractionStatusDto::NoExtractableText => {
+            nineprofs_research::PdfExtractionStatus::NoExtractableText
+        }
+        ResearchPdfExtractionStatusDto::Failed => nineprofs_research::PdfExtractionStatus::Failed,
+        ResearchPdfExtractionStatusDto::PasswordRequired => {
+            nineprofs_research::PdfExtractionStatus::PasswordRequired
+        }
+    }
+}
+
+fn pdf_extraction_status_dto(
+    value: nineprofs_research::PdfExtractionStatus,
+) -> ResearchPdfExtractionStatusDto {
+    match value {
+        nineprofs_research::PdfExtractionStatus::Ready => ResearchPdfExtractionStatusDto::Ready,
+        nineprofs_research::PdfExtractionStatus::NoExtractableText => {
+            ResearchPdfExtractionStatusDto::NoExtractableText
+        }
+        nineprofs_research::PdfExtractionStatus::Failed => ResearchPdfExtractionStatusDto::Failed,
+        nineprofs_research::PdfExtractionStatus::PasswordRequired => {
+            ResearchPdfExtractionStatusDto::PasswordRequired
+        }
+    }
+}
+
 fn research_case_dto(value: ResearchCase) -> ResearchCaseDto {
     ResearchCaseDto {
         case_id: value.id.to_string(),
@@ -1951,6 +2395,7 @@ fn research_evidence_dto(value: ResearchEvidence) -> ResearchEvidenceDto {
         excerpt_hash: research_content_hash_dto(value.excerpt_hash),
         captured_at_ms: value.captured_at_ms,
         capture_method: capture_method_dto(value.capture_method),
+        pdf_extraction_id: value.pdf_extraction_id.map(|id| id.to_string()),
     }
 }
 
@@ -2110,6 +2555,9 @@ fn evidence_locator(value: ResearchEvidenceLocatorDto) -> EvidenceLocator {
         ResearchEvidenceLocatorDto::Pdf { page, end_page } => {
             EvidenceLocator::Pdf { page, end_page }
         }
+        ResearchEvidenceLocatorDto::PdfTextRange { page, start, end } => {
+            EvidenceLocator::PdfTextRange { page, start, end }
+        }
         ResearchEvidenceLocatorDto::Manuscript {
             block_id,
             start,
@@ -2150,6 +2598,9 @@ fn evidence_locator_dto(value: EvidenceLocator) -> ResearchEvidenceLocatorDto {
         }
         EvidenceLocator::Pdf { page, end_page } => {
             ResearchEvidenceLocatorDto::Pdf { page, end_page }
+        }
+        EvidenceLocator::PdfTextRange { page, start, end } => {
+            ResearchEvidenceLocatorDto::PdfTextRange { page, start, end }
         }
         EvidenceLocator::Manuscript {
             block_id,

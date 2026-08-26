@@ -61,6 +61,8 @@ export type {
   ToolSource,
   ClaimEvidenceLink,
   ClaimEvidenceLinkId,
+  CaptureResearchPdfEvidenceInput,
+  CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
   CreateClaimEvidenceLinkInput,
   CreateResearchCaseInput,
@@ -68,6 +70,7 @@ export type {
   CreateResearchEvidenceInput,
   CreateResearchSourceInput,
   ResearchAssessmentMethod,
+  ResearchArtifact,
   ResearchCase,
   ResearchCaseId,
   ResearchCaptureMethod,
@@ -79,6 +82,10 @@ export type {
   ResearchEvidence,
   ResearchEvidenceId,
   ResearchEvidenceLocator,
+  ResearchPdfExtraction,
+  ResearchPdfExtractionStatus,
+  ResearchPdfPage,
+  ResearchPdfPageInput,
   ResearchHashAlgorithm,
   ResearchSource,
   ResearchSourceId,
@@ -86,6 +93,7 @@ export type {
   ResearchSourceOrigin,
   ResearchSourceSnapshot,
   ResearchSourceSnapshotId,
+  ReferencePdfIngestion,
 } from './types'
 
 export { createCoreTransport } from './transport'

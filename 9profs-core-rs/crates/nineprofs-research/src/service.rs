@@ -7,13 +7,16 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    CaptureSourceSnapshot, ClaimEvidenceLink, ContentHash, CreateClaimEvidenceLink,
-    CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
-    HashAlgorithm, MAX_CASE_TITLE_BYTES, MAX_CLAIM_TEXT_BYTES, MAX_EVIDENCE_EXCERPT_BYTES,
-    MAX_NORMALIZED_TEXT_BYTES, MAX_RATIONALE_BYTES, MAX_SNAPSHOT_CONTENT_BYTES,
-    MAX_SOURCE_LABEL_BYTES, ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId,
-    ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchRepository, ResearchSource,
-    ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId, bounded_text,
+    CapturePdfEvidence, CapturePdfExtraction, CaptureSourceSnapshot, ClaimEvidenceLink,
+    ContentHash, CreateClaimEvidenceLink, CreateResearchCase, CreateResearchClaim,
+    CreateResearchEvidence, CreateResearchSource, HashAlgorithm, MAX_CASE_TITLE_BYTES,
+    MAX_CLAIM_TEXT_BYTES, MAX_EVIDENCE_EXCERPT_BYTES, MAX_NORMALIZED_TEXT_BYTES,
+    MAX_PDF_EXTRACTION_BYTES, MAX_PDF_PAGE_TEXT_BYTES, MAX_PDF_PAGES, MAX_PROVENANCE_TEXT_BYTES,
+    MAX_RATIONALE_BYTES, MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES, PdfExtractionStatus,
+    ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
+    ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
+    ResearchRepository, ResearchSource, ResearchSourceId, ResearchSourceSnapshot,
+    ResearchSourceSnapshotId, SafeMetadata, SourceOrigin, VerifiedArtifact, bounded_text,
     validate_metadata,
 };
 
@@ -21,6 +24,7 @@ use crate::{
 pub struct ResearchService {
     repository: crate::SqliteResearchRepository,
     events: Arc<BroadcastEventBus>,
+    artifact_store: Option<Arc<crate::ResearchArtifactStore>>,
 }
 
 impl ResearchService {
@@ -28,7 +32,20 @@ impl ResearchService {
         repository: crate::SqliteResearchRepository,
         events: Arc<BroadcastEventBus>,
     ) -> Self {
-        Self { repository, events }
+        Self {
+            repository,
+            events,
+            artifact_store: None,
+        }
+    }
+
+    pub fn with_artifact_store(mut self, store: Arc<crate::ResearchArtifactStore>) -> Self {
+        self.artifact_store = Some(store);
+        self
+    }
+
+    pub fn artifact_store(&self) -> Option<Arc<crate::ResearchArtifactStore>> {
+        self.artifact_store.clone()
     }
 
     pub async fn list_cases(&self) -> Result<Vec<ResearchCase>, ResearchError> {
@@ -141,31 +158,77 @@ impl ResearchService {
         }
         input.origin.validate()?;
         validate_metadata(&input.metadata)?;
+        if self
+            .repository
+            .get_source(&input.source_id)
+            .await?
+            .is_some_and(|source| matches!(source.kind, crate::SourceKind::ReferencePdf))
+        {
+            return Err(ResearchError::Invalid(
+                "ReferencePdf snapshots require artifact-backed ingestion".to_owned(),
+            ));
+        }
         let content_hash = sha256_hash(&input.content);
+        self.persist_snapshot(
+            input.source_id,
+            content_hash,
+            input.capture_method,
+            input.origin,
+            input.metadata,
+        )
+        .await
+    }
+
+    /// Trusted ingestion seam. `artifact` can only be produced by the artifact
+    /// store after it has streamed and hashed the original bytes.
+    pub async fn capture_verified_artifact_snapshot(
+        &self,
+        source_id: ResearchSourceId,
+        artifact: &VerifiedArtifact,
+        metadata: SafeMetadata,
+    ) -> Result<ResearchSourceSnapshot, ResearchError> {
+        self.persist_snapshot(
+            source_id,
+            artifact.content_hash().clone(),
+            crate::CaptureMethod::UploadedArtifact,
+            SourceOrigin::UploadedArtifact {
+                artifact_id: artifact.artifact_id().to_owned(),
+                revision_id: None,
+            },
+            metadata,
+        )
+        .await
+    }
+
+    async fn persist_snapshot(
+        &self,
+        source_id: ResearchSourceId,
+        content_hash: ContentHash,
+        capture_method: crate::CaptureMethod,
+        origin: SourceOrigin,
+        metadata: SafeMetadata,
+    ) -> Result<ResearchSourceSnapshot, ResearchError> {
+        origin.validate()?;
+        validate_metadata(&metadata)?;
         if let Some(existing) = self
             .repository
-            .find_snapshot_by_hash(&input.source_id, &content_hash)
+            .find_snapshot_by_hash(&source_id, &content_hash)
             .await?
         {
             return Ok(existing);
         }
 
-        if self
-            .repository
-            .get_source(&input.source_id)
-            .await?
-            .is_none()
-        {
-            return Err(not_found("source", input.source_id.as_str()));
+        if self.repository.get_source(&source_id).await?.is_none() {
+            return Err(not_found("source", source_id.as_str()));
         }
         let value = ResearchSourceSnapshot {
             id: ResearchSourceSnapshotId::new(),
-            source_id: input.source_id,
+            source_id,
             content_hash,
             captured_at_ms: now_ms(),
-            capture_method: input.capture_method,
-            origin: input.origin,
-            metadata: input.metadata,
+            capture_method,
+            origin,
+            metadata,
         };
         if !self.repository.insert_snapshot(&value).await? {
             // Unique source/hash constraint makes concurrent duplicate captures
@@ -186,6 +249,282 @@ impl ResearchService {
             json!({ "snapshot_id": value.id, "source_id": value.source_id }),
         );
         Ok(value)
+    }
+
+    pub async fn capture_pdf_extraction(
+        &self,
+        input: CapturePdfExtraction,
+    ) -> Result<ResearchPdfExtraction, ResearchError> {
+        let snapshot = self
+            .repository
+            .get_snapshot(&input.source_snapshot_id)
+            .await?
+            .ok_or_else(|| not_found("source snapshot", input.source_snapshot_id.as_str()))?;
+        let source = self
+            .repository
+            .get_source(&snapshot.source_id)
+            .await?
+            .ok_or_else(|| not_found("source", snapshot.source_id.as_str()))?;
+        if !matches!(source.kind, crate::SourceKind::ReferencePdf) {
+            return Err(ResearchError::Invalid(
+                "PDF extraction requires a ReferencePdf source".to_owned(),
+            ));
+        }
+        let artifact_id = match &snapshot.origin {
+            SourceOrigin::UploadedArtifact { artifact_id, .. } => artifact_id.clone(),
+            _ => {
+                return Err(ResearchError::Invalid(
+                    "PDF extraction requires an uploaded artifact snapshot".to_owned(),
+                ));
+            }
+        };
+        let store = self.artifact_store.as_ref().ok_or_else(|| {
+            ResearchError::Invalid("PDF artifact store is unavailable".to_owned())
+        })?;
+        let artifact = store
+            .get(&artifact_id)
+            .await?
+            .ok_or_else(|| not_found("research artifact", &artifact_id))?;
+        if artifact.content_hash != snapshot.content_hash {
+            return Err(ResearchError::Invalid(
+                "PDF artifact hash does not match source snapshot".to_owned(),
+            ));
+        }
+        bounded_text("PDF extractor", &input.extractor, MAX_PROVENANCE_TEXT_BYTES)?;
+        let extractor_version = input
+            .extractor_version
+            .unwrap_or_else(|| "unspecified".to_owned());
+        bounded_text(
+            "PDF extractor version",
+            &extractor_version,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        if input.page_count > MAX_PDF_PAGES {
+            return Err(ResearchError::Invalid(format!(
+                "PDF page count exceeds {MAX_PDF_PAGES}"
+            )));
+        }
+        match input.status {
+            PdfExtractionStatus::Ready | PdfExtractionStatus::NoExtractableText => {
+                if input.page_count == 0 || input.pages.len() != input.page_count as usize {
+                    return Err(ResearchError::Invalid(
+                        "PDF extraction pages must cover page count exactly".to_owned(),
+                    ));
+                }
+            }
+            PdfExtractionStatus::Failed | PdfExtractionStatus::PasswordRequired => {
+                if !input.pages.is_empty() {
+                    return Err(ResearchError::Invalid(
+                        "failed PDF extraction must not contain page text".to_owned(),
+                    ));
+                }
+            }
+        }
+        let mut pages = Vec::with_capacity(input.pages.len());
+        let mut total_bytes = 0usize;
+        for (index, page) in input.pages.into_iter().enumerate() {
+            let expected_page = index as u32 + 1;
+            if page.page != expected_page {
+                return Err(ResearchError::Invalid(
+                    "PDF extraction pages must use 1-based contiguous numbering".to_owned(),
+                ));
+            }
+            bounded_text("PDF page text", &page.text, MAX_PDF_PAGE_TEXT_BYTES).or_else(
+                |error| {
+                    if page.text.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(error)
+                    }
+                },
+            )?;
+            total_bytes = total_bytes
+                .checked_add(page.text.len())
+                .ok_or_else(|| ResearchError::Invalid("PDF extraction size overflow".to_owned()))?;
+            if total_bytes > MAX_PDF_EXTRACTION_BYTES {
+                return Err(ResearchError::Invalid(format!(
+                    "PDF extraction exceeds {MAX_PDF_EXTRACTION_BYTES} bytes"
+                )));
+            }
+            pages.push(ResearchPdfPage {
+                extraction_id: ResearchPdfExtractionId::new(),
+                page: page.page,
+                text_hash: sha256_hash(page.text.as_bytes()),
+                text: page.text,
+            });
+        }
+        let has_extractable_text = pages.iter().any(|page| !page.text.trim().is_empty());
+        match input.status {
+            PdfExtractionStatus::NoExtractableText if has_extractable_text => {
+                return Err(ResearchError::Invalid(
+                    "no_extractable_text extraction contains text".to_owned(),
+                ));
+            }
+            PdfExtractionStatus::Ready if !has_extractable_text => {
+                return Err(ResearchError::Invalid(
+                    "ready PDF extraction contains no extractable text".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        let extraction_hash = pdf_extraction_hash(&pages);
+        if let Some(existing) = self
+            .repository
+            .find_pdf_extraction(
+                &input.source_snapshot_id,
+                &input.extractor,
+                &extractor_version,
+                &extraction_hash,
+            )
+            .await?
+        {
+            return Ok(existing);
+        }
+        let extraction_id = ResearchPdfExtractionId::new();
+        for page in &mut pages {
+            page.extraction_id = extraction_id.clone();
+        }
+        let extraction = ResearchPdfExtraction {
+            id: extraction_id,
+            source_snapshot_id: input.source_snapshot_id,
+            artifact_id,
+            extractor: input.extractor,
+            extractor_version,
+            page_count: input.page_count,
+            extraction_hash,
+            extracted_at_ms: now_ms(),
+            status: input.status,
+        };
+        if !self
+            .repository
+            .insert_pdf_extraction_with_pages(&extraction, &pages)
+            .await?
+        {
+            return self
+                .repository
+                .find_pdf_extraction(
+                    &extraction.source_snapshot_id,
+                    &extraction.extractor,
+                    &extraction.extractor_version,
+                    &extraction.extraction_hash,
+                )
+                .await?
+                .ok_or_else(|| {
+                    ResearchError::Invalid(
+                        "PDF extraction duplicate was detected but existing row was unavailable"
+                            .to_owned(),
+                    )
+                });
+        }
+        self.publish(
+            if matches!(
+                extraction.status,
+                PdfExtractionStatus::Failed | PdfExtractionStatus::PasswordRequired
+            ) {
+                "research.pdfExtractionFailed"
+            } else {
+                "research.pdfExtractionReady"
+            },
+            json!({
+                "extraction_id": extraction.id,
+                "snapshot_id": extraction.source_snapshot_id,
+                "page_count": extraction.page_count,
+                "status": extraction.status,
+                "extraction_hash": extraction.extraction_hash.value,
+            }),
+        );
+        Ok(extraction)
+    }
+
+    pub async fn get_pdf_extraction(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<ResearchPdfExtraction, ResearchError> {
+        let snapshot_id = ResearchSourceSnapshotId::parse(snapshot_id.to_owned())?;
+        self.repository
+            .list_pdf_extractions(&snapshot_id)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| not_found("PDF extraction", snapshot_id.as_str()))
+    }
+
+    pub async fn list_pdf_pages(
+        &self,
+        extraction_id: &str,
+        limit: u32,
+    ) -> Result<Vec<ResearchPdfPage>, ResearchError> {
+        let extraction_id = ResearchPdfExtractionId::parse(extraction_id.to_owned())?;
+        let limit = limit.clamp(1, 50);
+        if self
+            .repository
+            .get_pdf_extraction(&extraction_id)
+            .await?
+            .is_none()
+        {
+            return Err(not_found("PDF extraction", extraction_id.as_str()));
+        }
+        self.repository.list_pdf_pages(&extraction_id, limit).await
+    }
+
+    pub async fn get_pdf_page(
+        &self,
+        extraction_id: &str,
+        page: u32,
+    ) -> Result<ResearchPdfPage, ResearchError> {
+        let extraction_id = ResearchPdfExtractionId::parse(extraction_id.to_owned())?;
+        if page == 0 {
+            return Err(ResearchError::Invalid(
+                "PDF page must be positive".to_owned(),
+            ));
+        }
+        self.repository
+            .get_pdf_page(&extraction_id, page)
+            .await?
+            .ok_or_else(|| not_found("PDF page", &format!("{}:{page}", extraction_id.as_str())))
+    }
+
+    pub async fn capture_pdf_evidence(
+        &self,
+        input: CapturePdfEvidence,
+    ) -> Result<ResearchEvidence, ResearchError> {
+        let extraction = self
+            .repository
+            .get_pdf_extraction(&input.extraction_id)
+            .await?
+            .ok_or_else(|| not_found("PDF extraction", input.extraction_id.as_str()))?;
+        if extraction.source_snapshot_id != input.source_snapshot_id {
+            return Err(ResearchError::Invalid(
+                "PDF extraction does not belong to source snapshot".to_owned(),
+            ));
+        }
+        let page = self
+            .repository
+            .get_pdf_page(&input.extraction_id, input.page)
+            .await?
+            .ok_or_else(|| {
+                not_found(
+                    "PDF page",
+                    &format!("{}:{}", input.extraction_id, input.page),
+                )
+            })?;
+        let excerpt = unicode_slice(&page.text, input.start, input.end)?;
+        self.create_evidence_internal(
+            CreateResearchEvidence {
+                research_case_id: input.research_case_id,
+                source_snapshot_id: input.source_snapshot_id,
+                verbatim_excerpt: excerpt,
+                normalized_text: None,
+                locator: crate::EvidenceLocator::PdfTextRange {
+                    page: input.page,
+                    start: input.start,
+                    end: input.end,
+                },
+                capture_method: crate::CaptureMethod::UploadedArtifact,
+            },
+            Some(input.extraction_id),
+        )
+        .await
     }
 
     pub async fn list_evidence(
@@ -216,6 +555,21 @@ impl ResearchService {
         &self,
         input: CreateResearchEvidence,
     ) -> Result<ResearchEvidence, ResearchError> {
+        self.create_evidence_internal(input, None).await
+    }
+
+    async fn create_evidence_internal(
+        &self,
+        input: CreateResearchEvidence,
+        pdf_extraction_id: Option<ResearchPdfExtractionId>,
+    ) -> Result<ResearchEvidence, ResearchError> {
+        if matches!(input.locator, crate::EvidenceLocator::PdfTextRange { .. })
+            && pdf_extraction_id.is_none()
+        {
+            return Err(ResearchError::Invalid(
+                "PDF text evidence must be captured from a stored page range".to_owned(),
+            ));
+        }
         self.ensure_case(&input.research_case_id).await?;
         let snapshot = self
             .repository
@@ -255,6 +609,7 @@ impl ResearchService {
             locator: input.locator,
             captured_at_ms: now_ms(),
             capture_method: input.capture_method,
+            pdf_extraction_id,
         };
         self.repository.insert_evidence(&value).await?;
         self.publish(
@@ -418,6 +773,60 @@ fn sha256_hash(value: &[u8]) -> ContentHash {
         algorithm: HashAlgorithm::Sha256,
         value: hex,
     }
+}
+
+fn pdf_extraction_hash(pages: &[ResearchPdfPage]) -> ContentHash {
+    let mut hasher = Sha256::new();
+    for page in pages {
+        hasher.update(page.page.to_string().as_bytes());
+        hasher.update([0]);
+        hasher.update(page.text.len().to_string().as_bytes());
+        hasher.update([0]);
+        hasher.update(page.text.as_bytes());
+        hasher.update([0]);
+    }
+    let digest = hasher.finalize();
+    sha256_digest(&digest)
+}
+
+fn sha256_digest(digest: &[u8]) -> ContentHash {
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write;
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    ContentHash {
+        algorithm: HashAlgorithm::Sha256,
+        value: hex,
+    }
+}
+
+fn unicode_slice(text: &str, start: u64, end: u64) -> Result<String, ResearchError> {
+    if start > end {
+        return Err(ResearchError::Invalid(
+            "PDF text range start must not exceed end".to_owned(),
+        ));
+    }
+    let start = usize::try_from(start)
+        .map_err(|_| ResearchError::Invalid("PDF text range is too large".to_owned()))?;
+    let end = usize::try_from(end)
+        .map_err(|_| ResearchError::Invalid("PDF text range is too large".to_owned()))?;
+    let mut offsets = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    offsets.push(text.len());
+    if end >= offsets.len() || start >= offsets.len() {
+        return Err(ResearchError::Invalid(
+            "PDF text range exceeds stored page text".to_owned(),
+        ));
+    }
+    bounded_text(
+        "PDF evidence excerpt",
+        &text[offsets[start]..offsets[end]],
+        MAX_EVIDENCE_EXCERPT_BYTES,
+    )?;
+    Ok(text[offsets[start]..offsets[end]].to_owned())
 }
 
 #[cfg(test)]
@@ -675,7 +1084,7 @@ mod tests {
         let source = first_service
             .create_source(CreateResearchSource {
                 research_case_id: case.id.clone(),
-                kind: SourceKind::ReferencePdf,
+                kind: SourceKind::Manuscript,
                 label: "Reference".to_owned(),
             })
             .await
@@ -900,5 +1309,145 @@ mod tests {
                 .await,
             Err(ResearchError::Invalid(message)) if message.contains("same research case")
         ));
+    }
+
+    #[tokio::test]
+    async fn streamed_pdf_artifact_snapshot_extraction_and_exact_unicode_evidence_are_anchored() {
+        let database = Database::in_memory().await.unwrap();
+        let root = std::env::temp_dir().join(format!("9profs-research-pdf-{}", now_ms()));
+        let store = Arc::new(crate::ResearchArtifactStore::new(
+            root.clone(),
+            database.pool().clone(),
+        ));
+        let service = ResearchService::new(
+            crate::SqliteResearchRepository::new(database.pool().clone()),
+            Arc::new(BroadcastEventBus::new(64)),
+        )
+        .with_artifact_store(Arc::clone(&store));
+
+        let mut upload = store
+            .begin_upload(r"C:\Users\person\reference.pdf")
+            .unwrap();
+        upload.append(b"%PDF-1.7\nfixture bytes").unwrap();
+        let artifact = upload.finish().await.unwrap();
+        assert_eq!(artifact.artifact().media_type, "application/pdf");
+        assert_eq!(artifact.artifact().size_bytes, 22);
+        let stored_path = root.join(format!("{}.pdf", artifact.content_hash().value));
+        assert_eq!(
+            std::fs::read(stored_path).unwrap(),
+            b"%PDF-1.7\nfixture bytes"
+        );
+
+        let mut duplicate = store.begin_upload("duplicate.pdf").unwrap();
+        duplicate.append(b"%PDF-1.7\nfixture bytes").unwrap();
+        let duplicate = duplicate.finish().await.unwrap();
+        assert_eq!(duplicate.artifact_id(), artifact.artifact_id());
+
+        let mut revised = store.begin_upload("revised.pdf").unwrap();
+        revised.append(b"%PDF-1.7\nrevised bytes").unwrap();
+        let revised = revised.finish().await.unwrap();
+        assert_ne!(revised.artifact_id(), artifact.artifact_id());
+        assert_eq!(
+            std::fs::read(root.join(format!("{}.pdf", artifact.content_hash().value))).unwrap(),
+            b"%PDF-1.7\nfixture bytes"
+        );
+
+        let temp_upload_count = || {
+            std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".upload-"))
+                .count()
+        };
+        let temp_uploads_before = temp_upload_count();
+        let mut invalid_upload = store.begin_upload("invalid.pdf").unwrap();
+        invalid_upload.append(b"not a PDF").unwrap();
+        assert!(invalid_upload.finish().await.is_err());
+        assert_eq!(temp_upload_count(), temp_uploads_before);
+
+        let case = service
+            .create_case(CreateResearchCase {
+                title: "PDF evidence".to_owned(),
+            })
+            .await
+            .unwrap();
+        let source = service
+            .create_source(CreateResearchSource {
+                research_case_id: case.id.clone(),
+                kind: SourceKind::ReferencePdf,
+                label: "Reference".to_owned(),
+            })
+            .await
+            .unwrap();
+        let snapshot = service
+            .capture_verified_artifact_snapshot(source.id.clone(), &artifact, BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(snapshot.content_hash, *artifact.content_hash());
+
+        let page_text = "Điều trị giảm tử vong 😀 20%.";
+        let extraction = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("test".to_owned()),
+                page_count: 2,
+                status: PdfExtractionStatus::Ready,
+                pages: vec![
+                    crate::CapturePdfPage {
+                        page: 1,
+                        text: page_text.to_owned(),
+                    },
+                    crate::CapturePdfPage {
+                        page: 2,
+                        text: "Second page".to_owned(),
+                    },
+                ],
+            })
+            .await
+            .unwrap();
+        let start_byte = page_text.find("giảm tử vong").unwrap();
+        let start = page_text[..start_byte].chars().count() as u64;
+        let end = start + "giảm tử vong".chars().count() as u64;
+        let evidence = service
+            .capture_pdf_evidence(CapturePdfEvidence {
+                research_case_id: case.id.clone(),
+                source_snapshot_id: snapshot.id.clone(),
+                extraction_id: extraction.id.clone(),
+                page: 1,
+                start,
+                end,
+            })
+            .await
+            .unwrap();
+        assert_eq!(evidence.verbatim_excerpt, "giảm tử vong");
+        assert_eq!(evidence.pdf_extraction_id, Some(extraction.id.clone()));
+        assert_eq!(
+            service.list_evidence(None, None).await.unwrap()[0].pdf_extraction_id,
+            Some(extraction.id.clone())
+        );
+        assert!(matches!(
+            service
+                .create_evidence(CreateResearchEvidence {
+                    research_case_id: case.id,
+                    source_snapshot_id: snapshot.id,
+                    verbatim_excerpt: "eliminated mortality".to_owned(),
+                    normalized_text: None,
+                    locator: EvidenceLocator::PdfTextRange { page: 1, start, end },
+                    capture_method: CaptureMethod::UploadedArtifact,
+                })
+                .await,
+            Err(ResearchError::Invalid(message)) if message.contains("stored page range")
+        ));
+        std::fs::write(
+            root.join(format!("{}.pdf", artifact.content_hash().value)),
+            b"%PDF-1.7\ntampered bytes",
+        )
+        .unwrap();
+        assert!(matches!(
+            store.get(artifact.artifact_id()).await,
+            Err(ResearchError::Artifact(message)) if message.contains("do not match metadata")
+        ));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

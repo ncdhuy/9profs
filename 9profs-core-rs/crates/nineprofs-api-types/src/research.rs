@@ -72,6 +72,11 @@ pub enum ResearchEvidenceLocatorDto {
         page: u32,
         end_page: Option<u32>,
     },
+    PdfTextRange {
+        page: u32,
+        start: u64,
+        end: u64,
+    },
     Manuscript {
         block_id: String,
         start: Option<u64>,
@@ -158,6 +163,57 @@ pub struct ResearchSourceSnapshotDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchPdfExtractionStatusDto {
+    Ready,
+    NoExtractableText,
+    Failed,
+    PasswordRequired,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchArtifactDto {
+    pub artifact_id: String,
+    pub content_hash: ResearchContentHashDto,
+    pub size_bytes: u64,
+    pub media_type: String,
+    pub original_filename: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchPdfExtractionDto {
+    pub extraction_id: String,
+    pub source_snapshot_id: String,
+    pub artifact_id: String,
+    pub extractor: String,
+    pub extractor_version: String,
+    pub page_count: u32,
+    pub extraction_hash: ResearchContentHashDto,
+    pub extracted_at_ms: i64,
+    pub status: ResearchPdfExtractionStatusDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchPdfPageDto {
+    pub extraction_id: String,
+    pub page: u32,
+    pub text: String,
+    pub text_hash: ResearchContentHashDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferencePdfIngestionDto {
+    pub artifact: ResearchArtifactDto,
+    pub source: ResearchSourceDto,
+    pub snapshot: ResearchSourceSnapshotDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResearchEvidenceDto {
     pub evidence_id: String,
@@ -169,6 +225,7 @@ pub struct ResearchEvidenceDto {
     pub excerpt_hash: ResearchContentHashDto,
     pub captured_at_ms: i64,
     pub capture_method: ResearchCaptureMethodDto,
+    pub pdf_extraction_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -218,6 +275,34 @@ pub struct CaptureResearchSourceSnapshotRequest {
     pub origin: ResearchSourceOriginDto,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResearchPdfPageInput {
+    pub page: u32,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaptureResearchPdfExtractionRequest {
+    pub extractor: String,
+    pub extractor_version: Option<String>,
+    pub page_count: u32,
+    pub status: ResearchPdfExtractionStatusDto,
+    pub pages: Vec<ResearchPdfPageInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaptureResearchPdfEvidenceRequest {
+    pub research_case_id: String,
+    pub source_snapshot_id: String,
+    pub extraction_id: String,
+    pub page: u32,
+    pub start: u64,
+    pub end: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

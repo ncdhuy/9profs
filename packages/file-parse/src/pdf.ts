@@ -134,8 +134,18 @@ function installDomMatrixPolyfill(): void {
   g.DOMMatrix = DOMMatrixPolyfill
 }
 
-/** extract text from a pdf with pdfjs-dist (pure JS, no native deps), one section per page */
-export async function pdfToText(bytes: Uint8Array): Promise<string> {
+export interface PdfTextPage {
+  page: number
+  text: string
+}
+
+export interface PdfTextExtraction {
+  pageCount: number
+  pages: PdfTextPage[]
+}
+
+/** Extract deterministic, page-aware text from a PDF with pdfjs-dist. Pages are 1-based. */
+export async function pdfToPages(bytes: Uint8Array): Promise<PdfTextExtraction> {
   installDomMatrixPolyfill()
   // Explicitly import the worker module (its top level registers globalThis.pdfjsWorker,
   // which the fake worker prefers) — otherwise pdfjs looks up pdf.worker.mjs by path at
@@ -155,7 +165,7 @@ export async function pdfToText(bytes: Uint8Array): Promise<string> {
   })
   const doc = await loadingTask.promise
   try {
-    const pages: string[] = []
+    const pages: PdfTextPage[] = []
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i)
       const content = await page.getTextContent()
@@ -166,11 +176,17 @@ export async function pdfToText(bytes: Uint8Array): Promise<string> {
           if (item.hasEOL) text += '\n'
         }
       }
-      pages.push(text.trim())
+      pages.push({ page: i, text: text.trim() })
       page.cleanup()
     }
-    return pages.join('\n\n')
+    return { pageCount: doc.numPages, pages }
   } finally {
     await loadingTask.destroy()
   }
+}
+
+/** Backward-compatible whole-document text extraction. */
+export async function pdfToText(bytes: Uint8Array): Promise<string> {
+  const extraction = await pdfToPages(bytes)
+  return extraction.pages.map(({ text }) => text).join('\n\n')
 }
