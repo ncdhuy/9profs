@@ -148,6 +148,30 @@ export type AgentExecutionOutputEvent =
         readonly details: { readonly code: string; readonly message: string }
       }
     }
+  | {
+      readonly id: string
+      readonly name: 'agent.toolStarted'
+      readonly occurred_at_ms: number
+      readonly payload: {
+        readonly run_id: AgentRunId
+        readonly task_id: string
+        readonly details: { readonly tool_call_id: string; readonly tool: string }
+      }
+    }
+  | {
+      readonly id: string
+      readonly name: 'agent.toolCompleted'
+      readonly occurred_at_ms: number
+      readonly payload: {
+        readonly run_id: AgentRunId
+        readonly task_id: string
+        readonly details: {
+          readonly tool_call_id: string
+          readonly tool: string
+          readonly is_error: boolean
+        }
+      }
+    }
 
 export type AgentRunStatus = 'completed' | 'failed' | 'cancelled'
 

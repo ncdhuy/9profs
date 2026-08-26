@@ -306,9 +306,26 @@ impl OutputSink for AionRsOutputSink {
 
     fn emit_thinking(&self, _text: &str, _msg_id: &str) {}
 
-    fn emit_tool_call(&self, _tool_use_id: &str, _name: &str, _input: &str) {}
+    fn emit_tool_call(&self, tool_use_id: &str, name: &str, _input: &str) {
+        if tool_use_id.is_empty() || name.is_empty() {
+            return;
+        }
+        let _ = self.events.send(AgentExecutionEvent::ToolStarted {
+            tool_call_id: tool_use_id.to_owned(),
+            name: name.to_owned(),
+        });
+    }
 
-    fn emit_tool_result(&self, _tool_use_id: &str, _name: &str, _is_error: bool, _content: &str) {}
+    fn emit_tool_result(&self, tool_use_id: &str, name: &str, is_error: bool, _content: &str) {
+        if tool_use_id.is_empty() || name.is_empty() {
+            return;
+        }
+        let _ = self.events.send(AgentExecutionEvent::ToolCompleted {
+            tool_call_id: tool_use_id.to_owned(),
+            name: name.to_owned(),
+            is_error,
+        });
+    }
 
     fn emit_stream_start(&self, _msg_id: &str) {
         if !self.started.swap(true, Ordering::AcqRel) {
@@ -599,9 +616,40 @@ mod tests {
                 AgentExecutionEvent::OutputDelta { .. } => saw_delta = true,
                 AgentExecutionEvent::OutputCompleted { .. } => saw_completed = true,
                 AgentExecutionEvent::Error { .. } => {}
+                AgentExecutionEvent::ToolStarted { .. }
+                | AgentExecutionEvent::ToolCompleted { .. } => {}
             }
         }
         assert!(saw_started && saw_delta && saw_completed);
+    }
+
+    #[test]
+    fn output_sink_emits_tool_lifecycle_without_input_or_output_payloads() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let sink = AionRsOutputSink::new(sender);
+        sink.emit_tool_call("call-1", "document.inspect_active", "manuscript contents");
+        sink.emit_tool_result(
+            "call-1",
+            "document.inspect_active",
+            true,
+            "document contents and credentials",
+        );
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            AgentExecutionEvent::ToolStarted {
+                tool_call_id: "call-1".to_owned(),
+                name: "document.inspect_active".to_owned(),
+            }
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            AgentExecutionEvent::ToolCompleted {
+                tool_call_id: "call-1".to_owned(),
+                name: "document.inspect_active".to_owned(),
+                is_error: true,
+            }
+        );
     }
 
     #[test]

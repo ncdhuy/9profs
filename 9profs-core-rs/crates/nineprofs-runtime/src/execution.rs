@@ -764,11 +764,41 @@ fn publish_execution_event(
             state.error_emitted = true;
             ("agent.error", json!({ "code": code, "message": message }))
         }
+        AgentExecutionEvent::ToolStarted { tool_call_id, name } => {
+            if state.output_completed || state.error_emitted {
+                return;
+            }
+            (
+                "agent.toolStarted",
+                json!({ "tool_call_id": tool_call_id, "tool": safe_tool_name(&name) }),
+            )
+        }
+        AgentExecutionEvent::ToolCompleted {
+            tool_call_id,
+            name,
+            is_error,
+        } => {
+            if state.output_completed || state.error_emitted {
+                return;
+            }
+            (
+                "agent.toolCompleted",
+                json!({
+                    "tool_call_id": tool_call_id,
+                    "tool": safe_tool_name(&name),
+                    "is_error": is_error,
+                }),
+            )
+        }
     };
     let _ = events.publish(EventEnvelope::new(
         name,
         json!({ "run_id": run_id, "task_id": task_id, "details": details }),
     ));
+}
+
+fn safe_tool_name(name: &str) -> String {
+    name.chars().take(128).collect()
 }
 
 #[cfg(test)]
@@ -1014,6 +1044,27 @@ mod tests {
             &events,
             &run_id,
             &task_id,
+            AgentExecutionEvent::ToolStarted {
+                tool_call_id: "call-1".to_owned(),
+                name: "document.inspect_active".to_owned(),
+            },
+            &mut state,
+        );
+        publish_execution_event(
+            &events,
+            &run_id,
+            &task_id,
+            AgentExecutionEvent::ToolCompleted {
+                tool_call_id: "call-1".to_owned(),
+                name: "document.inspect_active".to_owned(),
+                is_error: false,
+            },
+            &mut state,
+        );
+        publish_execution_event(
+            &events,
+            &run_id,
+            &task_id,
             AgentExecutionEvent::OutputCompleted {
                 output: "complete".to_owned(),
             },
@@ -1049,20 +1100,31 @@ mod tests {
             &mut state,
         );
 
+        assert_eq!(receiver.recv().await.unwrap().name, "agent.outputStarted");
+        assert_eq!(receiver.recv().await.unwrap().name, "agent.outputDelta");
+
+        let tool_started = receiver.recv().await.unwrap();
+        let tool_completed = receiver.recv().await.unwrap();
+        assert_eq!(tool_started.name, "agent.toolStarted");
+        assert_eq!(
+            tool_started.payload["details"]["tool"],
+            "document.inspect_active"
+        );
+        assert_eq!(tool_completed.name, "agent.toolCompleted");
+        assert_eq!(tool_completed.payload["details"]["tool_call_id"], "call-1");
+        assert!(
+            !tool_completed.payload["details"]
+                .to_string()
+                .contains("document contents")
+        );
+
         let names = [
-            receiver.recv().await.unwrap().name,
-            receiver.recv().await.unwrap().name,
             receiver.recv().await.unwrap().name,
             receiver.recv().await.unwrap().name,
         ];
         assert_eq!(
             names,
-            [
-                "agent.outputStarted".to_owned(),
-                "agent.outputDelta".to_owned(),
-                "agent.outputCompleted".to_owned(),
-                "agent.error".to_owned(),
-            ]
+            ["agent.outputCompleted".to_owned(), "agent.error".to_owned(),]
         );
     }
 

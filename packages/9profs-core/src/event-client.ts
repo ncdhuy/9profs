@@ -20,6 +20,12 @@ export interface CoreAgentEventHandlers {
   readonly onError?: (
     event: Extract<AgentExecutionOutputEvent, { readonly name: 'agent.error' }>,
   ) => void
+  readonly onToolStarted?: (
+    event: Extract<AgentExecutionOutputEvent, { readonly name: 'agent.toolStarted' }>,
+  ) => void
+  readonly onToolCompleted?: (
+    event: Extract<AgentExecutionOutputEvent, { readonly name: 'agent.toolCompleted' }>,
+  ) => void
 }
 
 export interface CoreEventSubscription {
@@ -63,6 +69,20 @@ function parseAgentEvent(raw: unknown): AgentExecutionOutputEvent | undefined {
 
   const payload = value.payload
   const details = payload.details as Record<string, unknown>
+  const toolName =
+    typeof details.tool === 'string'
+      ? details.tool
+      : typeof details.name === 'string'
+        ? details.name
+        : typeof details.tool_name === 'string'
+          ? details.tool_name
+          : undefined
+  const toolCallId =
+    typeof details.tool_call_id === 'string'
+      ? details.tool_call_id
+      : typeof details.toolCallId === 'string'
+        ? details.toolCallId
+        : undefined
   switch (value.name) {
     case 'agent.outputStarted':
       return value as AgentExecutionOutputEvent
@@ -73,6 +93,27 @@ function parseAgentEvent(raw: unknown): AgentExecutionOutputEvent | undefined {
     case 'agent.error':
       return typeof details.code === 'string' && typeof details.message === 'string'
         ? (value as AgentExecutionOutputEvent)
+        : undefined
+    case 'agent.toolStarted':
+      return toolName && toolCallId
+        ? ({
+            ...value,
+            payload: { ...payload, details: { tool_call_id: toolCallId, tool: toolName } },
+          } as AgentExecutionOutputEvent)
+        : undefined
+    case 'agent.toolCompleted':
+      return toolName && toolCallId && typeof details.is_error === 'boolean'
+        ? ({
+            ...value,
+            payload: {
+              ...payload,
+              details: {
+                tool_call_id: toolCallId,
+                tool: toolName,
+                is_error: details.is_error,
+              },
+            },
+          } as AgentExecutionOutputEvent)
         : undefined
     default:
       return undefined
@@ -118,6 +159,8 @@ export function createCoreEventClient(options: CoreEventClientOptions): CoreEven
       if (event.name === 'agent.outputDelta') handlers.onOutputDelta?.(event)
       if (event.name === 'agent.outputCompleted') handlers.onOutputCompleted?.(event)
       if (event.name === 'agent.error') handlers.onError?.(event)
+      if (event.name === 'agent.toolStarted') handlers.onToolStarted?.(event)
+      if (event.name === 'agent.toolCompleted') handlers.onToolCompleted?.(event)
     }
   }
 

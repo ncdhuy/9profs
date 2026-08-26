@@ -31,7 +31,14 @@ import fileDocumentIcon from '../assets/file-document.png'
 import fileGeneralIcon from '../assets/file-general.png'
 import { IconNewChat, IconSidebarCollapse } from '../components/icons'
 import { ProposalReview } from './ProposalReview'
-import type { CoreTransport } from '@genoffice/9profs-core'
+import type { CoreTransport, DocsAgentProfile } from '@genoffice/9profs-core'
+import {
+  CoreDocsChatError,
+  CoreDocsChatController,
+  type CoreDocsToolActivity,
+  chooseDocsAiExecutionMode,
+  type DocsAiExecutionMode,
+} from './core-chat-controller'
 
 interface ToolActivity {
   name: string
@@ -95,6 +102,22 @@ const PANEL_WIDTH_KEY = 'docs-ai-panel-width'
 const PANEL_WIDTH_DEFAULT = 360
 const PANEL_WIDTH_MIN = 280
 
+function readAiStorage(key: string): string | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeAiStorage(key: string, value: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(key, value)
+  } catch {
+    /* storage is optional in embedded/test renderers */
+  }
+}
+
 function maxPanelWidth(): number {
   // The viewport can be transiently tiny (a WebContentsView is 0×0 until the
   // shell lays it out), so never let the ceiling drop below the minimum
@@ -106,7 +129,7 @@ function clampPanelWidth(w: number): number {
 }
 
 function loadPanelWidth(): number {
-  const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY))
+  const saved = Number(readAiStorage(PANEL_WIDTH_KEY))
   // static bounds only — clamping against the window here would bake a
   // transiently small viewport into the restored preference
   return Number.isFinite(saved) && saved > 0
@@ -286,14 +309,16 @@ export function AiPanel({
   const { t } = useI18n()
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [executionMode, setExecutionMode] = useState<DocsAiExecutionMode>('undecided')
+  const executionModeRef = useRef<DocsAiExecutionMode>('undecided')
+  const coreProfileRef = useRef<DocsAgentProfile | null>(null)
+  const coreControllerRef = useRef<CoreDocsChatController | null>(null)
   /** Wall-clock start of the current run, drives the elapsed badge */
   const runStartedAtRef = useRef(0)
   const [chat, setChat] = useState<ChatEntry[]>([])
   /** Past conversation restored from JSONL (read-only transcript, not fed to the model) */
   const [historicChat, setHistoricChat] = useState<ChatEntry[]>([])
-  const [trackChanges, setTrackChanges] = useState(
-    () => localStorage.getItem(TRACK_CHANGES_KEY) === '1',
-  )
+  const [trackChanges, setTrackChanges] = useState(() => readAiStorage(TRACK_CHANGES_KEY) === '1')
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const [attachments, setAttachments] = useState<AttachmentMeta[]>([])
   const [attachNotice, setAttachNotice] = useState<string | null>(null)
@@ -434,6 +459,41 @@ export function AiPanel({
     Array<{ name: string; summary: string; isError?: boolean; input?: string; output?: string }>
   >([])
 
+  const setChatExecutionMode = (mode: DocsAiExecutionMode) => {
+    executionModeRef.current = mode
+    setExecutionMode(mode)
+  }
+
+  // A document replacement starts a fresh chat identity. Core conversation IDs
+  // are never redirected to another document.
+  useEffect(() => {
+    setChatExecutionMode('undecided')
+    coreProfileRef.current = null
+    coreControllerRef.current?.dispose()
+    coreControllerRef.current = null
+  }, [documentId])
+
+  // Readiness belongs to Core. Renderer only decides whether the returned
+  // profile permits the Core path for a fresh chat.
+  useEffect(() => {
+    let disposed = false
+    coreProfileRef.current = null
+    if (!coreTransport || !documentId) return
+    void coreTransport
+      .documentAgentProfile()
+      .then((profile) => {
+        if (!disposed) coreProfileRef.current = profile
+      })
+      .catch(() => {
+        if (!disposed) coreProfileRef.current = null
+      })
+    return () => {
+      disposed = true
+    }
+  }, [coreTransport, documentId])
+
+  useEffect(() => () => coreControllerRef.current?.dispose(), [])
+
   // ── Chat-history persistence ────────────────────────────────────────────
   useEffect(() => {
     const api = (window as Window & { projectApi?: typeof window.projectApi }).projectApi
@@ -468,8 +528,12 @@ export function AiPanel({
               })),
           })),
         )
-        // restore model context: follow-ups after reopening a file continue the previous conversation (only when the loop is idle with no history)
-        loopRef.current?.restore(msgs.map((m) => ({ role: m.role, text: m.text })))
+        // Core has no durable restore. Existing persisted chats stay on the
+        // legacy compatibility path and restore into AgentLoop only.
+        if (executionModeRef.current === 'undecided') setChatExecutionMode('legacy')
+        if (executionModeRef.current === 'legacy') {
+          getLegacyLoop().restore(msgs.map((m) => ({ role: m.role, text: m.text })))
+        }
       })
       .catch(() => {
         /* history load failures are silent */
@@ -543,12 +607,12 @@ export function AiPanel({
   }
 
   const loopRef = useRef<AgentLoop<PmNode> | null>(null)
-  if (!loopRef.current) {
+  const createLegacyLoop = () => {
     const numIds = (): NumIds => ({
       bullet: findNumId(blocksRef.current, 'bullet') ?? numIdFallbackRef.current?.bullet ?? null,
       ordered: findNumId(blocksRef.current, 'ordered') ?? numIdFallbackRef.current?.ordered ?? null,
     })
-    loopRef.current = new AgentLoop<PmNode>({
+    return new AgentLoop<PmNode>({
       transport: createElectronTransport(() => settingsRef.current),
       systemSuffix: aiLangDirective,
       maxTurns: DOCS_AGENT_MAX_TURNS,
@@ -683,6 +747,8 @@ export function AiPanel({
     })
   }
 
+  const getLegacyLoop = () => (loopRef.current ??= createLegacyLoop())
+
   useEffect(() => {
     if (!preset) return
     if (preset.autoRun) runWith(preset.text)
@@ -744,17 +810,162 @@ export function AiPanel({
     return images
   }
 
+  const getCoreController = (profile: DocsAgentProfile) => {
+    const current = coreControllerRef.current
+    if (
+      current &&
+      current.documentId === documentId &&
+      current.assistantId === profile.defaultAssistantId
+    ) {
+      return current
+    }
+    current?.dispose()
+    const controller = new CoreDocsChatController({
+      transport: coreTransport!,
+      documentId: documentId!,
+      assistantId: profile.defaultAssistantId,
+      onDelta: (delta) => patchLastAssistant((last) => ({ text: last.text + delta })),
+      onToolStarted: (activity) => {
+        patchLastAssistant((last) => ({
+          tools: [
+            ...(last.tools ?? []),
+            { name: activity.name, summary: activity.summary, running: true },
+          ],
+        }))
+      },
+      onToolCompleted: (activity) => {
+        runToolsRef.current.push({
+          name: activity.name,
+          summary: activity.summary,
+          isError: activity.isError,
+        })
+        patchLastAssistant((last) => {
+          const tools = [...(last.tools ?? [])]
+          let runningIndex = -1
+          for (let index = tools.length - 1; index >= 0; index--) {
+            if (tools[index]!.running && tools[index]!.name === activity.name) {
+              runningIndex = index
+              break
+            }
+          }
+          const completed = {
+            name: activity.name,
+            summary: activity.summary,
+            isError: activity.isError,
+          }
+          if (runningIndex >= 0) tools[runningIndex] = completed
+          else tools.push(completed)
+          return { tools }
+        })
+      },
+    })
+    coreControllerRef.current = controller
+    return controller
+  }
+
+  const showCoreError = (error: unknown) => {
+    const message = error instanceof CoreDocsChatError ? error.message : 'Document AI failed.'
+    setChat((prev) => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i]!.role === 'user') {
+          next[i] = { ...next[i]!, undelivered: true }
+          break
+        }
+      }
+      const last = next.at(-1)
+      if (last?.role === 'assistant') {
+        next[next.length - 1] = {
+          ...last,
+          streaming: false,
+          error: message,
+          tools: last.tools?.filter((tool) => !tool.running),
+        }
+      }
+      return next
+    })
+    setBusy(false)
+  }
+
+  const startLegacyRun = (instruction: string, sentAtts: AttachmentMeta[]) => {
+    const loop = getLegacyLoop()
+    void collectImageAttachments(sentAtts)
+      .catch((): AgentImage[] => {
+        setAttachNotice(t('aiImagesSendFailed'))
+        window.setTimeout(() => setAttachNotice(null), 5000)
+        return []
+      })
+      .then((images) => loop.run(instruction, images))
+  }
+
+  const startCoreRun = (
+    instruction: string,
+    sentAtts: AttachmentMeta[],
+    profile: DocsAgentProfile,
+  ) => {
+    const controller = getCoreController(profile)
+    void controller
+      .run(instruction)
+      .then(({ text, cancelled }) => {
+        const finalText = text || (cancelled ? tModule('aiStopped') : '')
+        patchLastAssistant((last) => ({
+          streaming: false,
+          text: finalText || (last.tools?.length ? last.text : tModule('aiNoReply')),
+          tools: last.tools?.filter((tool) => !tool.running),
+        }))
+        setBusy(false)
+        if (!cancelled && (finalText || runToolsRef.current.length > 0)) {
+          persistMessage('assistant', finalText, runToolsRef.current)
+        }
+      })
+      .catch((error: unknown) => {
+        if (
+          error instanceof CoreDocsChatError &&
+          error.fallbackAllowed &&
+          controller.currentConversationId === null
+        ) {
+          setChatExecutionMode('legacy')
+          startLegacyRun(instruction, sentAtts)
+          return
+        }
+        showCoreError(error)
+      })
+  }
+
   const runWith = (
     instruction: string,
     displayInstruction = instruction,
     attachmentsOverride?: AttachmentMeta[],
   ) => {
-    const loop = loopRef.current
-    if (!instruction || !loop || loop.busy) return
+    if (!instruction || busy) return
     setInput('')
     // The message consumes the composer attachments: they ride along (echoed on the
     // bubble, images multimodal, files via the files skill) and the composer clears.
     const sentAtts = attachmentsOverride ?? attachmentsRef.current
+    let mode = executionModeRef.current
+    if (mode === 'undecided') {
+      mode = chooseDocsAiExecutionMode({
+        currentMode: mode,
+        coreTransport,
+        documentId,
+        profile: coreProfileRef.current,
+        hasAttachments: sentAtts.length > 0,
+        hasHistoricChat: historicChat.length > 0,
+      })
+      setChatExecutionMode(mode)
+    }
+    // Core has no attachment/file tools yet. Transfer successful text history
+    // into the existing AgentLoop once, then keep this chat on Legacy.
+    if (mode === 'core' && sentAtts.length > 0) {
+      const history = chat
+        .filter((entry) => entry.text && !entry.error && !entry.undelivered)
+        .map((entry) => ({ role: entry.role, text: entry.text }))
+      getLegacyLoop().restore(history)
+      setChatExecutionMode('legacy')
+      mode = 'legacy'
+      coreControllerRef.current?.reset()
+      coreControllerRef.current = null
+    }
     if (!attachmentsOverride && sentAtts.length > 0) {
       const seen = new Set(sentAttachmentsRef.current.map((a) => a.path))
       sentAttachmentsRef.current = [
@@ -781,17 +992,17 @@ export function AiPanel({
     runStartedAtRef.current = Date.now()
     setBusy(true)
     persistMessage('user', instruction, undefined, sentAtts)
-    // a rejected image read must not strand the run (busy would stay true forever): degrade to a no-image send
-    void collectImageAttachments(sentAtts)
-      .catch((): AgentImage[] => {
-        setAttachNotice(t('aiImagesSendFailed'))
-        window.setTimeout(() => setAttachNotice(null), 5000)
-        return []
-      })
-      .then((images) => loop.run(instruction, images))
+    if (mode === 'core' && coreProfileRef.current) {
+      startCoreRun(instruction, sentAtts, coreProfileRef.current)
+    } else {
+      startLegacyRun(instruction, sentAtts)
+    }
   }
 
-  const cancel = () => loopRef.current?.cancel()
+  const cancel = () => {
+    if (executionModeRef.current === 'core') void coreControllerRef.current?.cancel()
+    else getLegacyLoop().cancel()
+  }
 
   const retry = () =>
     runWith(lastInstructionRef.current, lastInstructionRef.current, lastAttachmentsRef.current)
@@ -799,9 +1010,13 @@ export function AiPanel({
   const continueRun = () => runWith(DOCS_CONTINUE_INSTRUCTION, t('aiContinue'))
 
   const newChat = () => {
+    coreControllerRef.current?.reset()
+    coreControllerRef.current = null
     loopRef.current?.reset()
+    setChatExecutionMode('undecided')
     setBusy(false)
     setChat([])
+    setHistoricChat([])
     sentAttachmentsRef.current = []
     inputRef.current?.focus()
   }
@@ -864,7 +1079,7 @@ export function AiPanel({
   const toggleTrackChanges = () => {
     const next = !trackChanges
     setTrackChanges(next)
-    localStorage.setItem(TRACK_CHANGES_KEY, next ? '1' : '0')
+    writeAiStorage(TRACK_CHANGES_KEY, next ? '1' : '0')
     // switching off keeps nothing pending: accept whatever is still highlighted
     if (!next) acceptChanges()
   }
@@ -905,7 +1120,7 @@ export function AiPanel({
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       setResizing(false)
-      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(preferredWidthRef.current)))
+      writeAiStorage(PANEL_WIDTH_KEY, String(Math.round(preferredWidthRef.current)))
     }
     resizeCleanupRef.current = cleanup
     window.addEventListener('pointermove', onMove)
@@ -921,6 +1136,7 @@ export function AiPanel({
     return (
       <button
         className="ai-rail"
+        data-execution-mode={executionMode}
         data-tip={t('appExpandAiPanel')}
         aria-label={t('appExpandAiPanel')}
         onClick={onExpand}
@@ -934,6 +1150,7 @@ export function AiPanel({
     <aside
       ref={asideRef}
       style={{ width: '100%' }}
+      data-execution-mode={executionMode}
       className={`ai-panel${dragOver ? ' ai-panel-dragover' : ''}${resizing ? ' ai-panel-resizing' : ''}`}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
@@ -960,7 +1177,7 @@ export function AiPanel({
           {t('aiPanelTitle')}
         </span>
         <div className="ai-panel-header-actions">
-          {chat.length > 0 && (
+          {(chat.length > 0 || historicChat.length > 0) && (
             <button
               className="ai-header-btn"
               onClick={newChat}

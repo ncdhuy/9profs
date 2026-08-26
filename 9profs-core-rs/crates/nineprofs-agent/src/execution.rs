@@ -159,9 +159,25 @@ pub struct AgentExecutionRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentExecutionEvent {
     OutputStarted,
-    OutputDelta { delta: String },
-    OutputCompleted { output: String },
-    Error { code: String, message: String },
+    OutputDelta {
+        delta: String,
+    },
+    OutputCompleted {
+        output: String,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+    ToolStarted {
+        tool_call_id: String,
+        name: String,
+    },
+    ToolCompleted {
+        tool_call_id: String,
+        name: String,
+        is_error: bool,
+    },
 }
 
 pub type AgentEventSink = mpsc::UnboundedSender<AgentExecutionEvent>;

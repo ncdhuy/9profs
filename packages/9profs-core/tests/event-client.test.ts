@@ -40,17 +40,36 @@ describe('Core event client', () => {
       onOutputDelta: (value) => received.push(value.payload.details.delta),
       onOutputCompleted: () => received.push('completed'),
       onError: () => received.push('error'),
+      onToolStarted: (value) => received.push(`tool-start:${value.payload.details.tool}`),
+      onToolCompleted: (value) => received.push(`tool-done:${value.payload.details.tool}`),
     })
 
     socket.deliver(event('agent.outputStarted', {}))
     socket.deliver(event('agent.outputDelta', { delta: 'one' }))
     socket.deliver(event('agent.outputDelta', { delta: 'two' }))
+    socket.deliver(
+      event('agent.toolStarted', { tool_call_id: 'call-1', name: 'document.inspect_active' }),
+    )
+    socket.deliver(
+      event('agent.toolCompleted', {
+        tool_call_id: 'call-1',
+        name: 'document.inspect_active',
+        is_error: false,
+      }),
+    )
     socket.deliver(event('agent.outputCompleted', { output: 'onetwo' }))
     socket.deliver(event('agent.outputCompleted', { output: 'duplicate' }))
     socket.deliver(event('agent.error', { code: 'late', message: 'late' }))
     socket.deliver(event('agent.outputDelta', { delta: 'other' }, 'run-2'))
 
-    expect(received).toEqual(['started', 'one', 'two', 'completed'])
+    expect(received).toEqual([
+      'started',
+      'one',
+      'two',
+      'tool-start:document.inspect_active',
+      'tool-done:document.inspect_active',
+      'completed',
+    ])
   })
 
   it('delivers error as terminal event and ignores malformed envelopes', () => {

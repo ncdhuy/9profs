@@ -138,6 +138,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4D1 Core-owned active Docs runs | IMPLEMENTED     | Trusted Docs run API, server-owned proposal-only ToolSet, per-run document scope enforcement, and typed `/ws` event client                 |
 | Phase 4D1.1 Docs Core Agent readiness | IMPLEMENTED     | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API             |
 | Phase 4D1.2 Docs Core conversation continuity | IMPLEMENTED | Core-owned conversation identity, bounded ephemeral state, transactional multi-turn AionRS context, and conversation-bound Docs scope |
+| Phase 4D2 Docs AiPanel Core migration | IMPLEMENTED | Core-default fresh text chat, streamed multi-turn UI, safe tool activity, proposal review integration, and Legacy attachment/history fallback |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
@@ -481,8 +482,9 @@ No repository package currently establishes:
 
 These are future architecture, not current capabilities.
 
-The Docs AI panel still uses the legacy GenOffice `AgentLoop`; the Phase 4D2
-Core-agent migration and legacy AgentLoop removal are not implemented.
+Docs fresh text-only chats use the Core-owned Docs Agent when Core reports a
+ready `document-foundation` profile. Legacy `AgentLoop` remains only as a
+controlled compatibility path for attachments and restored historic chats.
 
 ## DOCX presentation V2 status
 
@@ -842,25 +844,39 @@ The Docs ToolSet remains exactly `document.list_active`,
 OfficeCLI, shell/filesystem, commit, approval, or rejection capability is
 added. The proposal-only authority boundary remains unchanged.
 
-### Phase 4D2 - Docs AiPanel Core migration (NOT IMPLEMENTED)
+### Phase 4D2 - Docs AiPanel Core migration (IMPLEMENTED)
 
-The Docs AI panel has not yet migrated from the legacy GenOffice AgentLoop to
-the Core-owned Docs run endpoint. Legacy AgentLoop and provider paths remain
-in place until that migration is separately implemented and proven.
+`apps/docs/src/renderer/ai/AiPanel.tsx` chooses one execution mode per live
+chat through `core-chat-controller.ts`: `undecided`, `core`, or `legacy`.
+Fresh text-only chats select Core only when the active document exists, Core
+returns a ready profile with `supportsActiveDocsRuns`, and no attachment or
+historic-chat compatibility rule applies. Core conversation creation is lazy:
+the first eligible send creates one document-bound `ConversationId`; later
+turns reuse it while each request receives a new `RunId`/`TaskId`.
 
-Sheets and Slides adapters remain future work.
+Core output is streamed through the typed `/ws` event client and persisted once
+per completed assistant turn. Stop cancels the current Core task without
+discarding the conversation; retry remains on the same conversation, while New
+Chat clears the client-side conversation reference and starts a new mode
+selection. Core failures after a conversation exists remain visible and are
+never silently replayed through Legacy.
 
-Phase 4D2 must still preserve legacy local attachment/file handling through an
-explicit compatibility strategy; Core Docs tools do not expose arbitrary local
-filesystem access. AiPanel migration is not implemented yet and continues to
-use the legacy GenOffice `@genoffice/agent-core` `AgentLoop`.
+Core lifecycle activity is limited to safe tool names/summaries. No document
+contents, raw tool output, credentials, or provider configuration crosses the
+renderer lifecycle UI. Core proposals continue through `ProposalReview`; chat
+code has no approve, reject, commit, or direct document-mutation capability.
 
-Phase 4D1.2 does not migrate the AiPanel, attachments, provider settings
-synchronization, durable conversation persistence, or cross-restart conversation
-restore. Those remain future compatibility/product integration work.
+Compatibility behavior is intentional. A first send with attachments selects
+Legacy. If a Core chat later receives an attachment, successful textual
+`ChatEntry` history is restored into `AgentLoop` once, the current attachment
+turn is sent exactly once, and the chat remains Legacy. Historic persisted
+chats do not fake Core session restore and continue through the existing
+Legacy history path. Existing attachment picker, previews, file skills, dirty
+tracking, Track Changes, undo, and project JSONL persistence remain intact.
 
-Attachment Core migration, provider settings synchronization, and final Core
-desktop process lifecycle remain NOT IMPLEMENTED.
+Still future: Core attachment/file tools, durable or cross-restart Core
+conversation restore, provider-settings synchronization, final Legacy removal,
+Sheets/Slides adapters, and Research Domain.
 Final Core desktop process lifecycle and mandatory bridge authentication remain
 future work; local development without a configured session secret is
 loopback-only by deployment convention.
