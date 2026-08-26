@@ -11,10 +11,10 @@ use nineprofs_agent::{AgentBackendDescriptor, AgentRunContext, AgentTaskId, RunI
 use nineprofs_api_types::{
     ActiveDocsAgentRunRequest, ActiveDocumentDto, AgentRunContextDto, AgentRunDto, AgentRunRequest,
     AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
-    CreateAssistantRequest, CreateMcpServerRequest, DocumentProposalChangeDto, DocumentProposalDto,
-    ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
-    McpTransportDto, McpTransportInputDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
-    UpdateAssistantRequest, UpdateMcpServerRequest,
+    CreateAssistantRequest, CreateMcpServerRequest, DocsAgentProfile, DocumentProposalChangeDto,
+    DocumentProposalDto, ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto,
+    McpServerDto, McpToolDto, McpTransportDto, McpTransportInputDto, RuntimeInfo, SkillCatalogDto,
+    SkillDto, SkillIssueDto, UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -98,6 +98,40 @@ mod agent_api_tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["code"], "not_found");
         assert_eq!(payload["error"], "agent backend not found: does-not-exist");
+    }
+
+    #[tokio::test]
+    async fn document_agent_profile_is_global_and_secret_free() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        let router = build_router(runtime);
+        let response = router
+            .oneshot(
+                Request::get("/api/document-agent-profile")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["data"]["defaultAssistantId"], "document-foundation");
+        assert_eq!(payload["data"]["backendId"], "nineprofs-default");
+        assert!(
+            payload["data"]["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|capability| capability == "document.list_active")
+        );
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains("api_key"));
+        assert!(!serialized.contains("credential"));
+        assert!(!serialized.contains("session_secret"));
     }
 
     #[tokio::test]
@@ -488,6 +522,7 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/officecli/status", get(officecli_status))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
+        .route("/api/document-agent-profile", get(document_agent_profile))
         .route("/api/agent-runs", post(create_agent_run))
         .route(
             "/api/document-agent-runs",
@@ -562,6 +597,12 @@ async fn get_agent(
         .await
         .ok_or_else(|| ApiError::AgentNotFound(id.clone()))?;
     Ok(axum::Json(ApiResponse::ok(descriptor)))
+}
+
+async fn document_agent_profile(
+    State(state): State<AppState>,
+) -> axum::Json<ApiResponse<DocsAgentProfile>> {
+    axum::Json(ApiResponse::ok(state.runtime.docs_agent_profile().await))
 }
 
 async fn websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {

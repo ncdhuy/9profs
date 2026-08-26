@@ -23,6 +23,34 @@ export interface ActiveDocsAgentRunRequest {
   readonly input: string
 }
 
+export type DocsAgentReadiness =
+  | 'ready'
+  | 'assistant_missing'
+  | 'assistant_disabled'
+  | 'backend_not_configured'
+  | 'backend_missing'
+  | 'backend_unavailable'
+  | 'backend_disabled'
+  | 'executor_missing'
+  | 'provider_not_configured'
+  | 'provider_invalid'
+  | 'required_tool_missing'
+
+export type DocsAgentAvailability =
+  'not_configured' | 'missing' | 'disabled' | 'unavailable' | 'available'
+
+export interface DocsAgentProfile {
+  readonly defaultAssistantId: AssistantId
+  readonly readiness: DocsAgentReadiness
+  readonly reason?: string
+  readonly backendId?: AgentBackendId
+  readonly assistantAvailability: DocsAgentAvailability
+  readonly backendAvailability: DocsAgentAvailability
+  readonly providerReady: boolean
+  readonly capabilities: readonly string[]
+  readonly supportsActiveDocsRuns: boolean
+}
+
 export interface AgentTaskFailure {
   readonly code: string
   readonly message: string

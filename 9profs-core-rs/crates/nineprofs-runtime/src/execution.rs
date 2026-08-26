@@ -2,8 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use nineprofs_agent::{
     AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest, AgentExecutorRegistry,
-    AgentProviderConfig, AgentRunContext, AgentTask, AgentTaskManager, BackendResolution,
-    ExecutionLimits, RunId, TaskFailure,
+    AgentProviderConfig, AgentProviderConfigError, AgentRunContext, AgentTask, AgentTaskManager,
+    BackendResolution, ExecutionLimits, RunId, TaskFailure,
 };
 use nineprofs_api_types::EventEnvelope;
 use nineprofs_assistant::{AssistantError, AssistantService};
@@ -248,6 +248,14 @@ impl AgentExecutionService {
 
     pub async fn context_for_run(&self, run_id: &RunId) -> Option<AgentRunContext> {
         self.run_contexts.read().await.get(run_id).cloned()
+    }
+
+    pub fn has_executor(&self, backend_id: &str) -> bool {
+        self.executors.contains(backend_id)
+    }
+
+    pub fn provider_configuration_error(&self) -> Option<AgentProviderConfigError> {
+        self.provider.configuration_error()
     }
 }
 

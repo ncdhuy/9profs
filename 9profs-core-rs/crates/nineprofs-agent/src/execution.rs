@@ -91,19 +91,26 @@ impl AgentProviderConfig {
     }
 
     pub(crate) fn configured_secret(&self) -> Result<String, AgentProviderConfigError> {
-        let credential = if self.api_key_env.trim().is_empty() {
-            None
-        } else {
-            std::env::var(self.api_key_env.trim()).ok()
-        };
+        let credential = self.configured_credential();
         self.validate(credential.as_deref())?;
         credential.ok_or(AgentProviderConfigError::MissingCredential)
     }
 
+    pub fn configuration_error(&self) -> Option<AgentProviderConfigError> {
+        let credential = self.configured_credential();
+        self.validate(credential.as_deref()).err()
+    }
+
     pub fn configuration_reason(&self) -> Option<String> {
-        self.configured_secret()
-            .err()
-            .map(|error| error.to_string())
+        self.configuration_error().map(|error| error.to_string())
+    }
+
+    fn configured_credential(&self) -> Option<String> {
+        if self.api_key_env.trim().is_empty() {
+            None
+        } else {
+            std::env::var(self.api_key_env.trim()).ok()
+        }
     }
 }
 
@@ -204,6 +211,10 @@ impl AgentExecutorRegistry {
 
     pub fn get(&self, backend_id: &str) -> Option<Arc<dyn AgentExecutor>> {
         self.executors.get(backend_id).cloned()
+    }
+
+    pub fn contains(&self, backend_id: &str) -> bool {
+        self.executors.contains_key(backend_id)
     }
 
     pub fn ids(&self) -> Vec<String> {

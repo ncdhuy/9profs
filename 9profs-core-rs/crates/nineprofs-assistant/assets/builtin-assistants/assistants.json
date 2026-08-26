@@ -8,7 +8,7 @@
       "rule_file": "rules/document-foundation.md",
       "enabled": true,
       "enabled_skills": ["document-foundation"],
-      "agent_ref": null
+      "agent_ref": "nineprofs-default"
     },
     {
       "id": "writing-foundation",

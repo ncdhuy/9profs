@@ -138,5 +138,24 @@ mod tests {
         assert_eq!(catalog.list().len(), 2);
         assert_eq!(catalog.list()[0].source, AssistantSource::Builtin);
         assert!(!catalog.list()[0].rules.is_empty());
+
+        let document = catalog.get("document-foundation").unwrap();
+        assert_eq!(
+            document.rules,
+            include_str!("../assets/builtin-assistants/rules/document-foundation.md")
+        );
+        assert_eq!(document.skill_ids, vec!["document-foundation"]);
+        assert_eq!(
+            document.backend_agent_id.as_deref(),
+            Some("nineprofs-default")
+        );
+
+        let writing = catalog.get("writing-foundation").unwrap();
+        assert_eq!(
+            writing.rules,
+            include_str!("../assets/builtin-assistants/rules/writing-foundation.md")
+        );
+        assert_eq!(writing.skill_ids, vec!["writing-foundation"]);
+        assert_eq!(writing.backend_agent_id, None);
     }
 }

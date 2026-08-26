@@ -136,6 +136,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4C1 active-document proposals   | IMPLEMENTED     | `nineprofs-document-tools`, explicit list/inspect/propose tools, ephemeral proposal store, freshness, read-only proposal APIs/events    |
 | Phase 4C2 proposal review/live commit | IMPLEMENTED     | Core-owned review workflow, trusted approve/reject/retry endpoints, bounded renderer idempotency, and existing Docs AI-panel command summaries |
 | Phase 4D1 Core-owned active Docs runs | IMPLEMENTED     | Trusted Docs run API, server-owned proposal-only ToolSet, per-run document scope enforcement, and typed `/ws` event client                 |
+| Phase 4D1.1 Docs Core Agent readiness | IMPLEMENTED     | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API             |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
@@ -762,6 +763,32 @@ Generic agent streaming remains on `/ws`; active-document renderer RPC remains
 on `/ws/documents`. The typed `@genoffice/9profs-core` event client correlates
 the generic stream by run ID and does not restart runs after disconnect.
 
+### Phase 4D1.1 - Docs Core Agent readiness (IMPLEMENTED)
+
+The production-intent default Docs profile is explicitly bound through the
+existing Assistant backend reference:
+
+```text
+document-foundation -> nineprofs-default -> AionRS
+```
+
+`document-foundation` keeps its existing Rules and ordered
+`document-foundation` Skill. `writing-foundation` remains enabled but
+intentionally unbound because it is not the current Docs default product path.
+No Assistant or AgentBackend runtime was duplicated.
+
+Core exposes `GET /api/document-agent-profile`. The response contains the
+default assistant ID, safe readiness state/reason, backend and component
+availability, provider readiness, the exact supported Docs capability surface,
+and whether active Docs runs are supported. Readiness checks the full chain:
+assistant, backend reference, backend state, executor, launch-scoped provider
+configuration, and all three required Docs tools. It never launches an LLM
+request and never returns credentials, paths, or internal errors.
+
+Provider configuration remains launch-scoped through `NINEPROFS_AGENT_*`
+environment variables. No provider settings synchronization, vault, secret
+database, hot reconfiguration, or account-level provider profile exists yet.
+
 ### Phase 4D2 - Docs AiPanel Core migration (NOT IMPLEMENTED)
 
 The Docs AI panel has not yet migrated from the legacy GenOffice AgentLoop to
@@ -769,6 +796,14 @@ the Core-owned Docs run endpoint. Legacy AgentLoop and provider paths remain
 in place until that migration is separately implemented and proven.
 
 Sheets and Slides adapters remain future work.
+
+Phase 4D2 must still preserve legacy local attachment/file handling through an
+explicit compatibility strategy; Core Docs tools do not expose arbitrary local
+filesystem access. AiPanel migration is not implemented yet and continues to
+use the legacy GenOffice `@genoffice/agent-core` `AgentLoop`.
+
+Attachment Core migration, provider settings synchronization, and final Core
+desktop process lifecycle remain NOT IMPLEMENTED.
 Final Core desktop process lifecycle and mandatory bridge authentication remain
 future work; local development without a configured session secret is
 loopback-only by deployment convention.

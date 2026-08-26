@@ -41,3 +41,21 @@ impl BuiltinAgentCatalog {
         &self.descriptors
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_backend_is_one_builtin_descriptor() {
+        let catalog = BuiltinAgentCatalog::load();
+        assert_eq!(
+            catalog
+                .list()
+                .iter()
+                .filter(|descriptor| descriptor.id == "nineprofs-default")
+                .count(),
+            1
+        );
+    }
+}

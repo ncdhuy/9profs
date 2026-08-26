@@ -26,8 +26,10 @@ use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
 
+mod docs_profile;
 mod execution;
 
+pub use docs_profile::{DEFAULT_DOCS_ASSISTANT_ID, REQUIRED_DOCS_AGENT_TOOLS};
 pub use execution::{
     AgentExecutionService, AgentExecutionServiceError, AgentRunStarted, build_system_instructions,
 };

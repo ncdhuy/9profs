@@ -16,6 +16,7 @@ import type {
   CoreSkillCatalog,
   CreateMcpServerInput,
   CreateAssistantInput,
+  DocsAgentProfile,
   McpConnectionTest,
   McpServer,
   McpTool,
@@ -66,6 +67,7 @@ export interface CoreTransport {
   runtime(): Promise<CoreRuntimeInfo>
   agents(): Promise<AgentBackendDescriptor[]>
   agent(id: string): Promise<AgentBackendDescriptor>
+  documentAgentProfile(): Promise<DocsAgentProfile>
   createAgentRun(input: AgentRunRequest): Promise<AgentRunStarted>
   createActiveDocsAgentRun(input: ActiveDocsAgentRunRequest): Promise<AgentRunStarted>
   agentRun(id: string): Promise<AgentRunResponse>
@@ -153,6 +155,7 @@ export function createCoreTransport(
     runtime: () => get<CoreRuntimeInfo>('/api/runtime'),
     agents: () => get<AgentBackendDescriptor[]>('/api/agents'),
     agent: (id) => get<AgentBackendDescriptor>(`/api/agents/${encodeURIComponent(id)}`),
+    documentAgentProfile: () => get<DocsAgentProfile>('/api/document-agent-profile'),
     createAgentRun: (input) => request<AgentRunStarted>('/api/agent-runs', 'POST', input),
     createActiveDocsAgentRun: (input) =>
       trustedRequest<AgentRunStarted>('/api/document-agent-runs', 'POST', {

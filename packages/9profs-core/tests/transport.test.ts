@@ -111,6 +111,64 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('maps safe Docs Agent profile readiness without provider secrets', async () => {
+    const requests: string[] = []
+    const profiles = [
+      {
+        defaultAssistantId: 'document-foundation',
+        readiness: 'ready',
+        backendId: 'nineprofs-default',
+        assistantAvailability: 'available',
+        backendAvailability: 'available',
+        providerReady: true,
+        capabilities: [
+          'document.list_active',
+          'document.inspect_active',
+          'document.propose_active_changes',
+          'activeDocsAgentRun',
+        ],
+        supportsActiveDocsRuns: true,
+      },
+      {
+        defaultAssistantId: 'document-foundation',
+        readiness: 'provider_not_configured',
+        reason: 'Core agent provider is not configured',
+        backendId: 'nineprofs-default',
+        assistantAvailability: 'available',
+        backendAvailability: 'unavailable',
+        providerReady: false,
+        capabilities: [
+          'document.list_active',
+          'document.inspect_active',
+          'document.propose_active_changes',
+          'activeDocsAgentRun',
+        ],
+        supportsActiveDocsRuns: false,
+      },
+    ]
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input) => {
+      requests.push(input)
+      return { ok: true, json: async () => ({ success: true, data: profiles.shift() }) }
+    })
+
+    await expect(transport.documentAgentProfile()).resolves.toMatchObject({
+      defaultAssistantId: 'document-foundation',
+      readiness: 'ready',
+      supportsActiveDocsRuns: true,
+    })
+    const unavailable = await transport.documentAgentProfile()
+    expect(unavailable).toMatchObject({
+      readiness: 'provider_not_configured',
+      reason: 'Core agent provider is not configured',
+      providerReady: false,
+    })
+    expect(JSON.stringify(unavailable)).not.toMatch(/api[_-]?key|secret|credential/i)
+    expect(requests).toEqual([
+      'http://127.0.0.1:39761/api/document-agent-profile',
+      'http://127.0.0.1:39761/api/document-agent-profile',
+    ])
+  })
+
   it('maps agent run creation, diagnostics, and cancellation APIs', async () => {
     const requests: Array<{ input: string; method?: string; body?: string }> = []
     const task = {
