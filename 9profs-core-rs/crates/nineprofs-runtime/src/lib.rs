@@ -213,6 +213,7 @@ impl CoreRuntime {
             task_manager.clone(),
             Arc::clone(&event_bus),
             provider,
+            Arc::clone(&document_bridge),
         ));
         Ok(Self {
             config,

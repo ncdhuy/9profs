@@ -135,6 +135,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4B Rust Core ↔ renderer bridge   | IMPLEMENTED     | Active document registry, dedicated bidirectional `/ws/documents`, DOCX inspection proxy, approved mutation proxy, and version synchronization |
 | Phase 4C1 active-document proposals   | IMPLEMENTED     | `nineprofs-document-tools`, explicit list/inspect/propose tools, ephemeral proposal store, freshness, read-only proposal APIs/events    |
 | Phase 4C2 proposal review/live commit | IMPLEMENTED     | Core-owned review workflow, trusted approve/reject/retry endpoints, bounded renderer idempotency, and existing Docs AI-panel command summaries |
+| Phase 4D1 Core-owned active Docs runs | IMPLEMENTED     | Trusted Docs run API, server-owned proposal-only ToolSet, per-run document scope enforcement, and typed `/ws` event client                 |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
@@ -470,16 +471,16 @@ rules, and ordered skill assignments are persisted.
 
 No repository package currently establishes:
 
-- real agent execution, backend executors, or provider runtime probing;
 - an extension host or skill filesystem loader;
 - a research/review/citation/regulation domain;
 - OfficeCLI resident mode;
-- the Rust Core ↔ renderer active-document bridge;
-- an active-document ToolProvider, proposal/approval workflow, or review UI;
 - Sheets or Slides adapters;
 - account, subscription, credits, remote workspace, or SaaS billing services.
 
 These are future architecture, not current capabilities.
+
+The Docs AI panel still uses the legacy GenOffice `AgentLoop`; the Phase 4D2
+Core-agent migration and legacy AgentLoop removal are not implemented.
 
 ## DOCX presentation V2 status
 
@@ -741,6 +742,31 @@ Core-owned runtime proposal state, but it does not write the user document.
   `executeCommands`, Track Changes, dirty/save, undo, and renderer version
   authority remain unchanged; successful ChangeSet results are bounded and
   idempotent within the active adapter session.
+
+### Phase 4D1 - Core-owned active Docs agent run profile (IMPLEMENTED)
+
+The dedicated `POST /api/document-agent-runs` endpoint accepts only an
+assistant ID, active document ID, and user input. Core validates the connected
+`genoffice-active` DOCX and creates the server-owned ToolSet containing exactly
+`document.list_active`, `document.inspect_active`, and
+`document.propose_active_changes`. The Agent can inspect and propose only for
+the document bound to that run; it cannot commit, approve, reject, or retry.
+
+The run context is transport-neutral (`activeDocs` plus `documentId`) and is
+returned with safe run metadata. Core adds the minimum proposal-only system
+policy; the selected Assistant's Rules and ordered Skills remain authoritative.
+The generic `/api/agent-runs` endpoint remains deny-by-default and tool-less.
+Client chooses CONTEXT. Core chooses CAPABILITIES.
+
+Generic agent streaming remains on `/ws`; active-document renderer RPC remains
+on `/ws/documents`. The typed `@genoffice/9profs-core` event client correlates
+the generic stream by run ID and does not restart runs after disconnect.
+
+### Phase 4D2 - Docs AiPanel Core migration (NOT IMPLEMENTED)
+
+The Docs AI panel has not yet migrated from the legacy GenOffice AgentLoop to
+the Core-owned Docs run endpoint. Legacy AgentLoop and provider paths remain
+in place until that migration is separately implemented and proven.
 
 Sheets and Slides adapters remain future work.
 Final Core desktop process lifecycle and mandatory bridge authentication remain

@@ -10,15 +10,16 @@ export interface AgentRequest {
 }
 
 export type AgentTaskStatus =
-  | 'queued'
-  | 'starting'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled'
+  'queued' | 'starting' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface AgentRunRequest {
   readonly assistant_id: AssistantId
+  readonly input: string
+}
+
+export interface ActiveDocsAgentRunRequest {
+  readonly assistantId: AssistantId
+  readonly documentId: string
   readonly input: string
 }
 
@@ -43,11 +44,18 @@ export interface AgentTask {
 export interface AgentRunStarted {
   readonly run_id: AgentRunId
   readonly task: AgentTask
+  readonly context?: AgentRunContext
 }
 
 export interface AgentRunResponse {
   readonly run_id: AgentRunId
   readonly tasks: readonly AgentTask[]
+  readonly context?: AgentRunContext
+}
+
+export type AgentRunContext = {
+  readonly kind: 'activeDocs'
+  readonly documentId: string
 }
 
 export type AgentExecutionOutputEvent =
@@ -147,12 +155,7 @@ export interface ToolDefinition {
 export type ActiveDocumentAvailability = 'available' | 'unavailable'
 export type DocumentProposalFreshness = 'fresh' | 'stale' | 'unavailable'
 export type DocumentProposalStatus =
-  | 'proposed'
-  | 'applying'
-  | 'applied'
-  | 'conflict'
-  | 'failed'
-  | 'rejected'
+  'proposed' | 'applying' | 'applied' | 'conflict' | 'failed' | 'rejected'
 
 export interface ActiveDocument {
   readonly documentId: string

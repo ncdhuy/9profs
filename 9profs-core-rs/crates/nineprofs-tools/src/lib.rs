@@ -12,7 +12,7 @@ mod registry;
 pub use events::ToolEvent;
 pub use model::{
     ToolDefinition, ToolEffect, ToolError, ToolId, ToolInvocation, ToolInvocationContext,
-    ToolPolicy, ToolResult, ToolSet, ToolSource,
+    ToolInvocationScope, ToolPolicy, ToolResult, ToolSet, ToolSource,
 };
 pub use provider::{ToolExecutor, ToolHandler, ToolProvider, ToolRegistration};
 pub use registry::ToolRegistry;

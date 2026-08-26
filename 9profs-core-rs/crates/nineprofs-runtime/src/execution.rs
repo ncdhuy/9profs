@@ -1,18 +1,24 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use nineprofs_agent::{
     AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest, AgentExecutorRegistry,
-    AgentProviderConfig, AgentTask, AgentTaskManager, BackendResolution, ExecutionLimits, RunId,
-    TaskFailure,
+    AgentProviderConfig, AgentRunContext, AgentTask, AgentTaskManager, BackendResolution,
+    ExecutionLimits, RunId, TaskFailure,
 };
 use nineprofs_api_types::EventEnvelope;
 use nineprofs_assistant::{AssistantError, AssistantService};
+use nineprofs_document_tools::docs_active_tool_set;
+use nineprofs_documents::{
+    ActiveDocumentDescriptor, ConnectionState, DOCUMENT_BRIDGE_CAPABILITY_COMMIT,
+    DOCUMENT_BRIDGE_CAPABILITY_INSPECT, DOCX_DOCUMENT_TYPE, DocumentBridgeService,
+    GENOFFICE_ACTIVE_AUTHORITY,
+};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{Skill, SkillCatalog};
 use nineprofs_tools::ToolSet;
 use serde_json::json;
 use thiserror::Error;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{RwLock, mpsc, watch};
 
 #[derive(Debug, Error)]
 pub enum AgentExecutionServiceError {
@@ -34,6 +40,10 @@ pub enum AgentExecutionServiceError {
     ExecutorMissing(String),
     #[error("skill is missing: {0}")]
     MissingSkill(String),
+    #[error("active document is unavailable: {0}")]
+    ActiveDocumentUnavailable(String),
+    #[error("active document is unsupported: {0}")]
+    ActiveDocumentUnsupported(String),
     #[error(transparent)]
     Task(#[from] nineprofs_agent::AgentTaskManagerError),
 }
@@ -47,12 +57,15 @@ pub struct AgentExecutionService {
     tasks: AgentTaskManager,
     events: Arc<BroadcastEventBus>,
     provider: AgentProviderConfig,
+    document_bridge: Arc<DocumentBridgeService>,
+    run_contexts: Arc<RwLock<HashMap<RunId, AgentRunContext>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentRunStarted {
     pub run_id: RunId,
     pub task: AgentTask,
+    pub context: Option<AgentRunContext>,
 }
 
 impl AgentExecutionService {
@@ -64,6 +77,7 @@ impl AgentExecutionService {
         tasks: AgentTaskManager,
         events: Arc<BroadcastEventBus>,
         provider: AgentProviderConfig,
+        document_bridge: Arc<DocumentBridgeService>,
     ) -> Self {
         Self {
             assistants,
@@ -73,6 +87,8 @@ impl AgentExecutionService {
             tasks,
             events,
             provider,
+            document_bridge,
+            run_contexts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -81,7 +97,7 @@ impl AgentExecutionService {
         assistant_id: &str,
         input: &str,
     ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
-        self.start_run_with_tool_set(assistant_id, input, ToolSet::default())
+        self.start_run_with_context(assistant_id, input, ToolSet::default(), None)
             .await
     }
 
@@ -90,6 +106,38 @@ impl AgentExecutionService {
         assistant_id: &str,
         input: &str,
         tool_set: ToolSet,
+    ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
+        self.start_run_with_context(assistant_id, input, tool_set, None)
+            .await
+    }
+
+    pub async fn start_active_docs_run(
+        &self,
+        assistant_id: &str,
+        document_id: &str,
+        input: &str,
+    ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
+        let descriptor = self.document_bridge.get(document_id).await.ok_or_else(|| {
+            AgentExecutionServiceError::ActiveDocumentUnavailable(document_id.to_owned())
+        })?;
+        validate_active_docs_document(&descriptor)?;
+        self.start_run_with_context(
+            assistant_id,
+            input,
+            docs_active_tool_set(),
+            Some(AgentRunContext::ActiveDocs {
+                document_id: document_id.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    async fn start_run_with_context(
+        &self,
+        assistant_id: &str,
+        input: &str,
+        tool_set: ToolSet,
+        context: Option<AgentRunContext>,
     ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
         let input = input.trim();
         if input.is_empty() {
@@ -145,6 +193,17 @@ impl AgentExecutionService {
             .register_new(run_id.clone(), descriptor.id.clone())
             .await?;
         let cancellation = self.tasks.cancellation(&task.task_id).await?;
+        let system_instructions = build_system_instructions_with_context(
+            &assistant.rules,
+            &resolved_skills,
+            context.as_ref(),
+        );
+        if let Some(context_value) = context.as_ref() {
+            self.run_contexts
+                .write()
+                .await
+                .insert(run_id.clone(), context_value.clone());
+        }
         let request = AgentExecutionRequest {
             run_id: run_id.clone(),
             task_id: task.task_id.clone(),
@@ -153,9 +212,10 @@ impl AgentExecutionService {
             input: input.to_owned(),
             workspace_root: None,
             provider: self.provider.clone(),
-            system_instructions: build_system_instructions(&assistant.rules, &resolved_skills),
+            system_instructions,
             limits: ExecutionLimits::default(),
             tool_set,
+            context: context.clone(),
         };
 
         let tasks = self.tasks.clone();
@@ -164,7 +224,11 @@ impl AgentExecutionService {
             run_task(tasks, events, executor, request, cancellation).await;
         });
 
-        Ok(AgentRunStarted { run_id, task })
+        Ok(AgentRunStarted {
+            run_id,
+            task,
+            context,
+        })
     }
 
     pub async fn task(&self, task_id: &nineprofs_agent::AgentTaskId) -> Option<AgentTask> {
@@ -181,6 +245,10 @@ impl AgentExecutionService {
     ) -> Result<AgentTask, nineprofs_agent::AgentTaskManagerError> {
         self.tasks.cancel(task_id).await
     }
+
+    pub async fn context_for_run(&self, run_id: &RunId) -> Option<AgentRunContext> {
+        self.run_contexts.read().await.get(run_id).cloned()
+    }
 }
 
 pub fn build_system_instructions(rules: &str, skills: &[Skill]) -> String {
@@ -192,6 +260,42 @@ pub fn build_system_instructions(rules: &str, skills: &[Skill]) -> String {
         sections.push(format!("[Skill: {}]\n{}", skill.id, skill.content.trim()));
     }
     sections.join("\n\n")
+}
+
+fn build_system_instructions_with_context(
+    rules: &str,
+    skills: &[Skill],
+    context: Option<&AgentRunContext>,
+) -> String {
+    let mut instructions = build_system_instructions(rules, skills);
+    if let Some(AgentRunContext::ActiveDocs { document_id }) = context {
+        instructions.push_str(&format!(
+            "\n\n[Core Docs Run Policy]\nYou are working with one active DOCX document {document_id}.\nInspect it before proposing changes. Use its returned current version as baseVersion. Changes are proposals only and require user approval. You cannot commit, approve, reject, or retry changes."
+        ));
+    }
+    instructions
+}
+
+fn validate_active_docs_document(
+    descriptor: &ActiveDocumentDescriptor,
+) -> Result<(), AgentExecutionServiceError> {
+    if descriptor.document_type != DOCX_DOCUMENT_TYPE
+        || descriptor.authority != GENOFFICE_ACTIVE_AUTHORITY
+        || !matches!(descriptor.connection_state, ConnectionState::Connected)
+        || !descriptor
+            .capabilities
+            .iter()
+            .any(|value| value == DOCUMENT_BRIDGE_CAPABILITY_INSPECT)
+        || !descriptor
+            .capabilities
+            .iter()
+            .any(|value| value == DOCUMENT_BRIDGE_CAPABILITY_COMMIT)
+    {
+        return Err(AgentExecutionServiceError::ActiveDocumentUnsupported(
+            descriptor.document_id.clone(),
+        ));
+    }
+    Ok(())
 }
 
 async fn run_task(
@@ -356,11 +460,43 @@ mod tests {
         BuiltinAssistantCatalog, CreateAssistant, SqliteAssistantRepository,
     };
     use nineprofs_db::Database;
+    use nineprofs_documents::{
+        DOCUMENT_BRIDGE_CAPABILITY_COMMIT, DOCUMENT_BRIDGE_CAPABILITY_INSPECT,
+        DOCUMENT_BRIDGE_PROTOCOL_VERSION, DOCX_DOCUMENT_TYPE, DocumentRegistration,
+    };
     use nineprofs_realtime::BroadcastEventBus;
     use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     struct FakeExecutor {
         backend_id: &'static str,
+    }
+
+    struct CapturingExecutor {
+        captured: Arc<std::sync::Mutex<Option<AgentExecutionRequest>>>,
+    }
+
+    #[async_trait]
+    impl AgentExecutor for CapturingExecutor {
+        fn backend_id(&self) -> &str {
+            "nineprofs-default"
+        }
+
+        async fn execute(
+            &self,
+            request: AgentExecutionRequest,
+            sink: AgentEventSink,
+            _cancellation: watch::Receiver<bool>,
+        ) -> Result<AgentExecutionResult, AgentExecutionError> {
+            *self.captured.lock().unwrap() = Some(request);
+            let _ = sink.send(AgentExecutionEvent::OutputStarted);
+            let _ = sink.send(AgentExecutionEvent::OutputCompleted {
+                output: "captured".to_owned(),
+            });
+            Ok(AgentExecutionResult {
+                output: "captured".to_owned(),
+            })
+        }
     }
 
     #[async_trait]
@@ -475,6 +611,7 @@ mod tests {
             system_instructions: "test instructions".to_owned(),
             limits: ExecutionLimits::default(),
             tool_set: ToolSet::default(),
+            context: None,
         }
     }
 
@@ -603,9 +740,16 @@ mod tests {
         );
     }
 
-    async fn test_service(availability: AvailabilityState) -> AgentExecutionService {
+    async fn test_service_with_executor(
+        availability: AvailabilityState,
+        executor: Arc<dyn AgentExecutor>,
+    ) -> AgentExecutionService {
         let database = Database::in_memory().await.unwrap();
         let events = Arc::new(BroadcastEventBus::new(64));
+        let document_bridge = Arc::new(DocumentBridgeService::new(
+            Default::default(),
+            Arc::clone(&events),
+        ));
         let skills = Arc::new(
             SkillCatalog::with_configured_roots(Vec::<std::path::PathBuf>::new()).unwrap(),
         );
@@ -624,6 +768,7 @@ mod tests {
                 name: "Execution assistant".to_owned(),
                 description: "test assistant".to_owned(),
                 backend_agent_id: Some("nineprofs-default".to_owned()),
+                rules: "test assistant rule".to_owned(),
                 ..CreateAssistant::default()
             })
             .await
@@ -640,9 +785,7 @@ mod tests {
             .await
             .unwrap();
 
-        let executor_registry = AgentExecutorRegistry::new([Arc::new(FakeExecutor {
-            backend_id: "nineprofs-default",
-        }) as Arc<dyn AgentExecutor>]);
+        let executor_registry = AgentExecutorRegistry::new([executor]);
         let tasks = AgentTaskManager::new(Arc::clone(&events));
         AgentExecutionService::new(
             assistants,
@@ -652,7 +795,18 @@ mod tests {
             tasks,
             events,
             AgentProviderConfig::from_env(),
+            document_bridge,
         )
+    }
+
+    async fn test_service(availability: AvailabilityState) -> AgentExecutionService {
+        test_service_with_executor(
+            availability,
+            Arc::new(FakeExecutor {
+                backend_id: "nineprofs-default",
+            }),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -672,6 +826,149 @@ mod tests {
             tokio::task::yield_now().await;
         }
         panic!("fake execution did not reach succeeded state");
+    }
+
+    #[tokio::test]
+    async fn generic_start_run_remains_toolless() {
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let service = test_service_with_executor(
+            AvailabilityState::Available,
+            Arc::new(CapturingExecutor {
+                captured: Arc::clone(&captured),
+            }),
+        )
+        .await;
+
+        service
+            .start_run("execution-assistant", "generic input")
+            .await
+            .unwrap();
+
+        for _ in 0..100 {
+            if captured.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert!(request.tool_set.is_empty());
+        assert!(request.context.is_none());
+    }
+
+    #[tokio::test]
+    async fn active_docs_run_validates_context_policy_and_assistant_setup() {
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let service = test_service_with_executor(
+            AvailabilityState::Available,
+            Arc::new(CapturingExecutor {
+                captured: Arc::clone(&captured),
+            }),
+        )
+        .await;
+        let (sender, _receiver) = mpsc::channel(8);
+        service
+            .document_bridge
+            .register(
+                DocumentRegistration {
+                    protocol_version: DOCUMENT_BRIDGE_PROTOCOL_VERSION.to_owned(),
+                    document_id: "doc-a".to_owned(),
+                    document_type: DOCX_DOCUMENT_TYPE.to_owned(),
+                    version: 7,
+                    capabilities: vec![
+                        DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+
+        let started = service
+            .start_active_docs_run("execution-assistant", "doc-a", "inspect document")
+            .await
+            .unwrap();
+        assert_eq!(
+            started.context,
+            Some(AgentRunContext::ActiveDocs {
+                document_id: "doc-a".to_owned(),
+            })
+        );
+
+        for _ in 0..100 {
+            if captured.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(request.context, started.context);
+        assert_eq!(
+            request
+                .tool_set
+                .ids()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "document.inspect_active",
+                "document.list_active",
+                "document.propose_active_changes"
+            ]
+        );
+        for forbidden in [
+            "office.create",
+            "office.mutate_detached",
+            "mcp.example",
+            "document.commit",
+            "document.approve",
+            "document.reject",
+            "document.retry",
+        ] {
+            assert!(!request.tool_set.contains(&forbidden.into()));
+        }
+        assert!(request.system_instructions.contains("[Assistant Rules]"));
+        assert!(
+            request
+                .system_instructions
+                .contains("Changes are proposals only and require user approval")
+        );
+        assert!(
+            request
+                .system_instructions
+                .contains("cannot commit, approve, reject, or retry")
+        );
+
+        assert!(matches!(
+            service
+                .start_active_docs_run("execution-assistant", "missing", "input")
+                .await,
+            Err(AgentExecutionServiceError::ActiveDocumentUnavailable(id)) if id == "missing"
+        ));
+
+        let (sender, _receiver) = mpsc::channel(8);
+        service
+            .document_bridge
+            .register(
+                DocumentRegistration {
+                    protocol_version: DOCUMENT_BRIDGE_PROTOCOL_VERSION.to_owned(),
+                    document_id: "pdf-a".to_owned(),
+                    document_type: "pdf".to_owned(),
+                    version: 1,
+                    capabilities: vec![
+                        DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            service
+                .start_active_docs_run("execution-assistant", "pdf-a", "input")
+                .await,
+            Err(AgentExecutionServiceError::ActiveDocumentUnsupported(id)) if id == "pdf-a"
+        ));
     }
 
     #[tokio::test]

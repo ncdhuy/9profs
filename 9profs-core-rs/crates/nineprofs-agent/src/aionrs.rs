@@ -13,10 +13,10 @@ use tokio::sync::watch;
 
 use crate::{
     AgentEventSink, AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest,
-    AgentExecutionResult, AgentExecutor, AgentProviderConfig,
+    AgentExecutionResult, AgentExecutor, AgentProviderConfig, AgentRunContext,
     aionrs_tools::build_aionrs_tool_registry,
 };
-use nineprofs_tools::{ToolInvocationContext, ToolRegistry};
+use nineprofs_tools::{ToolInvocationContext, ToolInvocationScope, ToolRegistry};
 
 pub const NINEPROFS_DEFAULT_BACKEND_ID: &str = "nineprofs-default";
 
@@ -164,12 +164,17 @@ impl AgentExecutor for AionRsExecutor {
 
         let workspace = request.workspace_root.unwrap_or_else(|| PathBuf::from("."));
         let output: Arc<dyn OutputSink> = Arc::new(AionRsOutputSink::new(event_sink.clone()));
-        let aionrs_tools = build_aionrs_tool_registry(
-            &self.tools,
-            &request.tool_set,
-            ToolInvocationContext::new(request.run_id.as_str(), request.task_id.as_str()),
-        )
-        .map_err(|error| AgentExecutionError::Configuration(error.to_string()))?;
+        let mut invocation_context =
+            ToolInvocationContext::new(request.run_id.as_str(), request.task_id.as_str());
+        if let Some(AgentRunContext::ActiveDocs { document_id }) = request.context.as_ref() {
+            invocation_context =
+                invocation_context.with_scope(ToolInvocationScope::ActiveDocument {
+                    document_id: document_id.clone(),
+                });
+        }
+        let aionrs_tools =
+            build_aionrs_tool_registry(&self.tools, &request.tool_set, invocation_context)
+                .map_err(|error| AgentExecutionError::Configuration(error.to_string()))?;
         let mut engine = AgentEngine::new(config, aionrs_tools, output, workspace);
         let run = engine.run(&request.input, request.task_id.as_str());
         let result = tokio::select! {
@@ -298,6 +303,7 @@ mod tests {
                 .to_owned(),
             limits: crate::ExecutionLimits::default(),
             tool_set: ToolSet::default(),
+            context: None,
         };
         let result = executor
             .execute(request, event_sink, cancellation)

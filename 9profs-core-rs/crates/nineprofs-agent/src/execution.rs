@@ -128,6 +128,11 @@ pub struct ExecutionLimits {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentRunContext {
+    ActiveDocs { document_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentExecutionRequest {
     pub run_id: RunId,
     pub task_id: AgentTaskId,
@@ -139,6 +144,7 @@ pub struct AgentExecutionRequest {
     pub system_instructions: String,
     pub limits: ExecutionLimits,
     pub tool_set: ToolSet,
+    pub context: Option<AgentRunContext>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

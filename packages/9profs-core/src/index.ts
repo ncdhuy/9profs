@@ -7,6 +7,8 @@ export type {
   AgentBackend,
   AgentExecutionOutputEvent,
   AgentRequest,
+  ActiveDocsAgentRunRequest,
+  AgentRunContext,
   AgentRun,
   AgentRunId,
   AgentRunRequest,
@@ -53,7 +55,15 @@ export type {
 } from './types'
 
 export { createCoreTransport } from './transport'
+export { createCoreEventClient, parseCoreAgentEvent } from './event-client'
 export { createCoreAssistantRegistry, createCoreSkillProvider } from './adapters'
+export type {
+  CoreAgentEventHandlers,
+  CoreEventClient,
+  CoreEventClientOptions,
+  CoreEventSubscription,
+} from './event-client'
+
 export type {
   CoreFetch,
   CoreHealth,

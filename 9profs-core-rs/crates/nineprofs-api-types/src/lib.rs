@@ -12,7 +12,8 @@ mod skill;
 mod websocket;
 
 pub use agent_run::{
-    AgentRunDto, AgentRunRequest, AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto,
+    ActiveDocsAgentRunRequest, AgentRunContextDto, AgentRunDto, AgentRunRequest,
+    AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto,
 };
 pub use assistant::{AssistantDto, CreateAssistantRequest, UpdateAssistantRequest};
 pub use document::{ActiveDocumentDto, DocumentProposalChangeDto, DocumentProposalDto};

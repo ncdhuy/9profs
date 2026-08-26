@@ -15,8 +15,9 @@ use nineprofs_documents::{
 };
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_tools::{
-    ToolDefinition, ToolEffect, ToolError, ToolHandler, ToolId, ToolInvocation, ToolPolicy,
-    ToolProvider, ToolRegistration, ToolResult, ToolSource,
+    ToolDefinition, ToolEffect, ToolError, ToolHandler, ToolId, ToolInvocation,
+    ToolInvocationContext, ToolInvocationScope, ToolPolicy, ToolProvider, ToolRegistration,
+    ToolResult, ToolSet, ToolSource,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -33,6 +34,14 @@ pub const PROPOSAL_APPLIED_EVENT: &str = "document.proposalApplied";
 pub const PROPOSAL_CONFLICT_EVENT: &str = "document.proposalConflict";
 pub const PROPOSAL_FAILED_EVENT: &str = "document.proposalFailed";
 pub const TRUSTED_APPROVER: &str = "trusted-user";
+
+pub fn docs_active_tool_set() -> ToolSet {
+    ToolSet::from_ids([
+        DOCUMENT_LIST_ACTIVE,
+        DOCUMENT_INSPECT_ACTIVE,
+        DOCUMENT_PROPOSE_ACTIVE_CHANGES,
+    ])
+}
 
 fn default_proposal_status() -> String {
     "proposed".to_owned()
@@ -663,6 +672,7 @@ impl DocumentToolProvider {
         &self,
         kind: DocumentToolKind,
         arguments: Value,
+        context: Option<ToolInvocationContext>,
     ) -> Result<Value, DocumentToolError> {
         match kind {
             DocumentToolKind::ListActive => {
@@ -679,6 +689,7 @@ impl DocumentToolProvider {
             }
             DocumentToolKind::InspectActive => {
                 let input: InspectActiveInput = parse_input(arguments)?;
+                ensure_document_scope(context.as_ref(), &input.document_id)?;
                 let descriptor = self.require_document(&input.document_id).await?;
                 ensure_document_capability(&descriptor, DOCUMENT_BRIDGE_CAPABILITY_INSPECT)?;
                 let inspection = self
@@ -690,6 +701,7 @@ impl DocumentToolProvider {
             }
             DocumentToolKind::ProposeActiveChanges => {
                 let input: ProposeActiveChangesInput = parse_input(arguments)?;
+                ensure_document_scope(context.as_ref(), &input.document_id)?;
                 let descriptor = self.require_document(&input.document_id).await?;
                 ensure_document_capability(&descriptor, DOCUMENT_BRIDGE_CAPABILITY_COMMIT)?;
                 if input.base_version != descriptor.version {
@@ -826,7 +838,7 @@ struct DocumentToolHandler {
 impl ToolHandler for DocumentToolHandler {
     async fn execute(&self, invocation: ToolInvocation) -> Result<ToolResult, ToolError> {
         self.provider
-            .execute(self.kind, invocation.arguments)
+            .execute(self.kind, invocation.arguments, invocation.context)
             .await
             .map(ToolResult::new)
             .map_err(|error| ToolError::Handler(error.to_string()))
@@ -894,6 +906,8 @@ enum DocumentToolError {
     Unavailable(String),
     #[error("active document is unsupported: {0}")]
     UnsupportedDocument(String),
+    #[error("active document is outside this run scope: {0}")]
+    ScopeViolation(String),
     #[error("active document does not expose required capability: {0}")]
     MissingCapability(String),
     #[error("active document version is stale: requested {requested}, current {current}")]
@@ -945,6 +959,23 @@ fn ensure_document_capability(
         return Err(DocumentToolError::MissingCapability(capability.to_owned()));
     }
     Ok(())
+}
+
+fn ensure_document_scope(
+    context: Option<&ToolInvocationContext>,
+    document_id: &str,
+) -> Result<(), DocumentToolError> {
+    let Some(ToolInvocationScope::ActiveDocument {
+        document_id: scoped_id,
+    }) = context.and_then(|value| value.scope.as_ref())
+    else {
+        return Ok(());
+    };
+    if scoped_id == document_id {
+        Ok(())
+    } else {
+        Err(DocumentToolError::ScopeViolation(document_id.to_owned()))
+    }
 }
 
 fn validate_change(input: ProposedChangeInput) -> Result<DocumentChange, DocumentToolError> {
@@ -1116,10 +1147,19 @@ mod tests {
 
         let result = registration
             .handler
-            .execute(ToolInvocation::new(
-                DOCUMENT_PROPOSE_ACTIVE_CHANGES,
-                json!({ "documentId": "doc-1", "baseVersion": 5, "changes": [change()] }),
-            ))
+            .execute(
+                ToolInvocation::new(
+                    DOCUMENT_PROPOSE_ACTIVE_CHANGES,
+                    json!({ "documentId": "doc-1", "baseVersion": 5, "changes": [change()] }),
+                )
+                .with_context(
+                    ToolInvocationContext::new("run-1", "task-1").with_scope(
+                        ToolInvocationScope::ActiveDocument {
+                            document_id: "doc-1".to_owned(),
+                        },
+                    ),
+                ),
+            )
             .await
             .unwrap();
         assert_eq!(result.output["status"], "proposed");
@@ -1184,10 +1224,14 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let result = registration.handler.execute(ToolInvocation::new(
-            DOCUMENT_INSPECT_ACTIVE,
-            json!({ "documentId": "doc-1" }),
-        ));
+        let result = registration.handler.execute(
+            ToolInvocation::new(DOCUMENT_INSPECT_ACTIVE, json!({ "documentId": "doc-1" }))
+                .with_context(ToolInvocationContext::new("run-1", "task-1").with_scope(
+                    ToolInvocationScope::ActiveDocument {
+                        document_id: "doc-1".to_owned(),
+                    },
+                )),
+        );
         let output = tokio::join!(result, bridge_call).0.unwrap();
         assert_eq!(output.output["version"], 17);
         assert_eq!(
@@ -1195,6 +1239,41 @@ mod tests {
             "renderer context"
         );
         assert_eq!(output.output["value"]["selection"]["from"], 4);
+    }
+
+    #[tokio::test]
+    async fn scoped_document_tools_reject_other_active_documents() {
+        let bridge = bridge();
+        let (_session_a, _receiver_a) = register(&bridge, "doc-a", 5).await;
+        let (_session_b, _receiver_b) = register(&bridge, "doc-b", 5).await;
+        let provider = DocumentToolProvider::new(bridge, Arc::new(BroadcastEventBus::new(8)));
+        let scope = ToolInvocationContext::new("run-a", "task-a").with_scope(
+            ToolInvocationScope::ActiveDocument {
+                document_id: "doc-a".to_owned(),
+            },
+        );
+
+        for (tool_id, arguments) in [
+            (DOCUMENT_INSPECT_ACTIVE, json!({ "documentId": "doc-b" })),
+            (
+                DOCUMENT_PROPOSE_ACTIVE_CHANGES,
+                json!({ "documentId": "doc-b", "baseVersion": 5, "changes": [change()] }),
+            ),
+        ] {
+            let registration = provider
+                .list_tools()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|tool| tool.definition.id == ToolId::new(tool_id))
+                .unwrap();
+            let error = registration
+                .handler
+                .execute(ToolInvocation::new(tool_id, arguments).with_context(scope.clone()))
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("outside this run scope"));
+        }
     }
 
     #[tokio::test]

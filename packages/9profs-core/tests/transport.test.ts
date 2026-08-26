@@ -158,6 +158,63 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('creates authenticated active Docs runs without exposing tool authorization', async () => {
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }> = []
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: {
+              run_id: 'run-docs-1',
+              task: {
+                task_id: 'task-docs-1',
+                run_id: 'run-docs-1',
+                backend_id: 'nineprofs-default',
+                state: 'queued',
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                started_at_ms: null,
+                completed_at_ms: null,
+                failure: null,
+                cancellation_requested: false,
+              },
+              context: { kind: 'activeDocs', documentId: 'doc-a' },
+            },
+          }),
+        }
+      },
+      { sessionSecret: 'test-only-secret' },
+    )
+
+    await expect(
+      transport.createActiveDocsAgentRun({
+        assistantId: 'assistant-1',
+        documentId: 'doc-a',
+        input: 'inspect this document',
+      }),
+    ).resolves.toMatchObject({ context: { kind: 'activeDocs', documentId: 'doc-a' } })
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/document-agent-runs',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-nineprofs-session-secret': 'test-only-secret',
+        },
+        body: '{"assistant_id":"assistant-1","document_id":"doc-a","input":"inspect this document"}',
+      },
+    ])
+  })
+
   it('maps safe active-document and read-only proposal APIs', async () => {
     const requests: Array<{ input: string; method?: string }> = []
     const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {

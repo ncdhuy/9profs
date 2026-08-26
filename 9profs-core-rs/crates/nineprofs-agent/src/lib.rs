@@ -18,7 +18,7 @@ pub use builtin::BuiltinAgentCatalog;
 pub use execution::{
     AgentEventSink, AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest,
     AgentExecutionResult, AgentExecutor, AgentExecutorRegistry, AgentProviderConfig,
-    AgentProviderConfigError, ExecutionLimits,
+    AgentProviderConfigError, AgentRunContext, ExecutionLimits,
 };
 pub use model::{
     AgentBackendDescriptor, AgentBackendId, AgentBackendKind, AgentBackendSource, AgentTask,

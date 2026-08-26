@@ -4,6 +4,7 @@
  */
 import type {
   AgentBackendDescriptor,
+  ActiveDocsAgentRunRequest,
   AgentRunRequest,
   AgentRunResponse,
   AgentRunStarted,
@@ -66,6 +67,7 @@ export interface CoreTransport {
   agents(): Promise<AgentBackendDescriptor[]>
   agent(id: string): Promise<AgentBackendDescriptor>
   createAgentRun(input: AgentRunRequest): Promise<AgentRunStarted>
+  createActiveDocsAgentRun(input: ActiveDocsAgentRunRequest): Promise<AgentRunStarted>
   agentRun(id: string): Promise<AgentRunResponse>
   agentRunTasks(id: string): Promise<AgentTask[]>
   cancelAgentTask(id: string): Promise<AgentTask>
@@ -152,6 +154,12 @@ export function createCoreTransport(
     agents: () => get<AgentBackendDescriptor[]>('/api/agents'),
     agent: (id) => get<AgentBackendDescriptor>(`/api/agents/${encodeURIComponent(id)}`),
     createAgentRun: (input) => request<AgentRunStarted>('/api/agent-runs', 'POST', input),
+    createActiveDocsAgentRun: (input) =>
+      trustedRequest<AgentRunStarted>('/api/document-agent-runs', 'POST', {
+        assistant_id: input.assistantId,
+        document_id: input.documentId,
+        input: input.input,
+      }),
     agentRun: (id) => get<AgentRunResponse>(`/api/agent-runs/${encodeURIComponent(id)}`),
     agentRunTasks: (id) => get<AgentTask[]>(`/api/agent-runs/${encodeURIComponent(id)}/tasks`),
     cancelAgentTask: (id) =>

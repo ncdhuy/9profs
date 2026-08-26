@@ -7,14 +7,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use nineprofs_agent::{AgentBackendDescriptor, AgentTaskId, RunId, TaskState};
+use nineprofs_agent::{AgentBackendDescriptor, AgentRunContext, AgentTaskId, RunId, TaskState};
 use nineprofs_api_types::{
-    ActiveDocumentDto, AgentRunDto, AgentRunRequest, AgentRunStartedDto, AgentTaskDto,
-    AgentTaskFailureDto, ApiResponse, AssistantDto, CreateAssistantRequest, CreateMcpServerRequest,
-    DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse, EventEnvelope, HealthResponse,
-    McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto, McpTransportInputDto,
-    RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
-    UpdateMcpServerRequest,
+    ActiveDocsAgentRunRequest, ActiveDocumentDto, AgentRunContextDto, AgentRunDto, AgentRunRequest,
+    AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
+    CreateAssistantRequest, CreateMcpServerRequest, DocumentProposalChangeDto, DocumentProposalDto,
+    ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
+    McpTransportDto, McpTransportInputDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
+    UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -98,6 +98,100 @@ mod agent_api_tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["code"], "not_found");
         assert_eq!(payload["error"], "agent backend not found: does-not-exist");
+    }
+
+    #[tokio::test]
+    async fn active_docs_agent_run_rejects_unavailable_and_unsupported_documents() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        let (sender, _receiver) = tokio::sync::mpsc::channel(8);
+        runtime
+            .document_bridge()
+            .register(
+                nineprofs_documents::DocumentRegistration {
+                    protocol_version: nineprofs_documents::DOCUMENT_BRIDGE_PROTOCOL_VERSION
+                        .to_owned(),
+                    document_id: "pdf-a".to_owned(),
+                    document_type: "pdf".to_owned(),
+                    version: 1,
+                    capabilities: vec![
+                        nineprofs_documents::DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        nineprofs_documents::DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+        let router = build_router(runtime);
+
+        for (document_id, code) in [
+            ("missing", "active_document_unavailable"),
+            ("pdf-a", "active_document_unsupported"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::post("/api/document-agent-runs")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({
+                                "assistant_id": "execution-assistant",
+                                "document_id": document_id,
+                                "input": "inspect document"
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(payload["code"], code);
+        }
+    }
+
+    #[tokio::test]
+    async fn active_docs_agent_run_requires_configured_session_secret() {
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.session_secret = Some(Arc::from("run-test-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let router = build_router(runtime);
+        let body = serde_json::json!({
+            "assistant_id": "execution-assistant",
+            "document_id": "missing",
+            "input": "inspect document"
+        })
+        .to_string();
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/document-agent-runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .oneshot(
+                Request::post("/api/document-agent-runs")
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "run-test-secret")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
 
@@ -395,6 +489,10 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
         .route("/api/agent-runs", post(create_agent_run))
+        .route(
+            "/api/document-agent-runs",
+            post(create_active_docs_agent_run),
+        )
         .route("/api/agent-runs/{run_id}", get(get_agent_run))
         .route("/api/agent-runs/{run_id}/tasks", get(list_agent_run_tasks))
         .route("/api/agent-tasks/{task_id}/cancel", post(cancel_agent_task))
@@ -814,6 +912,12 @@ impl IntoResponse for ApiError {
                     AgentExecutionServiceError::Assistant(AssistantError::NotFound(_)) => {
                         (StatusCode::NOT_FOUND, "not_found")
                     }
+                    AgentExecutionServiceError::ActiveDocumentUnavailable(_) => {
+                        (StatusCode::BAD_REQUEST, "active_document_unavailable")
+                    }
+                    AgentExecutionServiceError::ActiveDocumentUnsupported(_) => {
+                        (StatusCode::BAD_REQUEST, "active_document_unsupported")
+                    }
                     AgentExecutionServiceError::BackendUnavailable(_, _) => {
                         (StatusCode::SERVICE_UNAVAILABLE, "agent_execution_error")
                     }
@@ -881,6 +985,25 @@ async fn create_agent_run(
     Ok(axum::Json(ApiResponse::ok(AgentRunStartedDto {
         run_id: started.run_id.to_string(),
         task: task_dto(&started.task),
+        context: None,
+    })))
+}
+
+async fn create_active_docs_agent_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<ActiveDocsAgentRunRequest>,
+) -> Result<axum::Json<ApiResponse<AgentRunStartedDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let started = state
+        .runtime
+        .execution_service()
+        .start_active_docs_run(&request.assistant_id, &request.document_id, &request.input)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(AgentRunStartedDto {
+        run_id: started.run_id.to_string(),
+        task: task_dto(&started.task),
+        context: agent_run_context_dto(started.context.as_ref()),
     })))
 }
 
@@ -889,13 +1012,16 @@ async fn get_agent_run(
     Path(run_id): Path<String>,
 ) -> Result<axum::Json<ApiResponse<AgentRunDto>>, ApiError> {
     let run = RunId::from_string(run_id.clone());
-    let tasks = state.runtime.execution_service().tasks_for_run(&run).await;
+    let execution = state.runtime.execution_service();
+    let tasks = execution.tasks_for_run(&run).await;
     if tasks.is_empty() {
         return Err(ApiError::RunNotFound(run_id));
     }
+    let context = execution.context_for_run(&run).await;
     Ok(axum::Json(ApiResponse::ok(AgentRunDto {
         run_id: run.to_string(),
         tasks: tasks.iter().map(task_dto).collect(),
+        context: agent_run_context_dto(context.as_ref()),
     })))
 }
 
@@ -949,6 +1075,14 @@ fn task_dto(task: &nineprofs_agent::AgentTask) -> AgentTaskDto {
         }),
         cancellation_requested: task.cancellation_requested,
     }
+}
+
+fn agent_run_context_dto(context: Option<&AgentRunContext>) -> Option<AgentRunContextDto> {
+    context.map(|context| match context {
+        AgentRunContext::ActiveDocs { document_id } => AgentRunContextDto::ActiveDocs {
+            document_id: document_id.clone(),
+        },
+    })
 }
 
 async fn list_assistants(

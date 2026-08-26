@@ -109,9 +109,15 @@ pub struct ToolDefinition {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ToolInvocationScope {
+    ActiveDocument { document_id: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ToolInvocationContext {
     pub run_id: String,
     pub task_id: String,
+    pub scope: Option<ToolInvocationScope>,
 }
 
 impl ToolInvocationContext {
@@ -119,7 +125,13 @@ impl ToolInvocationContext {
         Self {
             run_id: run_id.into(),
             task_id: task_id.into(),
+            scope: None,
         }
+    }
+
+    pub fn with_scope(mut self, scope: ToolInvocationScope) -> Self {
+        self.scope = Some(scope);
+        self
     }
 }
 
