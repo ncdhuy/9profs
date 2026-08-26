@@ -18,12 +18,12 @@ pub use model::{
     MAX_CASE_TITLE_BYTES, MAX_CLAIM_TEXT_BYTES, MAX_EVIDENCE_EXCERPT_BYTES, MAX_LOCATOR_BYTES,
     MAX_METADATA_BYTES, MAX_NORMALIZED_TEXT_BYTES, MAX_PDF_BYTES, MAX_PDF_EXTRACTION_BYTES,
     MAX_PDF_PAGE_TEXT_BYTES, MAX_PDF_PAGES, MAX_PROVENANCE_TEXT_BYTES, MAX_RATIONALE_BYTES,
-    MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES, PdfExtractionStatus, ResearchArtifact,
-    ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
-    ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
-    ResearchPdfPageBatch, ResearchSource, ResearchSourceId, ResearchSourceSnapshot,
-    ResearchSourceSnapshotId, SafeMetadata, SourceKind, SourceOrigin, VerifiedArtifact,
-    validate_metadata,
+    MAX_RETRIEVAL_SCOPE_IDS, MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES,
+    PdfExtractionStatus, ResearchArtifact, ResearchCase, ResearchCaseId, ResearchClaim,
+    ResearchClaimId, ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
+    ResearchPdfExtractionId, ResearchPdfPage, ResearchPdfPageBatch, ResearchRetrievalScope,
+    ResearchSource, ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId,
+    SafeMetadata, SourceKind, SourceOrigin, VerifiedArtifact, validate_metadata,
 };
 pub use repository::{ResearchRepository, SqliteResearchRepository};
 pub use service::ResearchService;

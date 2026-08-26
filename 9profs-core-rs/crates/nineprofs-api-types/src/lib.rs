@@ -40,8 +40,9 @@ pub use research::{
     ResearchHashAlgorithmDto, ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto,
     ResearchPdfPageDto, ResearchPdfPageListDto, ResearchRetrievalCandidateDto,
     ResearchRetrievalIndexDto, ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto,
-    ResearchRetrievalReadinessDto, ResearchSourceDto, ResearchSourceKindDto,
-    ResearchSourceOriginDto, ResearchSourceSnapshotDto, RetrieveResearchRequest,
+    ResearchRetrievalReadinessDto, ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto,
+    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
+    RetrieveResearchRequest,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

@@ -953,6 +953,38 @@ configured with `NINEPROFS_DIFY_BASE_URL`, `NINEPROFS_DIFY_API_KEY`, and the
 optional `NINEPROFS_DIFY_TIMEOUT_MS`; the key is never persisted, serialized,
 logged, or emitted in events.
 
+#### Phase 5B2.1 — scoped retrieval and Dify qualification (IMPLEMENTED)
+
+- Case-wide retrieval remains `retrieve(researchCaseId, query, topK)` and answers
+  what evidence exists in the case. The provider-neutral
+  `ResearchRetrievalScope` additionally supports bounded exact source or
+  extraction identity lists; omitted API scope preserves case-wide behavior.
+- Exact extraction scope requires the extraction to belong to the requested
+  case, be `Ready`, and have a metadata-qualified local Dify index. The adapter
+  constructs Dify v1.16.1 `retrieval_model.metadata_filtering_conditions` from
+  canonical `ExtractionId` values; arbitrary provider filters are not exposed.
+- Each indexed Dify document is bound after creation to the canonical
+  `nineprofs_extraction_id`, `nineprofs_source_id`, and
+  `nineprofs_snapshot_id` string metadata fields. Field provisioning is
+  idempotent and field IDs are persisted locally. Remote document metadata is
+  verified before an extraction index becomes `Ready`.
+- Returned segment IDs are resolved through the local mapping and
+  `RetrievalChunk`; unknown segments, incompatible mappings, scope violations,
+  and canonical hash mismatches fail closed and mark the affected index/case
+  degraded where applicable. Manual Dify dataset edits are not canonical.
+- Existing Phase 5B2 mappings remain valid for case-wide retrieval. They are
+  not treated as scoped-ready until an explicit extraction resync completes
+  metadata qualification; no existing Dify dataset is deleted or recreated on
+  Core startup.
+- Dify adapter readiness is separate from case-index and extraction-index
+  readiness. It reports `not_configured`, `configured`, `unreachable`,
+  `unauthorized`, `reachable`, or `ready` based on configuration and a bounded
+  authenticated Service API dataset-list probe; it never performs an embedding
+  query merely to report readiness.
+
+Citation verification MUST use cited-source or exact-extraction-scoped
+retrieval. Case-wide support from another source does not validate a citation.
+
 Still future: OCR, layout/image understanding, citation verification, research
 UI, and agent research tools. Phase 5C remains future: manuscript claim
 extraction and cross-source verification.

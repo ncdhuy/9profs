@@ -55,8 +55,8 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 4A active DOCX GenOffice adapter | `packages/genoffice-adapter/`; active inspection, DocumentVersion, stale-change protection, approved command-envelope gateway, existing Docs command engine           | Implemented; editor-side adapter and focused transaction/version tests |
 | Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                       | Implemented                                                            |
 | Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                              | Implemented                                                            |
-| Phase 4C2 proposal review/live commit   | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                                | Implemented                                                            |
-| Phase 5A research foundation           | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/claim-evidence assessments; Core API/transport | Implemented; adapters, review, and product services remain future |
+| Phase 4C2 proposal review/live commit  | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                         | Implemented                                                            |
+| Phase 5A research foundation           | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/claim-evidence assessments; Core API/transport                                | Implemented; adapters, review, and product services remain future      |
 | Research/product backend               | Account/billing backend or OfficeCLI resident mode                                                                                                                    | Future                                                                 |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
@@ -339,6 +339,18 @@ mutation remain intentionally outside Phase 3A/3B. Phase 4A now owns the
 editor-side active DOCX gateway. Phase 3B mutation is
 available only through the typed ToolProvider; raw/raw-set/add-part and
 generic CLI passthrough are not exposed.
+
+## Phase 5B2.1 retrieval boundary
+
+The scoped Dify retrieval qualification closes the retrieval boundary needed by
+Phase 5C. Case-wide retrieval remains available for literature search, while
+citation verification must pass exact cited `ExtractionId` values through the
+provider-neutral `ResearchRetrievalScope`. Core validates case ownership and
+qualified local index state before the remote request, then validates every
+returned segment against local mappings and canonical page hashes. Dify document
+metadata carries only the 9Profs extraction, source, and snapshot IDs; it never
+carries paths, secrets, or evidence text. Existing unqualified Phase 5B2 indexes
+remain case-wide compatible but require explicit resync before scoped use.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 

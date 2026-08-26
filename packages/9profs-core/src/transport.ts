@@ -435,7 +435,11 @@ export function createCoreTransport(
       trustedRequest<ResearchRetrievalCandidate[]>(
         `/api/research/cases/${encodeURIComponent(researchCaseId)}/retrieve`,
         'POST',
-        { query: input.query, topK: input.topK },
+        {
+          query: input.query,
+          topK: input.topK,
+          ...(input.scope === undefined ? {} : { scope: input.scope }),
+        },
       ),
     captureResearchPdfEvidence: (input) =>
       trustedRequest<ResearchEvidence>('/api/research/pdf-evidence', 'POST', input),

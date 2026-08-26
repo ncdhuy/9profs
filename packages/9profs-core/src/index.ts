@@ -91,6 +91,8 @@ export type {
   ResearchRetrievalIndexState,
   ResearchRetrievalIndexStatus,
   ResearchRetrievalReadiness,
+  ResearchRetrievalReadinessStatus,
+  ResearchRetrievalScope,
   RetrieveResearchInput,
   ResearchPdfPageInput,
   ResearchHashAlgorithm,

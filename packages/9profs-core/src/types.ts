@@ -448,18 +448,20 @@ export interface ResearchPdfPageListOptions {
 }
 
 export type ResearchRetrievalIndexStatus =
-  | 'not_configured'
-  | 'provisioning'
-  | 'ready'
-  | 'syncing'
-  | 'failed'
-  | 'degraded'
+  'not_configured' | 'provisioning' | 'ready' | 'syncing' | 'failed' | 'degraded'
 
 export interface ResearchRetrievalReadiness {
   readonly provider: string
   readonly qualificationTarget: string
   readonly configured: boolean
+  readonly status: ResearchRetrievalReadinessStatus
+  readonly reachable: boolean
+  readonly authorized: boolean
+  readonly ready: boolean
 }
+
+export type ResearchRetrievalReadinessStatus =
+  'not_configured' | 'configured' | 'unreachable' | 'reachable' | 'unauthorized' | 'ready'
 
 export interface ResearchRetrievalIndex {
   readonly indexId: string
@@ -478,12 +480,21 @@ export interface ResearchExtractionRetrievalIndex {
   readonly extractionId: ResearchPdfExtractionId
   readonly sourceSnapshotId: ResearchSourceSnapshotId
   readonly documentId: string | null
+  readonly metadataQualified: boolean
   readonly chunkerVersion: string
   readonly status: ResearchRetrievalIndexStatus
   readonly failureCode: string | null
   readonly createdAtMs: number
   readonly updatedAtMs: number
 }
+
+export type ResearchRetrievalScope =
+  | { readonly kind: 'case' }
+  | { readonly kind: 'sources'; readonly sourceIds: readonly ResearchSourceId[] }
+  | {
+      readonly kind: 'extractions'
+      readonly extractionIds: readonly ResearchPdfExtractionId[]
+    }
 
 export interface ResearchRetrievalIndexState {
   readonly readiness: ResearchRetrievalReadiness
@@ -508,6 +519,7 @@ export interface ResearchRetrievalCandidate {
 export interface RetrieveResearchInput {
   readonly query: string
   readonly topK?: number
+  readonly scope?: ResearchRetrievalScope
 }
 
 export interface ReferencePdfIngestion {

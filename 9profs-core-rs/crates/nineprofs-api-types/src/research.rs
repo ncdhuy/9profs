@@ -364,6 +364,21 @@ pub struct ResearchRetrievalReadinessDto {
     pub provider: String,
     pub qualification_target: String,
     pub configured: bool,
+    pub status: ResearchRetrievalReadinessStatusDto,
+    pub reachable: bool,
+    pub authorized: bool,
+    pub ready: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchRetrievalReadinessStatusDto {
+    NotConfigured,
+    Configured,
+    Unreachable,
+    Reachable,
+    Unauthorized,
+    Ready,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -387,11 +402,20 @@ pub struct ResearchExtractionRetrievalIndexDto {
     pub extraction_id: String,
     pub source_snapshot_id: String,
     pub document_id: Option<String>,
+    pub metadata_qualified: bool,
     pub chunker_version: String,
     pub status: ResearchRetrievalIndexStatusDto,
     pub failure_code: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ResearchRetrievalScopeDto {
+    Case,
+    Sources { source_ids: Vec<String> },
+    Extractions { extraction_ids: Vec<String> },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -407,6 +431,7 @@ pub struct ResearchRetrievalIndexStateDto {
 pub struct RetrieveResearchRequest {
     pub query: String,
     pub top_k: Option<u32>,
+    pub scope: Option<ResearchRetrievalScopeDto>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

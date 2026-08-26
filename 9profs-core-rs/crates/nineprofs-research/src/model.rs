@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use nineprofs_common::{TimestampMs, new_id};
 use serde::{Deserialize, Serialize};
@@ -18,6 +21,7 @@ pub const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PDF_PAGES: u32 = 10_000;
 pub const MAX_PDF_PAGE_TEXT_BYTES: usize = 1024 * 1024;
 pub const MAX_PDF_EXTRACTION_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_RETRIEVAL_SCOPE_IDS: usize = 16;
 
 #[derive(Debug, Error)]
 pub enum ResearchError {
@@ -69,6 +73,49 @@ id_type!(ResearchPdfExtractionId, "PDF extraction ID");
 id_type!(ResearchEvidenceId, "evidence ID");
 id_type!(ResearchClaimId, "claim ID");
 id_type!(ClaimEvidenceLinkId, "claim-evidence link ID");
+
+/// Provider-neutral retrieval boundary. Provider adapters translate these
+/// canonical identities into provider-specific filters.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResearchRetrievalScope {
+    Case,
+    Sources {
+        source_ids: Vec<ResearchSourceId>,
+    },
+    Extractions {
+        extraction_ids: Vec<ResearchPdfExtractionId>,
+    },
+}
+
+impl ResearchRetrievalScope {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        match self {
+            Self::Case => Ok(()),
+            Self::Sources { source_ids } => validate_retrieval_scope_ids(source_ids),
+            Self::Extractions { extraction_ids } => validate_retrieval_scope_ids(extraction_ids),
+        }
+    }
+}
+
+fn validate_retrieval_scope_ids<T: Ord>(ids: &[T]) -> Result<(), ResearchError> {
+    if ids.is_empty() {
+        return Err(ResearchError::Invalid(
+            "retrieval scope must contain at least one identity".to_owned(),
+        ));
+    }
+    if ids.len() > MAX_RETRIEVAL_SCOPE_IDS {
+        return Err(ResearchError::Invalid(format!(
+            "retrieval scope cannot contain more than {MAX_RETRIEVAL_SCOPE_IDS} identities"
+        )));
+    }
+    if ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
+        return Err(ResearchError::Invalid(
+            "retrieval scope identities must be unique".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ResearchCase {

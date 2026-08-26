@@ -651,4 +651,36 @@ describe('Core transport boundary', () => {
       pages: [],
     })
   })
+
+  it('serializes provider-neutral exact extraction retrieval scope', async () => {
+    const requests: Array<{
+      input: string
+      init?: { method?: string; headers?: Record<string, string>; body?: string }
+    }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
+      requests.push({ input, init })
+      return { ok: true, json: async () => ({ success: true, data: [] }) }
+    })
+
+    await transport.retrieveResearchCase('case-1', {
+      query: 'claim',
+      topK: 5,
+      scope: { kind: 'extractions', extractionIds: ['extraction-1'] },
+    })
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/research/cases/case-1/retrieve',
+        init: {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            query: 'claim',
+            topK: 5,
+            scope: { kind: 'extractions', extractionIds: ['extraction-1'] },
+          }),
+        },
+      },
+    ])
+  })
 })

@@ -27,9 +27,10 @@ use nineprofs_api_types::{
     ResearchHashAlgorithmDto, ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto,
     ResearchPdfPageDto, ResearchPdfPageListDto, ResearchRetrievalCandidateDto,
     ResearchRetrievalIndexDto, ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto,
-    ResearchRetrievalReadinessDto, ResearchSourceDto, ResearchSourceKindDto,
-    ResearchSourceOriginDto, ResearchSourceSnapshotDto, RetrieveResearchRequest, RuntimeInfo,
-    SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest, UpdateMcpServerRequest,
+    ResearchRetrievalReadinessDto, ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto,
+    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
+    RetrieveResearchRequest, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
+    UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -47,8 +48,9 @@ use nineprofs_research::{
     CaptureSourceSnapshot, ClaimEvidenceRelation, ClaimOrigin, CreateClaimEvidenceLink,
     CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
     EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim, ResearchError, ResearchEvidence,
-    ResearchPdfExtraction, ResearchPdfPage, ResearchPdfPageBatch, ResearchSource,
-    ResearchSourceSnapshot, SourceKind, SourceOrigin,
+    ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage, ResearchPdfPageBatch,
+    ResearchRetrievalScope, ResearchSource, ResearchSourceId, ResearchSourceSnapshot, SourceKind,
+    SourceOrigin,
 };
 use nineprofs_research_dify::{
     DifyCaseIndex, DifyError, DifyExtractionIndex, DifyIndexStatus, DifyReadiness,
@@ -2596,16 +2598,51 @@ async fn retrieve_research_case(
     axum::Json(request): axum::Json<RetrieveResearchRequest>,
 ) -> Result<axum::Json<ApiResponse<Vec<ResearchRetrievalCandidateDto>>>, ApiError> {
     authorize_trusted_decision(&headers, state.runtime.config())?;
+    let scope = research_retrieval_scope(request.scope)?;
+    scope
+        .validate()
+        .map_err(|error| ApiError::InvalidRequest(error.to_string()))?;
     Ok(axum::Json(ApiResponse::ok(
         state
             .runtime
             .dify_service()
-            .retrieve(&id, &request.query, request.top_k.unwrap_or(10))
+            .retrieve_with_scope(&id, &scope, &request.query, request.top_k.unwrap_or(10))
             .await?
             .into_iter()
             .map(research_retrieval_candidate_dto)
             .collect(),
     )))
+}
+
+fn research_retrieval_scope(
+    value: Option<ResearchRetrievalScopeDto>,
+) -> Result<ResearchRetrievalScope, ApiError> {
+    let Some(value) = value else {
+        return Ok(ResearchRetrievalScope::Case);
+    };
+    let parse_source_ids = |ids: Vec<String>| {
+        ids.into_iter()
+            .map(ResearchSourceId::parse)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ApiError::InvalidRequest(error.to_string()))
+    };
+    let parse_extraction_ids = |ids: Vec<String>| {
+        ids.into_iter()
+            .map(ResearchPdfExtractionId::parse)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ApiError::InvalidRequest(error.to_string()))
+    };
+    match value {
+        ResearchRetrievalScopeDto::Case => Ok(ResearchRetrievalScope::Case),
+        ResearchRetrievalScopeDto::Sources { source_ids } => Ok(ResearchRetrievalScope::Sources {
+            source_ids: parse_source_ids(source_ids)?,
+        }),
+        ResearchRetrievalScopeDto::Extractions { extraction_ids } => {
+            Ok(ResearchRetrievalScope::Extractions {
+                extraction_ids: parse_extraction_ids(extraction_ids)?,
+            })
+        }
+    }
 }
 
 fn header_text(headers: &HeaderMap, name: &str) -> Result<Option<String>, ApiError> {
@@ -2706,6 +2743,29 @@ fn research_retrieval_readiness_dto(value: DifyReadiness) -> ResearchRetrievalRe
         provider: value.provider.to_owned(),
         qualification_target: value.qualification_target.to_owned(),
         configured: value.configured,
+        status: match value.status {
+            nineprofs_research_dify::DifyReadinessStatus::NotConfigured => {
+                ResearchRetrievalReadinessStatusDto::NotConfigured
+            }
+            nineprofs_research_dify::DifyReadinessStatus::Configured => {
+                ResearchRetrievalReadinessStatusDto::Configured
+            }
+            nineprofs_research_dify::DifyReadinessStatus::Unreachable => {
+                ResearchRetrievalReadinessStatusDto::Unreachable
+            }
+            nineprofs_research_dify::DifyReadinessStatus::Reachable => {
+                ResearchRetrievalReadinessStatusDto::Reachable
+            }
+            nineprofs_research_dify::DifyReadinessStatus::Unauthorized => {
+                ResearchRetrievalReadinessStatusDto::Unauthorized
+            }
+            nineprofs_research_dify::DifyReadinessStatus::Ready => {
+                ResearchRetrievalReadinessStatusDto::Ready
+            }
+        },
+        reachable: value.reachable,
+        authorized: value.authorized,
+        ready: value.ready,
     }
 }
 
@@ -2731,6 +2791,7 @@ fn research_extraction_retrieval_index_dto(
         extraction_id: value.extraction_id,
         source_snapshot_id: value.source_snapshot_id,
         document_id: value.document_id,
+        metadata_qualified: value.metadata_qualified,
         chunker_version: value.chunker_version,
         status: dify_index_status_dto(value.status),
         failure_code: value.failure_code,

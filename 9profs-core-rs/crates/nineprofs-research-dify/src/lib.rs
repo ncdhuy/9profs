@@ -9,7 +9,8 @@ use nineprofs_api_types::EventEnvelope;
 use nineprofs_common::{new_id, now_ms};
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{
-    ContentHash, HashAlgorithm, ResearchError, ResearchPdfPage, ResearchService,
+    ContentHash, HashAlgorithm, ResearchError, ResearchPdfPage, ResearchRetrievalScope,
+    ResearchService,
 };
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,9 @@ pub const MAX_QUERY_CODE_POINTS: usize = 250;
 pub const MAX_TOP_K: u32 = 20;
 pub const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 pub const DEFAULT_BATCH_SIZE: usize = 50;
+pub const DIFY_EXTRACTION_METADATA_FIELD: &str = "nineprofs_extraction_id";
+pub const DIFY_SOURCE_METADATA_FIELD: &str = "nineprofs_source_id";
+pub const DIFY_SNAPSHOT_METADATA_FIELD: &str = "nineprofs_snapshot_id";
 
 #[derive(Clone)]
 pub struct DifyConfig {
@@ -103,6 +107,21 @@ pub struct DifyReadiness {
     pub provider: &'static str,
     pub qualification_target: &'static str,
     pub configured: bool,
+    pub status: DifyReadinessStatus,
+    pub reachable: bool,
+    pub authorized: bool,
+    pub ready: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DifyReadinessStatus {
+    NotConfigured,
+    Configured,
+    Unreachable,
+    Reachable,
+    Unauthorized,
+    Ready,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -126,6 +145,7 @@ pub struct DifyExtractionIndex {
     pub extraction_id: String,
     pub source_snapshot_id: String,
     pub document_id: Option<String>,
+    pub metadata_qualified: bool,
     pub chunker_version: String,
     pub status: DifyIndexStatus,
     pub failure_code: Option<String>,
@@ -206,6 +226,43 @@ struct DifyIndexingStatus {
 #[derive(Debug, Deserialize)]
 struct DifyDatasetResponse {
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifyDatasetListResponse {
+    #[serde(default, rename = "data")]
+    _data: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DifyMetadataField {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    field_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifyMetadataListResponse {
+    #[serde(default)]
+    doc_metadata: Vec<DifyMetadataField>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifyDocumentMetadata {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    field_type: String,
+    #[serde(default)]
+    value: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifyDocumentMetadataResponse {
+    id: String,
+    #[serde(default)]
+    doc_metadata: Vec<DifyDocumentMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -341,6 +398,162 @@ impl DifyClient {
         Ok(())
     }
 
+    #[cfg(test)]
+    async fn delete_dataset(&self, dataset_id: &str) -> Result<(), DifyError> {
+        self.send(Method::DELETE, &format!("datasets/{dataset_id}"), None)
+            .await
+            .map(|_| ())
+    }
+
+    async fn probe(&self) -> Result<(), DifyError> {
+        let _: DifyDatasetListResponse = self
+            .send_json(Method::GET, "datasets?page=1&limit=1", None)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_metadata_fields(
+        &self,
+        dataset_id: &str,
+    ) -> Result<Vec<DifyMetadataField>, DifyError> {
+        let response: DifyMetadataListResponse = self
+            .send_json(
+                Method::GET,
+                &format!("datasets/{dataset_id}/metadata"),
+                None,
+            )
+            .await?;
+        Ok(response.doc_metadata)
+    }
+
+    async fn create_metadata_field(
+        &self,
+        dataset_id: &str,
+        name: &str,
+    ) -> Result<DifyMetadataField, DifyError> {
+        self.send_json(
+            Method::POST,
+            &format!("datasets/{dataset_id}/metadata"),
+            Some(json!({"name": name, "type": "string"})),
+        )
+        .await
+    }
+
+    async fn ensure_metadata_fields(
+        &self,
+        dataset_id: &str,
+    ) -> Result<Vec<DifyMetadataField>, DifyError> {
+        let mut fields = self.list_metadata_fields(dataset_id).await?;
+        let mut required = Vec::with_capacity(3);
+        for name in [
+            DIFY_EXTRACTION_METADATA_FIELD,
+            DIFY_SOURCE_METADATA_FIELD,
+            DIFY_SNAPSHOT_METADATA_FIELD,
+        ] {
+            let matches: Vec<_> = fields.iter().filter(|field| field.name == name).collect();
+            let field = match matches.as_slice() {
+                [field] if field.field_type == "string" => (*field).clone(),
+                [] => {
+                    let field = self.create_metadata_field(dataset_id, name).await?;
+                    if field.name != name || field.field_type != "string" {
+                        return Err(DifyError::IndexDrift);
+                    }
+                    fields.push(field.clone());
+                    field
+                }
+                _ => return Err(DifyError::IndexDrift),
+            };
+            required.push(field);
+        }
+        Ok(required)
+    }
+
+    async fn update_document_metadata(
+        &self,
+        dataset_id: &str,
+        document_id: &str,
+        fields: &[DifyMetadataField],
+        extraction_id: &str,
+        source_id: &str,
+        snapshot_id: &str,
+    ) -> Result<(), DifyError> {
+        let values = [
+            (DIFY_EXTRACTION_METADATA_FIELD, extraction_id),
+            (DIFY_SOURCE_METADATA_FIELD, source_id),
+            (DIFY_SNAPSHOT_METADATA_FIELD, snapshot_id),
+        ];
+        let metadata_list: Vec<Value> = fields
+            .iter()
+            .zip(values)
+            .map(|(field, (expected_name, value))| {
+                json!({"id": field.id, "name": expected_name, "value": value})
+            })
+            .collect();
+        self.send(
+            Method::POST,
+            &format!("datasets/{dataset_id}/documents/metadata"),
+            Some(json!({
+                "operation_data": [{
+                    "document_id": document_id,
+                    "metadata_list": metadata_list,
+                    "partial_update": true
+                }]
+            })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn document_metadata(
+        &self,
+        dataset_id: &str,
+        document_id: &str,
+    ) -> Result<DifyDocumentMetadataResponse, DifyError> {
+        self.send_json(
+            Method::GET,
+            &format!("datasets/{dataset_id}/documents/{document_id}?metadata=only"),
+            None,
+        )
+        .await
+    }
+
+    fn verify_document_metadata(
+        response: &DifyDocumentMetadataResponse,
+        document_id: &str,
+        fields: &[DifyMetadataField],
+        extraction_id: &str,
+        source_id: &str,
+        snapshot_id: &str,
+    ) -> Result<(), DifyError> {
+        let expected = [
+            (DIFY_EXTRACTION_METADATA_FIELD, extraction_id),
+            (DIFY_SOURCE_METADATA_FIELD, source_id),
+            (DIFY_SNAPSHOT_METADATA_FIELD, snapshot_id),
+        ];
+        if response.id.is_empty() {
+            return Err(DifyError::MalformedResponse);
+        }
+        if response.id != document_id || fields.len() != expected.len() {
+            return Err(DifyError::IndexDrift);
+        }
+        for ((name, value), expected_field) in expected.into_iter().zip(fields) {
+            let Some(field) = response
+                .doc_metadata
+                .iter()
+                .find(|field| field.name == name)
+            else {
+                return Err(DifyError::IndexDrift);
+            };
+            if field.id != expected_field.id
+                || field.field_type != "string"
+                || field.value.as_ref().and_then(Value::as_str) != Some(value)
+            {
+                return Err(DifyError::IndexDrift);
+            }
+        }
+        Ok(())
+    }
+
     async fn create_text_document(
         &self,
         dataset_id: &str,
@@ -454,14 +667,40 @@ impl DifyClient {
         dataset_id: &str,
         query: &str,
         top_k: u32,
+        extraction_ids: Option<&[String]>,
     ) -> Result<Vec<DifyHit>, DifyError> {
+        let retrieval_model = match extraction_ids {
+            None => json!({"top_k": top_k}),
+            Some([extraction_id]) => json!({
+                "top_k": top_k,
+                "metadata_filtering_conditions": {
+                    "logical_operator": "and",
+                    "conditions": [{
+                        "name": DIFY_EXTRACTION_METADATA_FIELD,
+                        "comparison_operator": "is",
+                        "value": extraction_id
+                    }]
+                }
+            }),
+            Some(extraction_ids) => json!({
+                "top_k": top_k,
+                "metadata_filtering_conditions": {
+                    "logical_operator": "and",
+                    "conditions": [{
+                        "name": DIFY_EXTRACTION_METADATA_FIELD,
+                        "comparison_operator": "in",
+                        "value": extraction_ids
+                    }]
+                }
+            }),
+        };
         let response: DifyRetrieveResponse = self
             .send_json(
                 Method::POST,
                 &format!("datasets/{dataset_id}/retrieve"),
                 Some(json!({
                     "query": query,
-                    "retrieval_model": {"top_k": top_k}
+                    "retrieval_model": retrieval_model
                 })),
             )
             .await?;
@@ -556,7 +795,43 @@ impl DifyResearchService {
             provider: "dify",
             qualification_target: "1.16.1",
             configured: self.config.is_some(),
+            status: if self.config.is_some() {
+                DifyReadinessStatus::Configured
+            } else {
+                DifyReadinessStatus::NotConfigured
+            },
+            reachable: false,
+            authorized: false,
+            ready: false,
         }
+    }
+
+    pub async fn qualified_readiness(&self) -> DifyReadiness {
+        let mut readiness = self.readiness();
+        let Some(client) = self.client.as_ref() else {
+            return readiness;
+        };
+        match client.probe().await {
+            Ok(()) => {
+                readiness.status = DifyReadinessStatus::Ready;
+                readiness.reachable = true;
+                readiness.authorized = true;
+                readiness.ready = true;
+            }
+            Err(DifyError::Unauthorized) => {
+                readiness.status = DifyReadinessStatus::Unauthorized;
+                readiness.reachable = true;
+            }
+            Err(DifyError::Unreachable | DifyError::Timeout) => {
+                readiness.status = DifyReadinessStatus::Unreachable;
+            }
+            Err(_) => {
+                readiness.status = DifyReadinessStatus::Reachable;
+                readiness.reachable = true;
+                readiness.authorized = true;
+            }
+        }
+        readiness
     }
 
     pub async fn state(&self, research_case_id: &str) -> Result<RetrievalIndexState, DifyError> {
@@ -566,7 +841,7 @@ impl DifyResearchService {
             None => Vec::new(),
         };
         Ok(RetrievalIndexState {
-            readiness: self.readiness(),
+            readiness: self.qualified_readiness().await,
             case_index,
             extraction_indexes,
         })
@@ -580,6 +855,7 @@ impl DifyResearchService {
         let case = self.research.get_case(research_case_id).await?;
         if let Some(index) = self.case_index(research_case_id).await? {
             client.get_dataset(&index.dataset_id).await?;
+            self.ensure_metadata_fields(&index).await?;
             return Ok(index);
         }
 
@@ -619,6 +895,7 @@ impl DifyResearchService {
                 "provider": "dify"
             }),
         );
+        self.ensure_metadata_fields(&index).await?;
         Ok(index)
     }
 
@@ -654,6 +931,7 @@ impl DifyResearchService {
             .extraction_index(&case_index.index_id, extraction_id)
             .await?
             && matches!(existing.status, DifyIndexStatus::Ready)
+            && existing.metadata_qualified
         {
             return Ok(existing);
         }
@@ -682,8 +960,12 @@ impl DifyResearchService {
             .await;
         match result {
             Ok(index) => {
+                self.update_extraction_metadata_qualified(&index.index_id, true)
+                    .await?;
                 self.update_extraction_status(&index.index_id, &DifyIndexStatus::Ready, None)
                     .await?;
+                let mut index = index;
+                index.metadata_qualified = true;
                 self.publish(
                     "research.extractionIndexed",
                     json!({
@@ -719,15 +1001,58 @@ impl DifyResearchService {
         query: &str,
         top_k: u32,
     ) -> Result<Vec<RetrievalCandidate>, DifyError> {
+        self.retrieve_with_scope(
+            research_case_id,
+            &ResearchRetrievalScope::Case,
+            query,
+            top_k,
+        )
+        .await
+    }
+
+    pub async fn retrieve_from_extractions(
+        &self,
+        research_case_id: &str,
+        extraction_ids: &[String],
+        query: &str,
+        top_k: u32,
+    ) -> Result<Vec<RetrievalCandidate>, DifyError> {
+        let extraction_ids = extraction_ids
+            .iter()
+            .map(|id| nineprofs_research::ResearchPdfExtractionId::parse(id.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.retrieve_with_scope(
+            research_case_id,
+            &ResearchRetrievalScope::Extractions { extraction_ids },
+            query,
+            top_k,
+        )
+        .await
+    }
+
+    pub async fn retrieve_with_scope(
+        &self,
+        research_case_id: &str,
+        scope: &ResearchRetrievalScope,
+        query: &str,
+        top_k: u32,
+    ) -> Result<Vec<RetrievalCandidate>, DifyError> {
         let client = self.client.as_ref().ok_or(DifyError::NotConfigured)?;
+        scope.validate().map_err(DifyError::Research)?;
         let query = bounded_query(query)?;
         let top_k = top_k.clamp(1, MAX_TOP_K);
         let case_index = self
             .case_index(research_case_id)
             .await?
             .ok_or(DifyError::RemoteNotFound)?;
+        let scoped_extraction_ids = self.resolve_scope(&case_index, scope).await?;
         let hits = client
-            .retrieve(&case_index.dataset_id, &query, top_k)
+            .retrieve(
+                &case_index.dataset_id,
+                &query,
+                top_k,
+                scoped_extraction_ids.as_deref(),
+            )
             .await?;
         let mut candidates = Vec::new();
         for (rank, hit) in hits.into_iter().take(top_k as usize).enumerate() {
@@ -736,10 +1061,18 @@ impl DifyResearchService {
                  c.page, c.start_offset, c.end_offset, c.text, c.text_hash, c.extraction_index_id \
                  FROM research_dify_segment_mappings m \
                  JOIN research_retrieval_chunks c ON c.id = m.retrieval_chunk_id \
-                 WHERE m.dataset_id = ? AND m.segment_id = ?",
+                 JOIN research_dify_extraction_indexes i ON i.id = c.extraction_index_id \
+                 WHERE m.dataset_id = ? AND m.segment_id = ? \
+                   AND m.document_id = i.document_id \
+                   AND i.case_index_id = ? AND i.research_case_id = ? \
+                   AND c.research_case_id = i.research_case_id \
+                   AND c.extraction_id = i.extraction_id \
+                   AND c.source_snapshot_id = i.source_snapshot_id",
             )
             .bind(&case_index.dataset_id)
             .bind(&hit.segment_id)
+            .bind(&case_index.index_id)
+            .bind(research_case_id)
             .fetch_optional(&self.pool)
             .await?
             else {
@@ -758,6 +1091,13 @@ impl DifyResearchService {
                 return Err(DifyError::IndexingFailed);
             }
             let extraction_id: String = row.get("extraction_id");
+            if let Some(scoped_extraction_ids) = scoped_extraction_ids.as_ref()
+                && !scoped_extraction_ids.contains(&extraction_id)
+            {
+                self.mark_extraction_degraded(&extraction_index_id).await?;
+                self.mark_case_degraded(research_case_id).await?;
+                return Err(DifyError::IndexDrift);
+            }
             let page_number: u32 = row.get::<i64, _>("page") as u32;
             let start: u64 = row.get::<i64, _>("start_offset") as u64;
             let end: u64 = row.get::<i64, _>("end_offset") as u64;
@@ -767,7 +1107,14 @@ impl DifyResearchService {
                 .research
                 .get_pdf_page(&extraction_id, page_number)
                 .await?;
-            let excerpt = canonical_excerpt(&page, start, end, &stored_text, &stored_hash)?;
+            let excerpt = match canonical_excerpt(&page, start, end, &stored_text, &stored_hash) {
+                Ok(excerpt) => excerpt,
+                Err(error) => {
+                    self.mark_extraction_degraded(&extraction_index_id).await?;
+                    self.mark_case_degraded(research_case_id).await?;
+                    return Err(error);
+                }
+            };
             candidates.push(RetrievalCandidate {
                 retrieval_chunk_id: row.get("id"),
                 research_source_id: row.get("research_source_id"),
@@ -793,6 +1140,7 @@ impl DifyResearchService {
         extraction: &nineprofs_research::ResearchPdfExtraction,
         source_id: &str,
     ) -> Result<DifyExtractionIndex, DifyError> {
+        let metadata_fields = self.ensure_metadata_fields(case_index).await?;
         let pages = self
             .research
             .list_all_pdf_pages_for_indexing(&extraction.id.to_string())
@@ -870,6 +1218,27 @@ impl DifyResearchService {
             self.update_document_id(&index.index_id, &document_id)
                 .await?;
         }
+        client
+            .update_document_metadata(
+                &case_index.dataset_id,
+                &document_id,
+                &metadata_fields,
+                &index.extraction_id,
+                source_id,
+                &index.source_snapshot_id,
+            )
+            .await?;
+        let metadata = client
+            .document_metadata(&case_index.dataset_id, &document_id)
+            .await?;
+        DifyClient::verify_document_metadata(
+            &metadata,
+            &document_id,
+            &metadata_fields,
+            &index.extraction_id,
+            source_id,
+            &index.source_snapshot_id,
+        )?;
         for chunk in &chunks {
             sqlx::query(
                 "INSERT INTO research_retrieval_chunks \
@@ -936,7 +1305,154 @@ impl DifyResearchService {
             .execute(&self.pool)
             .await?;
         }
-        Ok(index.clone())
+        let mut index = index.clone();
+        index.document_id = Some(document_id);
+        Ok(index)
+    }
+
+    async fn resolve_scope(
+        &self,
+        case_index: &DifyCaseIndex,
+        scope: &ResearchRetrievalScope,
+    ) -> Result<Option<Vec<String>>, DifyError> {
+        match scope {
+            ResearchRetrievalScope::Case => Ok(None),
+            ResearchRetrievalScope::Extractions { extraction_ids } => {
+                let mut resolved = Vec::with_capacity(extraction_ids.len());
+                for extraction_id in extraction_ids {
+                    let index = self
+                        .require_scoped_extraction(case_index, extraction_id.as_str())
+                        .await?;
+                    resolved.push(index.extraction_id);
+                }
+                Ok(Some(resolved))
+            }
+            ResearchRetrievalScope::Sources { source_ids } => {
+                let indexes = self.extraction_indexes(&case_index.index_id).await?;
+                let mut resolved = Vec::with_capacity(source_ids.len());
+                for source_id in source_ids {
+                    let source = self.research.get_source(source_id.as_str()).await?;
+                    if source.research_case_id.as_str() != case_index.research_case_id {
+                        return Err(DifyError::Invalid(
+                            "research source does not belong to research case".to_owned(),
+                        ));
+                    }
+                    let mut matches = Vec::new();
+                    for index in &indexes {
+                        if !matches!(index.status, DifyIndexStatus::Ready)
+                            || !index.metadata_qualified
+                            || index.document_id.is_none()
+                        {
+                            continue;
+                        }
+                        let extraction = self
+                            .research
+                            .get_pdf_extraction_by_id(&index.extraction_id)
+                            .await?;
+                        let snapshot = self
+                            .research
+                            .get_snapshot(&extraction.source_snapshot_id.to_string())
+                            .await?;
+                        if snapshot.source_id == source.id {
+                            matches.push(index.extraction_id.clone());
+                        }
+                    }
+                    match matches.as_slice() {
+                        [extraction_id] => resolved.push(
+                            self.require_scoped_extraction(case_index, extraction_id)
+                                .await?
+                                .extraction_id,
+                        ),
+                        [] => {
+                            return Err(DifyError::IndexingFailed);
+                        }
+                        _ => {
+                            return Err(DifyError::Invalid(
+                                "source retrieval scope is ambiguous; use exact extraction IDs"
+                                    .to_owned(),
+                            ));
+                        }
+                    }
+                }
+                Ok(Some(resolved))
+            }
+        }
+    }
+
+    async fn require_scoped_extraction(
+        &self,
+        case_index: &DifyCaseIndex,
+        extraction_id: &str,
+    ) -> Result<DifyExtractionIndex, DifyError> {
+        let extraction = self
+            .research
+            .get_pdf_extraction_by_id(extraction_id)
+            .await?;
+        let snapshot = self
+            .research
+            .get_snapshot(&extraction.source_snapshot_id.to_string())
+            .await?;
+        let source = self
+            .research
+            .get_source(&snapshot.source_id.to_string())
+            .await?;
+        if source.research_case_id.as_str() != case_index.research_case_id {
+            return Err(DifyError::Invalid(
+                "PDF extraction does not belong to research case".to_owned(),
+            ));
+        }
+        let index = self
+            .extraction_index(&case_index.index_id, extraction_id)
+            .await?
+            .ok_or(DifyError::IndexingFailed)?;
+        if index.research_case_id != case_index.research_case_id
+            || index.source_snapshot_id != extraction.source_snapshot_id.to_string()
+            || !matches!(index.status, DifyIndexStatus::Ready)
+            || !index.metadata_qualified
+            || index.document_id.is_none()
+        {
+            return Err(DifyError::IndexingFailed);
+        }
+        Ok(index)
+    }
+
+    async fn ensure_metadata_fields(
+        &self,
+        case_index: &DifyCaseIndex,
+    ) -> Result<Vec<DifyMetadataField>, DifyError> {
+        let client = self.client.as_ref().ok_or(DifyError::NotConfigured)?;
+        let fields = client
+            .ensure_metadata_fields(&case_index.dataset_id)
+            .await?;
+        for field in &fields {
+            let existing = sqlx::query(
+                "SELECT field_id FROM research_dify_metadata_fields WHERE dataset_id = ? AND field_name = ?",
+            )
+            .bind(&case_index.dataset_id)
+            .bind(&field.name)
+            .fetch_optional(&self.pool)
+            .await?;
+            if existing.is_some_and(|row| row.get::<String, _>("field_id") != field.id) {
+                return Err(DifyError::IndexDrift);
+            }
+            let timestamp = now_ms();
+            sqlx::query(
+                "INSERT INTO research_dify_metadata_fields \
+                 (dataset_id, field_name, field_id, field_type, created_at_ms, updated_at_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(dataset_id, field_name) DO UPDATE SET field_id = excluded.field_id, \
+                 field_type = excluded.field_type, updated_at_ms = excluded.updated_at_ms",
+            )
+            .bind(&case_index.dataset_id)
+            .bind(&field.name)
+            .bind(&field.id)
+            .bind(&field.field_type)
+            .bind(timestamp)
+            .bind(timestamp)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(fields)
     }
 
     async fn begin_extraction_index(
@@ -962,6 +1478,7 @@ impl DifyResearchService {
             extraction_id: extraction.id.to_string(),
             source_snapshot_id: snapshot.id.to_string(),
             document_id: None,
+            metadata_qualified: false,
             chunker_version: CHUNKER_VERSION.to_owned(),
             status: DifyIndexStatus::Syncing,
             failure_code: None,
@@ -970,16 +1487,17 @@ impl DifyResearchService {
         };
         sqlx::query(
             "INSERT INTO research_dify_extraction_indexes \
-             (id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, chunker_version, \
-              status, failure_code, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, metadata_qualified, chunker_version, \
+              status, failure_code, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&index.index_id)
         .bind(&index.case_index_id)
         .bind(&index.research_case_id)
         .bind(&index.extraction_id)
-        .bind(&index.source_snapshot_id)
-        .bind(Option::<String>::None)
-        .bind(&index.chunker_version)
+            .bind(&index.source_snapshot_id)
+            .bind(Option::<String>::None)
+            .bind(false)
+            .bind(&index.chunker_version)
         .bind(status_text(&index.status))
         .bind(Option::<String>::None)
         .bind(timestamp)
@@ -1019,7 +1537,7 @@ impl DifyResearchService {
         extraction_id: &str,
     ) -> Result<Option<DifyExtractionIndex>, DifyError> {
         sqlx::query(
-            "SELECT id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, \
+            "SELECT id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, metadata_qualified, \
              chunker_version, status, failure_code, created_at_ms, updated_at_ms \
              FROM research_dify_extraction_indexes WHERE case_index_id = ? AND extraction_id = ? \
              AND chunker_version = ?",
@@ -1038,7 +1556,7 @@ impl DifyResearchService {
         case_index_id: &str,
     ) -> Result<Vec<DifyExtractionIndex>, DifyError> {
         sqlx::query(
-            "SELECT id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, \
+            "SELECT id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, metadata_qualified, \
              chunker_version, status, failure_code, created_at_ms, updated_at_ms \
              FROM research_dify_extraction_indexes WHERE case_index_id = ? ORDER BY created_at_ms ASC, id ASC",
         )
@@ -1073,6 +1591,22 @@ impl DifyResearchService {
             "UPDATE research_dify_extraction_indexes SET document_id = ?, updated_at_ms = ? WHERE id = ?",
         )
         .bind(document_id)
+        .bind(now_ms())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_extraction_metadata_qualified(
+        &self,
+        id: &str,
+        qualified: bool,
+    ) -> Result<(), DifyError> {
+        sqlx::query(
+            "UPDATE research_dify_extraction_indexes SET metadata_qualified = ?, updated_at_ms = ? WHERE id = ?",
+        )
+        .bind(qualified)
         .bind(now_ms())
         .bind(id)
         .execute(&self.pool)
@@ -1122,6 +1656,17 @@ impl DifyResearchService {
         )
         .bind(now_ms())
         .bind(case_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_extraction_degraded(&self, index_id: &str) -> Result<(), DifyError> {
+        sqlx::query(
+            "UPDATE research_dify_extraction_indexes SET status = 'degraded', failure_code = 'index_drift', updated_at_ms = ? WHERE id = ?",
+        )
+        .bind(now_ms())
+        .bind(index_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1348,6 +1893,7 @@ fn map_extraction_index(row: sqlx::sqlite::SqliteRow) -> Result<DifyExtractionIn
         extraction_id: row.get("extraction_id"),
         source_snapshot_id: row.get("source_snapshot_id"),
         document_id: row.get("document_id"),
+        metadata_qualified: row.get::<i64, _>("metadata_qualified") != 0,
         chunker_version: row.get("chunker_version"),
         status: parse_status(row.get::<String, _>("status"))?,
         failure_code: row.get("failure_code"),
@@ -1371,6 +1917,10 @@ fn parse_status(value: String) -> Result<DifyIndexStatus, DifyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nineprofs_db::Database;
+    use nineprofs_research::{ResearchService, SqliteResearchRepository};
+    use serde_json::json;
+    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1384,6 +1934,336 @@ mod tests {
                 value: sha256_hex(text.as_bytes()),
             },
         }
+    }
+
+    async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2048];
+        let header_end = loop {
+            let read = stream.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "mock request ended before headers");
+            request.extend_from_slice(&buffer[..read]);
+            if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then_some(value.trim().parse::<usize>().ok()?)
+            })
+            .unwrap_or(0);
+        while request.len() < header_end + content_length {
+            let read = stream.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "mock request ended before body");
+            request.extend_from_slice(&buffer[..read]);
+        }
+        String::from_utf8(request).unwrap()
+    }
+
+    async fn mock_response_server(
+        responses: Vec<(u16, Value)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::with_capacity(responses.len());
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                requests.push(read_request(&mut stream).await);
+                let body = serde_json::to_string(&body).unwrap();
+                let reason = if status == 200 { "OK" } else { "Unauthorized" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        (format!("http://{address}/v1"), server)
+    }
+
+    async fn retrieval_fixture() -> (SqlitePool, Arc<ResearchService>) {
+        let database = Database::in_memory().await.unwrap();
+        let pool = database.pool().clone();
+        for case_id in ["case-a", "case-b"] {
+            sqlx::query(
+                "INSERT INTO research_cases (id, title, created_at_ms, updated_at_ms) VALUES (?, ?, 1, 1)",
+            )
+            .bind(case_id)
+            .bind(case_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for (source_id, case_id) in [
+            ("source-a", "case-a"),
+            ("source-a2", "case-a"),
+            ("source-b", "case-a"),
+            ("source-cross", "case-b"),
+        ] {
+            sqlx::query(
+                "INSERT INTO research_sources (id, research_case_id, kind, label, created_at_ms) VALUES (?, ?, 'reference_pdf', ?, 1)",
+            )
+            .bind(source_id)
+            .bind(case_id)
+            .bind(source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for (snapshot_id, source_id, artifact_id, content_hash) in [
+            ("snapshot-ea", "source-a", "artifact-ea", "hash-ea"),
+            ("snapshot-ea2", "source-a2", "artifact-ea2", "hash-ea2"),
+            ("snapshot-eb", "source-b", "artifact-eb", "hash-eb"),
+            (
+                "snapshot-cross",
+                "source-cross",
+                "artifact-cross",
+                "hash-cross",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO research_artifacts (id, hash_algorithm, content_hash, size_bytes, media_type, original_filename, created_at_ms) VALUES (?, 'sha256', ?, 1, 'application/pdf', ?, 1)",
+            )
+            .bind(artifact_id)
+            .bind(content_hash)
+            .bind(format!("{artifact_id}.pdf"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_source_snapshots (id, source_id, hash_algorithm, content_hash, captured_at_ms, capture_method, origin_json, metadata_json) VALUES (?, ?, 'sha256', ?, 1, 'user_provided', ?, '{}')",
+            )
+            .bind(snapshot_id)
+            .bind(source_id)
+            .bind(content_hash)
+            .bind(
+                serde_json::to_string(&json!({
+                    "kind": "external_import",
+                    "provider": "fixture",
+                    "external_reference": artifact_id
+                }))
+                .unwrap(),
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for (extraction_id, snapshot_id, artifact_id, text) in [
+            (
+                "extraction-ea",
+                "snapshot-ea",
+                "artifact-ea",
+                "evidence from EA",
+            ),
+            (
+                "extraction-ea2",
+                "snapshot-ea2",
+                "artifact-ea2",
+                "evidence from EA2",
+            ),
+            (
+                "extraction-eb",
+                "snapshot-eb",
+                "artifact-eb",
+                "evidence from EB",
+            ),
+            (
+                "extraction-cross",
+                "snapshot-cross",
+                "artifact-cross",
+                "evidence from cross-case",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO research_pdf_extractions (id, source_snapshot_id, artifact_id, extractor, extractor_version, page_count, hash_algorithm, extraction_hash, extracted_at_ms, status) VALUES (?, ?, ?, 'fixture', '1', 1, 'sha256', ?, 1, 'ready')",
+            )
+            .bind(extraction_id)
+            .bind(snapshot_id)
+            .bind(artifact_id)
+            .bind(format!("hash-{extraction_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_pdf_pages (extraction_id, page, text, hash_algorithm, text_hash) VALUES (?, 1, ?, 'sha256', ?)",
+            )
+            .bind(extraction_id)
+            .bind(text)
+            .bind(sha256_hex(text.as_bytes()))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO research_dify_case_indexes (id, research_case_id, dataset_id, status, created_at_ms, updated_at_ms) VALUES ('index-a', 'case-a', 'dataset-a', 'ready', 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (index_id, extraction_id, snapshot_id, source_id, segment_id, text) in [
+            (
+                "index-ea",
+                "extraction-ea",
+                "snapshot-ea",
+                "source-a",
+                "segment-ea",
+                "evidence from EA",
+            ),
+            (
+                "index-ea2",
+                "extraction-ea2",
+                "snapshot-ea2",
+                "source-a2",
+                "segment-ea2",
+                "evidence from EA2",
+            ),
+            (
+                "index-eb",
+                "extraction-eb",
+                "snapshot-eb",
+                "source-b",
+                "segment-eb",
+                "evidence from EB",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO research_dify_extraction_indexes (id, case_index_id, research_case_id, extraction_id, source_snapshot_id, document_id, metadata_qualified, chunker_version, status, created_at_ms, updated_at_ms) VALUES (?, 'index-a', 'case-a', ?, ?, ?, 1, ?, 'ready', 1, 1)",
+            )
+            .bind(index_id)
+            .bind(extraction_id)
+            .bind(snapshot_id)
+            .bind(format!("document-{extraction_id}"))
+            .bind(CHUNKER_VERSION)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_retrieval_chunks (id, extraction_index_id, research_case_id, research_source_id, source_snapshot_id, extraction_id, page, start_offset, end_offset, text, hash_algorithm, text_hash) VALUES (?, ?, 'case-a', ?, ?, ?, 1, 0, ?, ?, 'sha256', ?)",
+            )
+            .bind(format!("chunk-{extraction_id}"))
+            .bind(index_id)
+            .bind(source_id)
+            .bind(snapshot_id)
+            .bind(extraction_id)
+            .bind(text.chars().count() as i64)
+            .bind(text)
+            .bind(sha256_hex(text.as_bytes()))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_dify_segment_mappings (dataset_id, document_id, segment_id, retrieval_chunk_id, created_at_ms) VALUES ('dataset-a', ?, ?, ?, 1)",
+            )
+            .bind(format!("document-{extraction_id}"))
+            .bind(segment_id)
+            .bind(format!("chunk-{extraction_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        (
+            pool.clone(),
+            Arc::new(ResearchService::new(
+                SqliteResearchRepository::new(pool),
+                Arc::new(BroadcastEventBus::new(8)),
+            )),
+        )
+    }
+
+    async fn add_live_fixture(pool: &SqlitePool) -> (String, Vec<String>) {
+        let case_id = new_id();
+        sqlx::query(
+            "INSERT INTO research_cases (id, title, created_at_ms, updated_at_ms) VALUES (?, 'Dify qualification', 1, 1)",
+        )
+        .bind(&case_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        let mut extraction_ids = Vec::with_capacity(2);
+        for suffix in ["ea", "eb"] {
+            let source_id = new_id();
+            let snapshot_id = new_id();
+            let artifact_id = new_id();
+            let extraction_id = new_id();
+            let content_hash = format!("hash-{artifact_id}");
+            let text = format!("Dify qualification evidence {suffix}");
+            sqlx::query(
+                "INSERT INTO research_sources (id, research_case_id, kind, label, created_at_ms) VALUES (?, ?, 'reference_pdf', ?, 1)",
+            )
+            .bind(&source_id)
+            .bind(&case_id)
+            .bind(format!("qualification-{suffix}"))
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_artifacts (id, hash_algorithm, content_hash, size_bytes, media_type, original_filename, created_at_ms) VALUES (?, 'sha256', ?, 1, 'application/pdf', ?, 1)",
+            )
+            .bind(&artifact_id)
+            .bind(&content_hash)
+            .bind(format!("qualification-{suffix}.pdf"))
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_source_snapshots (id, source_id, hash_algorithm, content_hash, captured_at_ms, capture_method, origin_json, metadata_json) VALUES (?, ?, 'sha256', ?, 1, 'user_provided', ?, '{}')",
+            )
+            .bind(&snapshot_id)
+            .bind(&source_id)
+            .bind(&content_hash)
+            .bind(
+                serde_json::to_string(&json!({
+                    "kind": "uploaded_artifact",
+                    "artifact_id": artifact_id,
+                    "revision_id": null
+                }))
+                .unwrap(),
+            )
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_pdf_extractions (id, source_snapshot_id, artifact_id, extractor, extractor_version, page_count, hash_algorithm, extraction_hash, extracted_at_ms, status) VALUES (?, ?, ?, 'fixture', '1', 1, 'sha256', ?, 1, 'ready')",
+            )
+            .bind(&extraction_id)
+            .bind(&snapshot_id)
+            .bind(&artifact_id)
+            .bind(format!("hash-{extraction_id}"))
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO research_pdf_pages (extraction_id, page, text, hash_algorithm, text_hash) VALUES (?, 1, ?, 'sha256', ?)",
+            )
+            .bind(&extraction_id)
+            .bind(&text)
+            .bind(sha256_hex(text.as_bytes()))
+            .execute(pool)
+            .await
+            .unwrap();
+            extraction_ids.push(extraction_id);
+        }
+        (case_id, extraction_ids)
+    }
+
+    fn adapter(
+        pool: SqlitePool,
+        research: Arc<ResearchService>,
+        base_url: String,
+    ) -> DifyResearchService {
+        DifyResearchService::new(
+            pool,
+            research,
+            Arc::new(BroadcastEventBus::new(8)),
+            Some(DifyConfig::new(base_url, "test-key")),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1502,7 +2382,7 @@ mod tests {
         });
         let client =
             DifyClient::new(DifyConfig::new(format!("http://{address}/v1"), "test-key")).unwrap();
-        let hits = client.retrieve("dataset", "query", 1).await.unwrap();
+        let hits = client.retrieve("dataset", "query", 1, None).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].segment_id, "segment-1");
         assert_eq!(hits[0].score, 0.91);
@@ -1510,23 +2390,491 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_dify_qualification_is_explicitly_opt_in() {
-        if std::env::var("NINEPROFS_DIFY_QUALIFICATION").as_deref() != Ok("1") {
-            return;
+    async fn scoped_retrieve_uses_exact_extraction_metadata_filter() {
+        let (pool, research) = retrieval_fixture().await;
+        let (base_url, server) = mock_response_server(vec![(
+            200,
+            json!({
+                "records": [{"score": 0.91, "segment": {"id": "segment-ea"}}]
+            }),
+        )])
+        .await;
+        let service = adapter(pool, research, base_url);
+        let candidates = service
+            .retrieve_from_extractions("case-a", &["extraction-ea".to_owned()], "query", 5)
+            .await
+            .unwrap();
+        let requests = server.await.unwrap();
+        let body: Value =
+            serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].extraction_id, "extraction-ea");
+        assert_eq!(
+            body["retrieval_model"]["metadata_filtering_conditions"],
+            json!({
+                "logical_operator": "and",
+                "conditions": [{
+                    "name": DIFY_EXTRACTION_METADATA_FIELD,
+                    "comparison_operator": "is",
+                    "value": "extraction-ea"
+                }]
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn source_scope_resolves_only_one_explicitly_qualified_extraction() {
+        let (pool, research) = retrieval_fixture().await;
+        let (base_url, server) = mock_response_server(vec![(
+            200,
+            json!({
+                "records": [{"score": 0.91, "segment": {"id": "segment-ea"}}]
+            }),
+        )])
+        .await;
+        let service = adapter(pool, research, base_url);
+        let candidates = service
+            .retrieve_with_scope(
+                "case-a",
+                &ResearchRetrievalScope::Sources {
+                    source_ids: vec![
+                        nineprofs_research::ResearchSourceId::parse("source-a").unwrap(),
+                    ],
+                },
+                "query",
+                5,
+            )
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(candidates[0].extraction_id, "extraction-ea");
+    }
+
+    #[tokio::test]
+    async fn hostile_remote_scope_hit_fails_closed_without_evidence() {
+        let (pool, research) = retrieval_fixture().await;
+        let (base_url, server) = mock_response_server(vec![(
+            200,
+            json!({
+                "records": [{"score": 0.99, "segment": {"id": "segment-eb"}}]
+            }),
+        )])
+        .await;
+        let service = adapter(pool.clone(), research, base_url);
+        let result = service
+            .retrieve_from_extractions("case-a", &["extraction-ea".to_owned()], "query", 5)
+            .await;
+        server.await.unwrap();
+        assert!(matches!(result, Err(DifyError::IndexDrift)));
+        let evidence_count = sqlx::query("SELECT COUNT(*) AS count FROM research_evidence")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get::<i64, _>("count");
+        assert_eq!(evidence_count, 0);
+        let case_status = sqlx::query(
+            "SELECT status FROM research_dify_case_indexes WHERE research_case_id = 'case-a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<String, _>("status");
+        assert_eq!(case_status, "degraded");
+    }
+
+    #[tokio::test]
+    async fn cross_case_extraction_scope_is_rejected_before_remote_query() {
+        let (pool, research) = retrieval_fixture().await;
+        let service = adapter(pool, research, "http://127.0.0.1:1/v1".to_owned());
+        let result = service
+            .retrieve_from_extractions("case-a", &["extraction-cross".to_owned()], "query", 5)
+            .await;
+        assert!(matches!(
+            result,
+            Err(DifyError::Invalid(message)) if message.contains("does not belong")
+        ));
+    }
+
+    #[tokio::test]
+    async fn multi_extraction_scope_accepts_only_mapped_extractions() {
+        let (pool, research) = retrieval_fixture().await;
+        let (base_url, server) = mock_response_server(vec![(
+            200,
+            json!({
+                "records": [
+                    {"score": 0.91, "segment": {"id": "segment-ea"}},
+                    {"score": 0.90, "segment": {"id": "segment-ea2"}}
+                ]
+            }),
+        )])
+        .await;
+        let service = adapter(pool, research, base_url);
+        let candidates = service
+            .retrieve_with_scope(
+                "case-a",
+                &ResearchRetrievalScope::Extractions {
+                    extraction_ids: vec![
+                        nineprofs_research::ResearchPdfExtractionId::parse("extraction-ea")
+                            .unwrap(),
+                        nineprofs_research::ResearchPdfExtractionId::parse("extraction-ea2")
+                            .unwrap(),
+                    ],
+                },
+                "query",
+                5,
+            )
+            .await
+            .unwrap();
+        let requests = server.await.unwrap();
+        let body: Value =
+            serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body["retrieval_model"]["metadata_filtering_conditions"],
+            json!({
+                "logical_operator": "and",
+                "conditions": [{
+                    "name": DIFY_EXTRACTION_METADATA_FIELD,
+                    "comparison_operator": "in",
+                    "value": ["extraction-ea", "extraction-ea2"]
+                }]
+            })
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.extraction_id.as_str())
+                .collect::<Vec<_>>(),
+            ["extraction-ea", "extraction-ea2"]
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_index_remains_case_wide_but_refuses_scoped_retrieval() {
+        let (pool, research) = retrieval_fixture().await;
+        sqlx::query(
+            "UPDATE research_dify_extraction_indexes SET metadata_qualified = 0 WHERE extraction_id = 'extraction-ea'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (base_url, server) = mock_response_server(vec![(
+            200,
+            json!({
+                "records": [{"score": 0.91, "segment": {"id": "segment-ea"}}]
+            }),
+        )])
+        .await;
+        let service = adapter(pool.clone(), research.clone(), base_url);
+        assert_eq!(
+            service.retrieve("case-a", "query", 5).await.unwrap().len(),
+            1
+        );
+        server.await.unwrap();
+        let service = adapter(pool, research, "http://127.0.0.1:1/v1".to_owned());
+        assert!(matches!(
+            service
+                .retrieve_from_extractions("case-a", &["extraction-ea".to_owned()], "query", 5,)
+                .await,
+            Err(DifyError::IndexingFailed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn metadata_provisioning_is_idempotent_and_uses_v1_16_1_shapes() {
+        let fields = [
+            (DIFY_EXTRACTION_METADATA_FIELD, "field-extraction"),
+            (DIFY_SOURCE_METADATA_FIELD, "field-source"),
+            (DIFY_SNAPSHOT_METADATA_FIELD, "field-snapshot"),
+        ];
+        let all_fields = json!({
+            "doc_metadata": fields.iter().map(|(name, id)| json!({
+                "id": id, "name": name, "type": "string"
+            })).collect::<Vec<_>>()
+        });
+        let responses = vec![
+            (200, json!({"doc_metadata": []})),
+            (
+                200,
+                json!({"id": fields[0].1, "name": fields[0].0, "type": "string"}),
+            ),
+            (
+                200,
+                json!({"id": fields[1].1, "name": fields[1].0, "type": "string"}),
+            ),
+            (
+                200,
+                json!({"id": fields[2].1, "name": fields[2].0, "type": "string"}),
+            ),
+            (200, all_fields),
+            (200, json!({"result": "success"})),
+            (
+                200,
+                json!({
+                    "id": "document-ea",
+                    "doc_metadata": fields.iter().map(|(name, id)| json!({
+                        "id": id,
+                        "name": name,
+                        "type": "string",
+                        "value": match *name {
+                            DIFY_EXTRACTION_METADATA_FIELD => "extraction-ea",
+                            DIFY_SOURCE_METADATA_FIELD => "source-a",
+                            _ => "snapshot-ea",
+                        }
+                    })).collect::<Vec<_>>()
+                }),
+            ),
+        ];
+        let (base_url, server) = mock_response_server(responses).await;
+        let client = DifyClient::new(DifyConfig::new(base_url, "test-key")).unwrap();
+        let created = client.ensure_metadata_fields("dataset").await.unwrap();
+        let reused = client.ensure_metadata_fields("dataset").await.unwrap();
+        assert_eq!(
+            created
+                .iter()
+                .map(|field| field.id.as_str())
+                .collect::<Vec<_>>(),
+            ["field-extraction", "field-source", "field-snapshot"]
+        );
+        assert_eq!(
+            reused
+                .iter()
+                .map(|field| field.id.as_str())
+                .collect::<Vec<_>>(),
+            ["field-extraction", "field-source", "field-snapshot"]
+        );
+        client
+            .update_document_metadata(
+                "dataset",
+                "document-ea",
+                &created,
+                "extraction-ea",
+                "source-a",
+                "snapshot-ea",
+            )
+            .await
+            .unwrap();
+        let document = client
+            .document_metadata("dataset", "document-ea")
+            .await
+            .unwrap();
+        DifyClient::verify_document_metadata(
+            &document,
+            "document-ea",
+            &created,
+            "extraction-ea",
+            "source-a",
+            "snapshot-ea",
+        )
+        .unwrap();
+        let requests = server.await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /v1/datasets/dataset/metadata"))
+                .count(),
+            3
+        );
+        let create_body: Value =
+            serde_json::from_str(requests[1].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            create_body,
+            json!({"name": DIFY_EXTRACTION_METADATA_FIELD, "type": "string"})
+        );
+        let update_body: Value =
+            serde_json::from_str(requests[5].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            update_body,
+            json!({
+                "operation_data": [{
+                    "document_id": "document-ea",
+                    "metadata_list": fields.iter().map(|(name, id)| json!({
+                        "id": id,
+                        "name": name,
+                        "value": match *name {
+                            DIFY_EXTRACTION_METADATA_FIELD => "extraction-ea",
+                            DIFY_SOURCE_METADATA_FIELD => "source-a",
+                            _ => "snapshot-ea",
+                        }
+                    })).collect::<Vec<_>>(),
+                    "partial_update": true
+                }]
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn service_persists_metadata_field_ids_without_duplicate_provisioning() {
+        let (pool, research) = retrieval_fixture().await;
+        let fields = [
+            (DIFY_EXTRACTION_METADATA_FIELD, "field-extraction"),
+            (DIFY_SOURCE_METADATA_FIELD, "field-source"),
+            (DIFY_SNAPSHOT_METADATA_FIELD, "field-snapshot"),
+        ];
+        let all_fields = json!({
+            "doc_metadata": fields.iter().map(|(name, id)| json!({
+                "id": id, "name": name, "type": "string"
+            })).collect::<Vec<_>>()
+        });
+        let responses = vec![
+            (200, json!({"id": "dataset-a"})),
+            (200, json!({"doc_metadata": []})),
+            (
+                200,
+                json!({"id": fields[0].1, "name": fields[0].0, "type": "string"}),
+            ),
+            (
+                200,
+                json!({"id": fields[1].1, "name": fields[1].0, "type": "string"}),
+            ),
+            (
+                200,
+                json!({"id": fields[2].1, "name": fields[2].0, "type": "string"}),
+            ),
+            (200, json!({"id": "dataset-a"})),
+            (200, all_fields),
+        ];
+        let (base_url, server) = mock_response_server(responses).await;
+        let service = adapter(pool.clone(), research, base_url);
+        service.ensure_case_index("case-a").await.unwrap();
+        service.ensure_case_index("case-a").await.unwrap();
+        let fields_count = sqlx::query(
+            "SELECT COUNT(*) AS count FROM research_dify_metadata_fields WHERE dataset_id = 'dataset-a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<i64, _>("count");
+        assert_eq!(fields_count, 3);
+        let requests = server.await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /v1/datasets/dataset-a/metadata"))
+                .count(),
+            3
+        );
+    }
+
+    async fn empty_service(config: Option<DifyConfig>) -> DifyResearchService {
+        let database = Database::in_memory().await.unwrap();
+        let research = Arc::new(ResearchService::new(
+            SqliteResearchRepository::new(database.pool().clone()),
+            Arc::new(BroadcastEventBus::new(8)),
+        ));
+        DifyResearchService::new(
+            database.pool().clone(),
+            research,
+            Arc::new(BroadcastEventBus::new(8)),
+            config,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn readiness_distinguishes_configuration_connectivity_and_authentication() {
+        let service = empty_service(None).await;
+        assert!(matches!(
+            service.readiness().status,
+            DifyReadinessStatus::NotConfigured
+        ));
+        assert!(!service.qualified_readiness().await.ready);
+
+        let mut config = DifyConfig::new("http://127.0.0.1:1/v1", "test-key");
+        config.timeout = Duration::from_millis(100);
+        let service = empty_service(Some(config)).await;
+        let readiness = service.qualified_readiness().await;
+        assert!(matches!(readiness.status, DifyReadinessStatus::Unreachable));
+        assert!(!readiness.reachable);
+
+        let (base_url, server) =
+            mock_response_server(vec![(401, json!({"code": "unauthorized"}))]).await;
+        let service = empty_service(Some(DifyConfig::new(base_url, "bad-key"))).await;
+        let readiness = service.qualified_readiness().await;
+        assert!(matches!(
+            readiness.status,
+            DifyReadinessStatus::Unauthorized
+        ));
+        assert!(readiness.reachable);
+        assert!(!readiness.authorized);
+        server.await.unwrap();
+
+        let (base_url, server) = mock_response_server(vec![(200, json!({"data": []}))]).await;
+        let service = empty_service(Some(DifyConfig::new(base_url, "good-key"))).await;
+        let readiness = service.qualified_readiness().await;
+        assert!(matches!(readiness.status, DifyReadinessStatus::Ready));
+        assert!(readiness.ready && readiness.reachable && readiness.authorized);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn real_dify_scoped_qualification_is_explicitly_opt_in() {
+        let (base_url, api_key) = match (
+            std::env::var("NINEPROFS_DIFY_TEST_BASE_URL"),
+            std::env::var("NINEPROFS_DIFY_TEST_API_KEY"),
+        ) {
+            (Ok(base_url), Ok(api_key)) if !base_url.trim().is_empty() && !api_key.is_empty() => {
+                (base_url, api_key)
+            }
+            _ => {
+                return;
+            }
+        };
+        let (pool, research) = retrieval_fixture().await;
+        let (case_id, extraction_ids) = add_live_fixture(&pool).await;
+        let mut config = DifyConfig::new(base_url, Arc::<str>::from(api_key));
+        config.max_poll_attempts = 120;
+        let service = DifyResearchService::new(
+            pool,
+            research,
+            Arc::new(BroadcastEventBus::new(8)),
+            Some(config),
+        )
+        .unwrap();
+        let client = service.client.as_ref().unwrap().clone();
+        let result: Result<(), DifyError> = async {
+            let index = service.ensure_case_index(&case_id).await?;
+            for extraction_id in &extraction_ids {
+                service
+                    .sync_extraction(&index.index_id, extraction_id)
+                    .await?;
+            }
+            let case_wide = service
+                .retrieve(&case_id, "qualification evidence", 5)
+                .await?;
+            assert!(
+                case_wide
+                    .iter()
+                    .all(|candidate| { extraction_ids.contains(&candidate.extraction_id) })
+            );
+            let scoped = service
+                .retrieve_from_extractions(
+                    &case_id,
+                    &[extraction_ids[0].clone()],
+                    "qualification evidence",
+                    5,
+                )
+                .await?;
+            assert!(
+                scoped
+                    .iter()
+                    .all(|candidate| candidate.extraction_id == extraction_ids[0])
+            );
+            Ok(())
         }
-        let config = DifyConfig::from_env().expect("Dify base URL and API key are required");
-        let dataset_id = std::env::var("NINEPROFS_DIFY_QUALIFICATION_DATASET_ID")
-            .expect("qualification dataset id is required");
-        let query = std::env::var("NINEPROFS_DIFY_QUALIFICATION_QUERY")
-            .unwrap_or_else(|_| "qualification".to_owned());
-        let client = DifyClient::new(config).expect("Dify HTTP client should initialize");
-        client
-            .get_dataset(&dataset_id)
-            .await
-            .expect("configured Dify dataset should be reachable");
-        client
-            .retrieve(&dataset_id, &query, 1)
-            .await
-            .expect("configured Dify dataset should support retrieval");
+        .await;
+        let index = sqlx::query(
+            "SELECT dataset_id FROM research_dify_case_indexes WHERE research_case_id = ?",
+        )
+        .bind(&case_id)
+        .fetch_optional(&service.pool)
+        .await
+        .unwrap();
+        if let Some(index) = index {
+            client
+                .delete_dataset(&index.get::<String, _>("dataset_id"))
+                .await
+                .expect("only the temporary qualification dataset is cleaned up");
+        }
+        result.expect("opt-in Dify scoped qualification should pass");
     }
 }
