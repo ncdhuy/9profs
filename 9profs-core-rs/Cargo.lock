@@ -2193,6 +2193,7 @@ dependencies = [
  "nineprofs-mcp",
  "nineprofs-officecli",
  "nineprofs-realtime",
+ "nineprofs-research",
  "nineprofs-runtime",
  "nineprofs-skills",
  "serde",
@@ -2289,6 +2290,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nineprofs-research"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nineprofs-api-types",
+ "nineprofs-common",
+ "nineprofs-db",
+ "nineprofs-realtime",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "nineprofs-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2303,6 +2321,7 @@ dependencies = [
  "nineprofs-mcp",
  "nineprofs-officecli",
  "nineprofs-realtime",
+ "nineprofs-research",
  "nineprofs-skills",
  "nineprofs-tools",
  "serde",

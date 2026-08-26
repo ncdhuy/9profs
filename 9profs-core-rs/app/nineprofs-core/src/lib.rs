@@ -11,11 +11,17 @@ use nineprofs_agent::{AgentBackendDescriptor, AgentRunContext, AgentTaskId, RunI
 use nineprofs_api_types::{
     ActiveDocsAgentRunRequest, ActiveDocumentDto, AgentRunContextDto, AgentRunDto, AgentRunRequest,
     AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
-    CreateAssistantRequest, CreateDocumentAgentConversationRequest,
-    CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, DocsAgentProfile,
-    DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse,
-    EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
-    McpTransportInputDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
+    CaptureResearchSourceSnapshotRequest, ClaimEvidenceLinkDto, CreateAssistantRequest,
+    CreateClaimEvidenceLinkRequest, CreateDocumentAgentConversationRequest,
+    CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
+    CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
+    DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
+    ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
+    McpTransportDto, McpTransportInputDto, ResearchAssessmentMethodDto, ResearchCaptureMethodDto,
+    ResearchCaseDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto,
+    ResearchContentHashDto, ResearchEvidenceDto, ResearchEvidenceLocatorDto,
+    ResearchHashAlgorithmDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
+    ResearchSourceSnapshotDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
     UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
@@ -29,6 +35,13 @@ use nineprofs_mcp::{
     UpdateMcpServer,
 };
 use nineprofs_officecli::OfficeCliStatus;
+use nineprofs_research::{
+    AssessmentMethod, CaptureMethod, CaptureSourceSnapshot, ClaimEvidenceRelation, ClaimOrigin,
+    CreateClaimEvidenceLink, CreateResearchCase, CreateResearchClaim, CreateResearchEvidence,
+    CreateResearchSource, EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim,
+    ResearchError, ResearchEvidence, ResearchSource, ResearchSourceSnapshot, SourceKind,
+    SourceOrigin,
+};
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
 
@@ -652,6 +665,39 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         )
         .route("/api/mcp/servers/{id}/test", post(test_mcp_server))
         .route("/api/mcp/servers/{id}/tools", get(list_mcp_tools))
+        .route(
+            "/api/research/cases",
+            get(list_research_cases).post(create_research_case),
+        )
+        .route("/api/research/cases/{id}", get(get_research_case))
+        .route(
+            "/api/research/sources",
+            get(list_research_sources).post(create_research_source),
+        )
+        .route("/api/research/sources/{id}", get(get_research_source))
+        .route(
+            "/api/research/snapshots",
+            get(list_research_snapshots).post(capture_research_snapshot),
+        )
+        .route("/api/research/snapshots/{id}", get(get_research_snapshot))
+        .route(
+            "/api/research/evidence",
+            get(list_research_evidence).post(create_research_evidence),
+        )
+        .route("/api/research/evidence/{id}", get(get_research_evidence))
+        .route(
+            "/api/research/claims",
+            get(list_research_claims).post(create_research_claim),
+        )
+        .route("/api/research/claims/{id}", get(get_research_claim))
+        .route(
+            "/api/research/claim-evidence",
+            get(list_claim_evidence_links).post(create_claim_evidence_link),
+        )
+        .route(
+            "/api/research/claim-evidence/{id}",
+            get(get_claim_evidence_link),
+        )
         .route("/ws", get(websocket))
         .route("/ws/documents", get(document_websocket))
         .with_state(state)
@@ -925,6 +971,7 @@ enum ApiError {
     DocumentProposalNotFound(String),
     ConversationNotFound(String),
     ProposalWorkflow(ProposalWorkflowError),
+    Research(ResearchError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -956,6 +1003,12 @@ impl From<nineprofs_agent::AgentTaskManagerError> for ApiError {
 impl From<ProposalWorkflowError> for ApiError {
     fn from(error: ProposalWorkflowError) -> Self {
         Self::ProposalWorkflow(error)
+    }
+}
+
+impl From<ResearchError> for ApiError {
+    fn from(error: ResearchError) -> Self {
+        Self::Research(error)
     }
 }
 
@@ -1025,6 +1078,21 @@ impl IntoResponse for ApiError {
                     (StatusCode::CONFLICT, "proposal_unsupported", message)
                 }
                 ProposalWorkflowError::Store(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    error.to_string(),
+                ),
+            },
+            Self::Research(error) => match error {
+                ResearchError::NotFound { .. } => {
+                    (StatusCode::NOT_FOUND, "not_found", error.to_string())
+                }
+                ResearchError::Invalid(_) => (
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    error.to_string(),
+                ),
+                ResearchError::Database(_) | ResearchError::Serialization(_) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     error.to_string(),
@@ -1531,6 +1599,670 @@ async fn list_mcp_tools(
     Ok(axum::Json(ApiResponse::ok(tools)))
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResearchSourcesQuery {
+    #[serde(rename = "researchCaseId")]
+    research_case_id: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResearchSnapshotsQuery {
+    #[serde(rename = "sourceId")]
+    source_id: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResearchEvidenceQuery {
+    #[serde(rename = "researchCaseId")]
+    research_case_id: Option<String>,
+    #[serde(rename = "sourceSnapshotId")]
+    source_snapshot_id: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResearchClaimsQuery {
+    #[serde(rename = "researchCaseId")]
+    research_case_id: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ResearchLinksQuery {
+    #[serde(rename = "researchCaseId")]
+    research_case_id: Option<String>,
+    #[serde(rename = "claimId")]
+    claim_id: Option<String>,
+    #[serde(rename = "evidenceId")]
+    evidence_id: Option<String>,
+}
+
+async fn list_research_cases(
+    State(state): State<AppState>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchCaseDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_cases()
+            .await?
+            .into_iter()
+            .map(research_case_dto)
+            .collect(),
+    )))
+}
+
+async fn get_research_case(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchCaseDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_case_dto(
+        state.runtime.research_service().get_case(&id).await?,
+    ))))
+}
+
+async fn create_research_case(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateResearchCaseRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchCaseDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    Ok(axum::Json(ApiResponse::ok(research_case_dto(
+        state
+            .runtime
+            .research_service()
+            .create_case(CreateResearchCase {
+                title: request.title,
+            })
+            .await?,
+    ))))
+}
+
+async fn list_research_sources(
+    State(state): State<AppState>,
+    Query(query): Query<ResearchSourcesQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchSourceDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_sources(query.research_case_id.as_deref())
+            .await?
+            .into_iter()
+            .map(research_source_dto)
+            .collect(),
+    )))
+}
+
+async fn get_research_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchSourceDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_source_dto(
+        state.runtime.research_service().get_source(&id).await?,
+    ))))
+}
+
+async fn create_research_source(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateResearchSourceRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchSourceDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let source = state
+        .runtime
+        .research_service()
+        .create_source(CreateResearchSource {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            kind: source_kind(request.kind),
+            label: request.label,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_source_dto(source))))
+}
+
+async fn list_research_snapshots(
+    State(state): State<AppState>,
+    Query(query): Query<ResearchSnapshotsQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchSourceSnapshotDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_snapshots(query.source_id.as_deref())
+            .await?
+            .into_iter()
+            .map(research_snapshot_dto)
+            .collect(),
+    )))
+}
+
+async fn get_research_snapshot(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchSourceSnapshotDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_snapshot_dto(
+        state.runtime.research_service().get_snapshot(&id).await?,
+    ))))
+}
+
+async fn capture_research_snapshot(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CaptureResearchSourceSnapshotRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchSourceSnapshotDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let snapshot = state
+        .runtime
+        .research_service()
+        .capture_snapshot(CaptureSourceSnapshot {
+            source_id: nineprofs_research::ResearchSourceId::parse(request.source_id)?,
+            content: request.content.into_bytes(),
+            capture_method: capture_method(request.capture_method),
+            origin: source_origin(request.origin),
+            metadata: request.metadata,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_snapshot_dto(snapshot))))
+}
+
+async fn list_research_evidence(
+    State(state): State<AppState>,
+    Query(query): Query<ResearchEvidenceQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchEvidenceDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_evidence(
+                query.research_case_id.as_deref(),
+                query.source_snapshot_id.as_deref(),
+            )
+            .await?
+            .into_iter()
+            .map(research_evidence_dto)
+            .collect(),
+    )))
+}
+
+async fn get_research_evidence(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchEvidenceDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_evidence_dto(
+        state.runtime.research_service().get_evidence(&id).await?,
+    ))))
+}
+
+async fn create_research_evidence(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateResearchEvidenceRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchEvidenceDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let evidence = state
+        .runtime
+        .research_service()
+        .create_evidence(CreateResearchEvidence {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            source_snapshot_id: nineprofs_research::ResearchSourceSnapshotId::parse(
+                request.source_snapshot_id,
+            )?,
+            verbatim_excerpt: request.verbatim_excerpt,
+            normalized_text: request.normalized_text,
+            locator: evidence_locator(request.locator),
+            capture_method: capture_method(request.capture_method),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_evidence_dto(evidence))))
+}
+
+async fn list_research_claims(
+    State(state): State<AppState>,
+    Query(query): Query<ResearchClaimsQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchClaimDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_claims(query.research_case_id.as_deref())
+            .await?
+            .into_iter()
+            .map(research_claim_dto)
+            .collect(),
+    )))
+}
+
+async fn get_research_claim(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchClaimDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_claim_dto(
+        state.runtime.research_service().get_claim(&id).await?,
+    ))))
+}
+
+async fn create_research_claim(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateResearchClaimRequest>,
+) -> Result<axum::Json<ApiResponse<ResearchClaimDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let claim = state
+        .runtime
+        .research_service()
+        .create_claim(CreateResearchClaim {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            text: request.text,
+            origin: claim_origin(request.origin),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_claim_dto(claim))))
+}
+
+async fn list_claim_evidence_links(
+    State(state): State<AppState>,
+    Query(query): Query<ResearchLinksQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ClaimEvidenceLinkDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_links(
+                query.research_case_id.as_deref(),
+                query.claim_id.as_deref(),
+                query.evidence_id.as_deref(),
+            )
+            .await?
+            .into_iter()
+            .map(claim_evidence_link_dto)
+            .collect(),
+    )))
+}
+
+async fn get_claim_evidence_link(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ClaimEvidenceLinkDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(claim_evidence_link_dto(
+        state.runtime.research_service().get_link(&id).await?,
+    ))))
+}
+
+async fn create_claim_evidence_link(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateClaimEvidenceLinkRequest>,
+) -> Result<axum::Json<ApiResponse<ClaimEvidenceLinkDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let link = state
+        .runtime
+        .research_service()
+        .create_link(CreateClaimEvidenceLink {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            claim_id: nineprofs_research::ResearchClaimId::parse(request.claim_id)?,
+            evidence_id: nineprofs_research::ResearchEvidenceId::parse(request.evidence_id)?,
+            relation: claim_evidence_relation(request.relation),
+            rationale: request.rationale,
+            assessment_method: assessment_method(request.assessment_method),
+            assessment_metadata: request.assessment_metadata,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(claim_evidence_link_dto(link))))
+}
+
+fn research_case_dto(value: ResearchCase) -> ResearchCaseDto {
+    ResearchCaseDto {
+        case_id: value.id.to_string(),
+        title: value.title,
+        created_at_ms: value.created_at_ms,
+        updated_at_ms: value.updated_at_ms,
+    }
+}
+
+fn research_source_dto(value: ResearchSource) -> ResearchSourceDto {
+    ResearchSourceDto {
+        source_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        kind: source_kind_dto(value.kind),
+        label: value.label,
+        created_at_ms: value.created_at_ms,
+    }
+}
+
+fn research_snapshot_dto(value: ResearchSourceSnapshot) -> ResearchSourceSnapshotDto {
+    ResearchSourceSnapshotDto {
+        snapshot_id: value.id.to_string(),
+        source_id: value.source_id.to_string(),
+        content_hash: research_content_hash_dto(value.content_hash),
+        captured_at_ms: value.captured_at_ms,
+        capture_method: capture_method_dto(value.capture_method),
+        origin: source_origin_dto(value.origin),
+        metadata: value.metadata,
+    }
+}
+
+fn research_evidence_dto(value: ResearchEvidence) -> ResearchEvidenceDto {
+    ResearchEvidenceDto {
+        evidence_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        source_snapshot_id: value.source_snapshot_id.to_string(),
+        verbatim_excerpt: value.verbatim_excerpt,
+        normalized_text: value.normalized_text,
+        locator: evidence_locator_dto(value.locator),
+        excerpt_hash: research_content_hash_dto(value.excerpt_hash),
+        captured_at_ms: value.captured_at_ms,
+        capture_method: capture_method_dto(value.capture_method),
+    }
+}
+
+fn research_claim_dto(value: ResearchClaim) -> ResearchClaimDto {
+    ResearchClaimDto {
+        claim_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        text: value.text,
+        origin: claim_origin_dto(value.origin),
+        created_at_ms: value.created_at_ms,
+    }
+}
+
+fn claim_evidence_link_dto(value: nineprofs_research::ClaimEvidenceLink) -> ClaimEvidenceLinkDto {
+    ClaimEvidenceLinkDto {
+        link_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        claim_id: value.claim_id.to_string(),
+        evidence_id: value.evidence_id.to_string(),
+        relation: claim_evidence_relation_dto(value.relation),
+        rationale: value.rationale,
+        assessment_method: assessment_method_dto(value.assessment_method),
+        assessment_metadata: value.assessment_metadata,
+        created_at_ms: value.created_at_ms,
+    }
+}
+
+fn source_kind(value: ResearchSourceKindDto) -> SourceKind {
+    match value {
+        ResearchSourceKindDto::ReferencePdf => SourceKind::ReferencePdf,
+        ResearchSourceKindDto::Manuscript => SourceKind::Manuscript,
+        ResearchSourceKindDto::Dataset => SourceKind::Dataset,
+        ResearchSourceKindDto::Web => SourceKind::Web,
+        ResearchSourceKindDto::Regulation => SourceKind::Regulation,
+        ResearchSourceKindDto::Other => SourceKind::Other,
+    }
+}
+
+fn source_kind_dto(value: SourceKind) -> ResearchSourceKindDto {
+    match value {
+        SourceKind::ReferencePdf => ResearchSourceKindDto::ReferencePdf,
+        SourceKind::Manuscript => ResearchSourceKindDto::Manuscript,
+        SourceKind::Dataset => ResearchSourceKindDto::Dataset,
+        SourceKind::Web => ResearchSourceKindDto::Web,
+        SourceKind::Regulation => ResearchSourceKindDto::Regulation,
+        SourceKind::Other => ResearchSourceKindDto::Other,
+    }
+}
+
+fn capture_method(value: ResearchCaptureMethodDto) -> CaptureMethod {
+    match value {
+        ResearchCaptureMethodDto::UserProvided => CaptureMethod::UserProvided,
+        ResearchCaptureMethodDto::UploadedArtifact => CaptureMethod::UploadedArtifact,
+        ResearchCaptureMethodDto::ActiveDocument => CaptureMethod::ActiveDocument,
+        ResearchCaptureMethodDto::OfficeCli => CaptureMethod::OfficeCli,
+        ResearchCaptureMethodDto::WebRetrieval => CaptureMethod::WebRetrieval,
+        ResearchCaptureMethodDto::ExternalImport => CaptureMethod::ExternalImport,
+    }
+}
+
+fn capture_method_dto(value: CaptureMethod) -> ResearchCaptureMethodDto {
+    match value {
+        CaptureMethod::UserProvided => ResearchCaptureMethodDto::UserProvided,
+        CaptureMethod::UploadedArtifact => ResearchCaptureMethodDto::UploadedArtifact,
+        CaptureMethod::ActiveDocument => ResearchCaptureMethodDto::ActiveDocument,
+        CaptureMethod::OfficeCli => ResearchCaptureMethodDto::OfficeCli,
+        CaptureMethod::WebRetrieval => ResearchCaptureMethodDto::WebRetrieval,
+        CaptureMethod::ExternalImport => ResearchCaptureMethodDto::ExternalImport,
+    }
+}
+
+fn source_origin(value: ResearchSourceOriginDto) -> SourceOrigin {
+    match value {
+        ResearchSourceOriginDto::UploadedArtifact {
+            artifact_id,
+            revision_id,
+        } => SourceOrigin::UploadedArtifact {
+            artifact_id,
+            revision_id,
+        },
+        ResearchSourceOriginDto::ActiveDocumentSnapshot {
+            document_id,
+            document_version,
+        } => SourceOrigin::ActiveDocumentSnapshot {
+            document_id,
+            document_version,
+        },
+        ResearchSourceOriginDto::OfficeCliArtifactRevision {
+            artifact_id,
+            revision_id,
+        } => SourceOrigin::OfficeCliArtifactRevision {
+            artifact_id,
+            revision_id,
+        },
+        ResearchSourceOriginDto::WebRetrieval {
+            url,
+            retrieved_at_ms,
+        } => SourceOrigin::WebRetrieval {
+            url,
+            retrieved_at_ms,
+        },
+        ResearchSourceOriginDto::ExternalImport {
+            provider,
+            external_reference,
+        } => SourceOrigin::ExternalImport {
+            provider,
+            external_reference,
+        },
+    }
+}
+
+fn source_origin_dto(value: SourceOrigin) -> ResearchSourceOriginDto {
+    match value {
+        SourceOrigin::UploadedArtifact {
+            artifact_id,
+            revision_id,
+        } => ResearchSourceOriginDto::UploadedArtifact {
+            artifact_id,
+            revision_id,
+        },
+        SourceOrigin::ActiveDocumentSnapshot {
+            document_id,
+            document_version,
+        } => ResearchSourceOriginDto::ActiveDocumentSnapshot {
+            document_id,
+            document_version,
+        },
+        SourceOrigin::OfficeCliArtifactRevision {
+            artifact_id,
+            revision_id,
+        } => ResearchSourceOriginDto::OfficeCliArtifactRevision {
+            artifact_id,
+            revision_id,
+        },
+        SourceOrigin::WebRetrieval {
+            url,
+            retrieved_at_ms,
+        } => ResearchSourceOriginDto::WebRetrieval {
+            url,
+            retrieved_at_ms,
+        },
+        SourceOrigin::ExternalImport {
+            provider,
+            external_reference,
+        } => ResearchSourceOriginDto::ExternalImport {
+            provider,
+            external_reference,
+        },
+    }
+}
+
+fn evidence_locator(value: ResearchEvidenceLocatorDto) -> EvidenceLocator {
+    match value {
+        ResearchEvidenceLocatorDto::TextRange { start, end } => {
+            EvidenceLocator::TextRange { start, end }
+        }
+        ResearchEvidenceLocatorDto::Pdf { page, end_page } => {
+            EvidenceLocator::Pdf { page, end_page }
+        }
+        ResearchEvidenceLocatorDto::Manuscript {
+            block_id,
+            start,
+            end,
+        } => EvidenceLocator::Manuscript {
+            block_id,
+            start,
+            end,
+        },
+        ResearchEvidenceLocatorDto::Spreadsheet { sheet, range } => {
+            EvidenceLocator::Spreadsheet { sheet, range }
+        }
+        ResearchEvidenceLocatorDto::Web {
+            fragment,
+            start,
+            end,
+        } => EvidenceLocator::Web {
+            fragment,
+            start,
+            end,
+        },
+        ResearchEvidenceLocatorDto::Regulation {
+            article,
+            section,
+            clause,
+        } => EvidenceLocator::Regulation {
+            article,
+            section,
+            clause,
+        },
+    }
+}
+
+fn evidence_locator_dto(value: EvidenceLocator) -> ResearchEvidenceLocatorDto {
+    match value {
+        EvidenceLocator::TextRange { start, end } => {
+            ResearchEvidenceLocatorDto::TextRange { start, end }
+        }
+        EvidenceLocator::Pdf { page, end_page } => {
+            ResearchEvidenceLocatorDto::Pdf { page, end_page }
+        }
+        EvidenceLocator::Manuscript {
+            block_id,
+            start,
+            end,
+        } => ResearchEvidenceLocatorDto::Manuscript {
+            block_id,
+            start,
+            end,
+        },
+        EvidenceLocator::Spreadsheet { sheet, range } => {
+            ResearchEvidenceLocatorDto::Spreadsheet { sheet, range }
+        }
+        EvidenceLocator::Web {
+            fragment,
+            start,
+            end,
+        } => ResearchEvidenceLocatorDto::Web {
+            fragment,
+            start,
+            end,
+        },
+        EvidenceLocator::Regulation {
+            article,
+            section,
+            clause,
+        } => ResearchEvidenceLocatorDto::Regulation {
+            article,
+            section,
+            clause,
+        },
+    }
+}
+
+fn claim_origin(value: ResearchClaimOriginDto) -> ClaimOrigin {
+    match value {
+        ResearchClaimOriginDto::Manuscript {
+            document_id,
+            document_version,
+            locator,
+        } => ClaimOrigin::Manuscript {
+            document_id,
+            document_version,
+            locator: locator.map(evidence_locator),
+        },
+        ResearchClaimOriginDto::User => ClaimOrigin::User,
+        ResearchClaimOriginDto::Agent => ClaimOrigin::Agent,
+        ResearchClaimOriginDto::Imported { source } => ClaimOrigin::Imported { source },
+    }
+}
+
+fn claim_origin_dto(value: ClaimOrigin) -> ResearchClaimOriginDto {
+    match value {
+        ClaimOrigin::Manuscript {
+            document_id,
+            document_version,
+            locator,
+        } => ResearchClaimOriginDto::Manuscript {
+            document_id,
+            document_version,
+            locator: locator.map(evidence_locator_dto),
+        },
+        ClaimOrigin::User => ResearchClaimOriginDto::User,
+        ClaimOrigin::Agent => ResearchClaimOriginDto::Agent,
+        ClaimOrigin::Imported { source } => ResearchClaimOriginDto::Imported { source },
+    }
+}
+
+fn claim_evidence_relation(value: ResearchClaimEvidenceRelationDto) -> ClaimEvidenceRelation {
+    match value {
+        ResearchClaimEvidenceRelationDto::Supports => ClaimEvidenceRelation::Supports,
+        ResearchClaimEvidenceRelationDto::Contradicts => ClaimEvidenceRelation::Contradicts,
+        ResearchClaimEvidenceRelationDto::Contextualizes => ClaimEvidenceRelation::Contextualizes,
+        ResearchClaimEvidenceRelationDto::Insufficient => ClaimEvidenceRelation::Insufficient,
+    }
+}
+
+fn claim_evidence_relation_dto(value: ClaimEvidenceRelation) -> ResearchClaimEvidenceRelationDto {
+    match value {
+        ClaimEvidenceRelation::Supports => ResearchClaimEvidenceRelationDto::Supports,
+        ClaimEvidenceRelation::Contradicts => ResearchClaimEvidenceRelationDto::Contradicts,
+        ClaimEvidenceRelation::Contextualizes => ResearchClaimEvidenceRelationDto::Contextualizes,
+        ClaimEvidenceRelation::Insufficient => ResearchClaimEvidenceRelationDto::Insufficient,
+    }
+}
+
+fn assessment_method(value: ResearchAssessmentMethodDto) -> AssessmentMethod {
+    match value {
+        ResearchAssessmentMethodDto::Human => AssessmentMethod::Human,
+        ResearchAssessmentMethodDto::DeterministicChecker => AssessmentMethod::DeterministicChecker,
+        ResearchAssessmentMethodDto::Agent => AssessmentMethod::Agent,
+        ResearchAssessmentMethodDto::ExternalService => AssessmentMethod::ExternalService,
+    }
+}
+
+fn assessment_method_dto(value: AssessmentMethod) -> ResearchAssessmentMethodDto {
+    match value {
+        AssessmentMethod::Human => ResearchAssessmentMethodDto::Human,
+        AssessmentMethod::DeterministicChecker => ResearchAssessmentMethodDto::DeterministicChecker,
+        AssessmentMethod::Agent => ResearchAssessmentMethodDto::Agent,
+        AssessmentMethod::ExternalService => ResearchAssessmentMethodDto::ExternalService,
+    }
+}
+
+fn research_content_hash_dto(value: nineprofs_research::ContentHash) -> ResearchContentHashDto {
+    ResearchContentHashDto {
+        algorithm: match value.algorithm {
+            HashAlgorithm::Sha256 => ResearchHashAlgorithmDto::Sha256,
+        },
+        value: value.value,
+    }
+}
+
 fn mcp_transport_config(transport: McpTransportInputDto) -> McpTransportConfig {
     match transport {
         McpTransportInputDto::Stdio { command, args, env } => {
@@ -1644,6 +2376,60 @@ fn skill_dto(skill: &Skill, include_content: bool) -> SkillDto {
         },
         location: skill.location.display_path(),
         content: include_content.then(|| skill.content.clone()),
+    }
+}
+
+#[cfg(test)]
+mod research_api_tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn json_body(response: axum::response::Response) -> serde_json::Value {
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn research_writes_use_launch_secret_and_reads_are_safe() {
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.session_secret = Some(Arc::from("research-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let router = build_router(Arc::clone(&runtime));
+
+        let request = Request::post("/api/research/cases")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"title":"Secure review"}"#))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let request = Request::post("/api/research/cases")
+            .header("content-type", "application/json")
+            .header(TRUSTED_DECISION_HEADER, "research-secret")
+            .body(Body::from(r#"{"title":"Secure review"}"#))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let case = json_body(response).await;
+        let case_id = case["data"]["caseId"].as_str().unwrap().to_owned();
+
+        let response = router
+            .oneshot(
+                Request::get("/api/research/cases")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = json_body(response).await;
+        assert_eq!(payload["data"][0]["caseId"], case_id);
+        assert_eq!(payload["data"][0]["title"], "Secure review");
     }
 }
 

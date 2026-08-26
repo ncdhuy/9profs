@@ -22,6 +22,7 @@ use nineprofs_officecli::{
     ArtifactResolver, OfficeCliConfig, OfficeCliRunner, OfficeCliStatus, OfficeCliToolProvider,
 };
 use nineprofs_realtime::BroadcastEventBus;
+use nineprofs_research::{ResearchService, SqliteResearchRepository};
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
@@ -132,6 +133,7 @@ pub struct CoreRuntime {
     tool_registry: ToolRegistry,
     mcp_service: Arc<McpService>,
     officecli_runner: Arc<OfficeCliRunner>,
+    research_service: Arc<ResearchService>,
 }
 
 impl CoreRuntime {
@@ -151,6 +153,10 @@ impl CoreRuntime {
     ) -> Result<Self, RuntimeError> {
         let metadata_repository = database.metadata_repository();
         let event_bus = Arc::new(BroadcastEventBus::new(config.event_capacity));
+        let research_service = Arc::new(ResearchService::new(
+            SqliteResearchRepository::new(database.pool().clone()),
+            Arc::clone(&event_bus),
+        ));
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),
@@ -240,6 +246,7 @@ impl CoreRuntime {
             tool_registry,
             mcp_service,
             officecli_runner,
+            research_service,
         })
     }
 
@@ -325,6 +332,10 @@ impl CoreRuntime {
         self.officecli_runner.status()
     }
 
+    pub fn research_service(&self) -> Arc<ResearchService> {
+        Arc::clone(&self.research_service)
+    }
+
     pub async fn resolve_assistant_backend(
         &self,
         assistant_id: &str,
@@ -356,6 +367,7 @@ impl CoreRuntime {
                 "agent-execution".to_owned(),
                 "mcp-tools".to_owned(),
                 "officecli-tools".to_owned(),
+                "research".to_owned(),
             ],
         }
     }

@@ -8,6 +8,7 @@ mod docs_agent_profile;
 mod document;
 mod document_agent_conversation;
 mod mcp;
+mod research;
 mod response;
 mod runtime;
 mod skill;
@@ -27,6 +28,15 @@ pub use document_agent_conversation::{
 pub use mcp::{
     CreateMcpServerRequest, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
     McpTransportInputDto, UpdateMcpServerRequest,
+};
+pub use research::{
+    CaptureResearchSourceSnapshotRequest, ClaimEvidenceLinkDto, CreateClaimEvidenceLinkRequest,
+    CreateResearchCaseRequest, CreateResearchClaimRequest, CreateResearchEvidenceRequest,
+    CreateResearchSourceRequest, ResearchAssessmentMethodDto, ResearchCaptureMethodDto,
+    ResearchCaseDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto,
+    ResearchContentHashDto, ResearchEvidenceDto, ResearchEvidenceLocatorDto,
+    ResearchHashAlgorithmDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
+    ResearchSourceSnapshotDto,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

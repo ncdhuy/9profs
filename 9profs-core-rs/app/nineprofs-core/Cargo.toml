@@ -24,6 +24,7 @@ nineprofs-mcp = { path = "../../crates/nineprofs-mcp" }
 nineprofs-officecli = { path = "../../crates/nineprofs-officecli" }
 nineprofs-realtime = { path = "../../crates/nineprofs-realtime" }
 nineprofs-runtime = { path = "../../crates/nineprofs-runtime" }
+nineprofs-research = { path = "../../crates/nineprofs-research" }
 nineprofs-skills = { path = "../../crates/nineprofs-skills" }
 serde.workspace = true
 serde_json.workspace = true

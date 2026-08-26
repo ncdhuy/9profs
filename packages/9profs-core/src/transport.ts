@@ -27,6 +27,18 @@ import type {
   UpdateAssistantInput,
   UpdateMcpServerInput,
   DocumentProposal,
+  ClaimEvidenceLink,
+  CaptureResearchSourceSnapshotInput,
+  CreateClaimEvidenceLinkInput,
+  CreateResearchCaseInput,
+  CreateResearchClaimInput,
+  CreateResearchEvidenceInput,
+  CreateResearchSourceInput,
+  ResearchCase,
+  ResearchClaim,
+  ResearchEvidence,
+  ResearchSource,
+  ResearchSourceSnapshot,
 } from './types'
 
 export interface CoreResponse<T> {
@@ -108,6 +120,30 @@ export interface CoreTransport {
   disconnectMcpServer(id: string): Promise<McpServer>
   testMcpServer(id: string): Promise<McpConnectionTest>
   mcpTools(id: string): Promise<McpTool[]>
+  researchCases(): Promise<ResearchCase[]>
+  researchCase(id: string): Promise<ResearchCase>
+  createResearchCase(input: CreateResearchCaseInput): Promise<ResearchCase>
+  researchSources(researchCaseId?: string): Promise<ResearchSource[]>
+  researchSource(id: string): Promise<ResearchSource>
+  createResearchSource(input: CreateResearchSourceInput): Promise<ResearchSource>
+  researchSnapshots(sourceId?: string): Promise<ResearchSourceSnapshot[]>
+  researchSnapshot(id: string): Promise<ResearchSourceSnapshot>
+  captureResearchSourceSnapshot(
+    input: CaptureResearchSourceSnapshotInput,
+  ): Promise<ResearchSourceSnapshot>
+  researchEvidence(researchCaseId?: string, sourceSnapshotId?: string): Promise<ResearchEvidence[]>
+  researchEvidenceById(id: string): Promise<ResearchEvidence>
+  createResearchEvidence(input: CreateResearchEvidenceInput): Promise<ResearchEvidence>
+  researchClaims(researchCaseId?: string): Promise<ResearchClaim[]>
+  researchClaim(id: string): Promise<ResearchClaim>
+  createResearchClaim(input: CreateResearchClaimInput): Promise<ResearchClaim>
+  claimEvidenceLinks(
+    researchCaseId?: string,
+    claimId?: string,
+    evidenceId?: string,
+  ): Promise<ClaimEvidenceLink[]>
+  claimEvidenceLink(id: string): Promise<ClaimEvidenceLink>
+  createClaimEvidenceLink(input: CreateClaimEvidenceLinkInput): Promise<ClaimEvidenceLink>
   websocketUrl(): string
 }
 
@@ -159,6 +195,13 @@ export function createCoreTransport(
     if (!body.success || body.data === undefined)
       throw new Error(`9Profs Core response failed: ${path}`)
     return body.data
+  }
+
+  function queryPath(path: string, values: Array<[string, string | undefined]>): string {
+    const query = new URLSearchParams()
+    for (const [key, value] of values) if (value !== undefined) query.set(key, value)
+    const encoded = query.toString()
+    return encoded.length === 0 ? path : `${path}?${encoded}`
   }
 
   return {
@@ -246,6 +289,57 @@ export function createCoreTransport(
     testMcpServer: (id) =>
       request<McpConnectionTest>(`/api/mcp/servers/${encodeURIComponent(id)}/test`, 'POST'),
     mcpTools: (id) => get<McpTool[]>(`/api/mcp/servers/${encodeURIComponent(id)}/tools`),
+    researchCases: () => get<ResearchCase[]>('/api/research/cases'),
+    researchCase: (id) => get<ResearchCase>(`/api/research/cases/${encodeURIComponent(id)}`),
+    createResearchCase: (input) =>
+      trustedRequest<ResearchCase>('/api/research/cases', 'POST', input),
+    researchSources: (researchCaseId) =>
+      get<ResearchSource[]>(
+        queryPath('/api/research/sources', [['researchCaseId', researchCaseId]]),
+      ),
+    researchSource: (id) =>
+      get<ResearchSource>(`/api/research/sources/${encodeURIComponent(id)}`),
+    createResearchSource: (input) =>
+      trustedRequest<ResearchSource>('/api/research/sources', 'POST', input),
+    researchSnapshots: (sourceId) =>
+      get<ResearchSourceSnapshot[]>(
+        queryPath('/api/research/snapshots', [['sourceId', sourceId]]),
+      ),
+    researchSnapshot: (id) =>
+      get<ResearchSourceSnapshot>(`/api/research/snapshots/${encodeURIComponent(id)}`),
+    captureResearchSourceSnapshot: (input) =>
+      trustedRequest<ResearchSourceSnapshot>('/api/research/snapshots', 'POST', input),
+    researchEvidence: (researchCaseId, sourceSnapshotId) =>
+      get<ResearchEvidence[]>(
+        queryPath('/api/research/evidence', [
+          ['researchCaseId', researchCaseId],
+          ['sourceSnapshotId', sourceSnapshotId],
+        ]),
+      ),
+    researchEvidenceById: (id) =>
+      get<ResearchEvidence>(`/api/research/evidence/${encodeURIComponent(id)}`),
+    createResearchEvidence: (input) =>
+      trustedRequest<ResearchEvidence>('/api/research/evidence', 'POST', input),
+    researchClaims: (researchCaseId) =>
+      get<ResearchClaim[]>(
+        queryPath('/api/research/claims', [['researchCaseId', researchCaseId]]),
+      ),
+    researchClaim: (id) =>
+      get<ResearchClaim>(`/api/research/claims/${encodeURIComponent(id)}`),
+    createResearchClaim: (input) =>
+      trustedRequest<ResearchClaim>('/api/research/claims', 'POST', input),
+    claimEvidenceLinks: (researchCaseId, claimId, evidenceId) =>
+      get<ClaimEvidenceLink[]>(
+        queryPath('/api/research/claim-evidence', [
+          ['researchCaseId', researchCaseId],
+          ['claimId', claimId],
+          ['evidenceId', evidenceId],
+        ]),
+      ),
+    claimEvidenceLink: (id) =>
+      get<ClaimEvidenceLink>(`/api/research/claim-evidence/${encodeURIComponent(id)}`),
+    createClaimEvidenceLink: (input) =>
+      trustedRequest<ClaimEvidenceLink>('/api/research/claim-evidence', 'POST', input),
     websocketUrl: () => normalizedBaseUrl.replace(/^http/, 'ws') + '/ws',
   }
 }

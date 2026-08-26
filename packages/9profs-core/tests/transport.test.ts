@@ -484,4 +484,72 @@ describe('Core transport boundary', () => {
     ])
     expect(requests[2].body).toContain('secret')
   })
+
+  it('keeps research reads transport-neutral and research writes trusted', async () => {
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+    }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
+      requests.push({ input, method: init?.method, headers: init?.headers })
+      return {
+        ok: true,
+        json: async () => ({ success: true, data: { caseId: 'case-1' } }),
+      }
+    }, { sessionSecret: 'research-secret' })
+
+    await transport.researchCases()
+    await transport.researchCase('case/1')
+    await transport.createResearchCase({ title: 'Review' })
+    await transport.researchSources('case-1')
+    await transport.createResearchSource({
+      researchCaseId: 'case-1',
+      kind: 'manuscript',
+      label: 'Draft',
+    })
+    await transport.researchSnapshots('source-1')
+    await transport.captureResearchSourceSnapshot({
+      sourceId: 'source-1',
+      content: 'captured',
+      captureMethod: 'uploaded_artifact',
+      origin: { kind: 'uploaded_artifact', artifact_id: 'artifact-1', revision_id: null },
+    })
+    await transport.researchEvidence('case-1', 'snapshot-1')
+    await transport.researchEvidenceById('evidence-1')
+    await transport.createResearchEvidence({
+      researchCaseId: 'case-1',
+      sourceSnapshotId: 'snapshot-1',
+      verbatimExcerpt: 'exact',
+      locator: { kind: 'text_range', start: 0, end: 5 },
+      captureMethod: 'uploaded_artifact',
+    })
+    await transport.researchClaims('case-1')
+    await transport.researchClaim('claim-1')
+    await transport.createResearchClaim({
+      researchCaseId: 'case-1',
+      text: 'Claim',
+      origin: { kind: 'user' },
+    })
+    await transport.claimEvidenceLinks('case-1', 'claim-1', 'evidence-1')
+    await transport.claimEvidenceLink('link-1')
+    await transport.createClaimEvidenceLink({
+      researchCaseId: 'case-1',
+      claimId: 'claim-1',
+      evidenceId: 'evidence-1',
+      relation: 'supports',
+      assessmentMethod: 'human',
+    })
+
+    expect(requests[1].input).toContain('/api/research/cases/case%2F1')
+    expect(requests[3].input).toContain('researchCaseId=case-1')
+    expect(requests[5].input).toContain('sourceId=source-1')
+    expect(requests.filter(({ method }) => method === 'POST')).toHaveLength(6)
+    for (const request of requests.filter(({ method }) => method === 'POST')) {
+      expect(request.headers).toMatchObject({
+        'content-type': 'application/json',
+        'x-nineprofs-session-secret': 'research-secret',
+      })
+    }
+  })
 })

@@ -1,6 +1,6 @@
 # 9Profs architecture re-baseline audit
 
-Audit date: 2026-08-23
+Audit date: 2026-08-26
 
 This audit records confirmed current-branch facts. Source code, package
 manifests, tests, and read-only Git comparisons are authoritative; older
@@ -21,9 +21,12 @@ Inspected:
   `e2e/docs-presentation-parity.spec.ts`;
 - existing architecture documents and a read-only
   `baseline/genoffice..develop` comparison.
+- Phase 5A Rust Core research domain, SQLite migration, API DTO/routes, and
+  TypeScript Core transport boundary.
 
-No source code, dependency, baseline, or generated file was changed for this
-audit.
+This audit records repository facts after Phase 5A implementation. It does not
+claim PDF ingestion, Dify/RAG, citation verification, manuscript extraction,
+Sheets verification, or research UI.
 
 ## Confirmed repository architecture
 
@@ -53,7 +56,8 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                       | Implemented                                                            |
 | Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                              | Implemented                                                            |
 | Phase 4C2 proposal review/live commit   | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                                | Implemented                                                            |
-| Research/product backend               | No research domain, account/billing backend, or OfficeCLI resident mode                                                                                               | Future                                                                 |
+| Phase 5A research foundation           | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/claim-evidence assessments; Core API/transport | Implemented; adapters, review, and product services remain future |
+| Research/product backend               | Account/billing backend or OfficeCLI resident mode                                                                                                                    | Future                                                                 |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
 `DocumentVersion` — IMPLEMENTED; stable active-session `DocumentId` —
@@ -156,7 +160,9 @@ No package is removed, phased out, or replaced by this audit.
    `AgentExecutionService` and an executor boundary.
 5. Current search/provider/native integrations are adapters, not an Office
    ownership layer.
-6. No research domain owns evidence or review state yet.
+6. `nineprofs-research` owns evidence/provenance state. Evidence is an
+   observation anchored to an immutable source snapshot, not truth; a
+   `ClaimEvidenceLink` is a separately attributed categorical assessment.
 7. OfficeCLI is an inspection/rendering/detached-generation and detached-
    mutation sidecar, never a competing writer for an active GenOffice file.
    Tool authorization is distinct from document write authority: only
@@ -243,8 +249,9 @@ AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
-OfficeCLI resident mode, Sheets/Slides adapters, research domain,
-conversation/session persistence, and account/product services. Phase 4C2
+OfficeCLI resident mode, Sheets/Slides adapters, PDF/Dify/RAG ingestion,
+citation verification, manuscript extraction, research UI, conversation/session
+persistence, and account/product services. Phase 4C2
 extends the Core-generated proposed ChangeSet with trusted user decision
 workflow and the existing approved bridge path; no Agent tool can create an
 approved status or call the document mutation gateway.

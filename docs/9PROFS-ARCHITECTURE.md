@@ -35,8 +35,8 @@ dependency order.
 Product Layer
 └─ apps/shell + packages/project-store + local settings/recent files
 
-Research Domain Layer (future)
-└─ research/review, citation, regulation, methodology workflows
+Research Domain Layer (Phase 5A foundation implemented)
+└─ nineprofs-research evidence, provenance, sources, snapshots, claims, assessments
 
 AI / Agent Core
 ├─ packages/agent-core       current loop, skills, tools, IPC transport
@@ -139,7 +139,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4D1.1 Docs Core Agent readiness | IMPLEMENTED     | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API             |
 | Phase 4D1.2 Docs Core conversation continuity | IMPLEMENTED | Core-owned conversation identity, bounded ephemeral state, transactional multi-turn AionRS context, and conversation-bound Docs scope |
 | Phase 4D2 Docs AiPanel Core migration | IMPLEMENTED | Core-default fresh text chat, streamed multi-turn UI, safe tool activity, proposal review integration, and Legacy attachment/history fallback |
-| Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
+| Research domain                        | IMPLEMENTED     | `nineprofs-research`, SQLite migration `0005_research_domain.sql`, CoreRuntime service, safe research API/transport; review/adapters remain future |
 
 ### Phase 1A Rust Core foundation
 
@@ -475,7 +475,8 @@ rules, and ordered skill assignments are persisted.
 No repository package currently establishes:
 
 - an extension host or skill filesystem loader;
-- a research/review/citation/regulation domain;
+- research PDF ingestion, Dify/RAG, citation verification, manuscript extraction,
+  Sheets verification, or research UI;
 - OfficeCLI resident mode;
 - Sheets or Slides adapters;
 - account, subscription, credits, remote workspace, or SaaS billing services.
@@ -516,7 +517,7 @@ save ordering, reparse, comments, revisions, anchors, or OOXML identity.
 | Skills                 | Current app skills under `apps/*/src/*/ai`; shared `AgentSkill` contract in `packages/agent-core/src/skill.ts`                                | Future skill registry owns discovery/versioning/execution policy; skills call document tools, never persistence internals.   |
 | Assistants             | Phase 1B metadata/CRUD plus Phase 2A backend-ID resolution                                                                                    | Future phases may add policy and model routing; Assistant remains separate from executable backends.                         |
 | External tools         | Current provider/search/file/native adapters                                                                                                  | Adapters own transport and normalized observations. OfficeCLI can write only new, detached, or unowned documents.            |
-| Research workflows     | No research domain package exists; current search is generic/app support                                                                      | Future Research Domain owns evidence, provenance, review state, citations, and domain workflows, not Office canonical bytes. |
+| Research workflows     | `nineprofs-research` owns persistent cases, logical sources, immutable snapshots, evidence, claims, and claim/evidence assessments | Research Domain owns evidence/provenance and future review workflows, not Office canonical bytes; evidence is not truth. |
 | Presentation           | Docs renderer V1/V2 and visual extensions                                                                                                     | Presentation is derived state. It never becomes the document persistence authority.                                          |
 
 ### Active Office document authority
@@ -547,7 +548,8 @@ after contracts stabilize. Proposed names are compatible with `packages/*`.
 | `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                          | Product-specific editor internals                                       |
 | `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                  | Unmediated active-document writes                                       |
 | `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                  | Loading arbitrary code into the Docs persistence boundary               |
-| `packages/research-domain/`                    | Review, thesis, citation, regulation, evidence/provenance, methodology workflows                               | Canonical Office editing or provider SDK details                        |
+| `9profs-core-rs/crates/nineprofs-research/`    | Phase 5A cases, sources, immutable snapshots, evidence/locators, claims, categorical assessments, provenance persistence | Canonical Office editing, adapters, provider SDKs, or research UI       |
+| `packages/research-domain/`                    | Future UI/workflow adapters over Core research transport                              | Canonical Office editing or provider SDK details                        |
 | `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                         | Format-specific OOXML/XLSX/PPTX/PDF implementation                      |
 | `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                 | Competing writer or presentation DOM mutation                           |
 | `packages/officecli-adapter/`                  | Transport-neutral status, inspection results, and artifact references                                          | CLI process control or canonical writes to active GenOffice-owned files |
@@ -584,7 +586,7 @@ behavior stays intact until a compatible replacement exists and is validated.
 | `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                   | 0, 4, 5         |
 | `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                      | 0, 4, 5         |
 | `nineprofs-officecli`                    | Pinned read-only OfficeCLI sidecar                  | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer    | 3A, 3B, 4       |
-| No current module                        | No research/review domain                           | `packages/research-domain`                                            | Add after evidence and skill contracts | 5               |
+| `nineprofs-research`                       | Evidence/provenance foundation                    | Core-owned Research Domain persistence and transport                  | Implemented; keep adapters above it    | 5A              |
 | No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof  | 6               |
 
 ## Ordered implementation sequence
@@ -883,10 +885,28 @@ loopback-only by deployment convention.
 
 ### Phase 5 — research/review domain
 
-- Add research/review/citation/regulation/methodology services and provenance.
-- Register domain skills through the same agent/MCP contracts.
-- Consume Office snapshots and submit approved mutations through the gateway;
-  research code never writes active Office files directly.
+#### Phase 5A — evidence and provenance foundation (IMPLEMENTED)
+
+- `nineprofs-research` owns `ResearchCase`, logical `ResearchSource`, immutable
+  `ResearchSourceSnapshot`, `ResearchEvidence` with structured locators,
+  `ResearchClaim`, and categorical `ClaimEvidenceLink` assessments.
+- SQLite persists cases, sources, snapshots, evidence, claims, and assessments
+  with foreign keys and lookup indexes.
+- SHA-256 is a content fingerprint/integrity identity, not a digital signature.
+- Re-capturing identical content for one logical source returns the existing
+  snapshot; identical bytes from different logical sources remain distinct.
+- Evidence is an observation anchored to an immutable source snapshot; evidence
+  is not truth. `ClaimEvidenceLink` is a separately attributed assessment and
+  does not reduce scientific interpretation to a boolean or canonical confidence.
+- Core research write APIs use the launch-scoped trusted session-secret boundary;
+  read APIs expose transport-neutral DTOs. Research lifecycle events carry IDs
+  and safe metadata only, never excerpts, claims, or source contents.
+- Research code has no dependency on Office mutation or document persistence.
+
+Still future: PDF/reference ingestion, Dify, OCR, chunking, embeddings,
+vector/RAG, citation verification, manuscript claim extraction, Sheets/data
+verification, research UI, field methodology bundles, and research ToolProvider
+exposure. Future adapters consume this domain; they do not replace it.
 
 ### Phase 6 — product/SaaS layer
 

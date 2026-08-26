@@ -3,6 +3,12 @@ export type AgentBackendId = string
 export type AssistantId = string
 export type SkillId = string
 export type ToolId = string
+export type ResearchCaseId = string
+export type ResearchSourceId = string
+export type ResearchSourceSnapshotId = string
+export type ResearchEvidenceId = string
+export type ResearchClaimId = string
+export type ClaimEvidenceLinkId = string
 
 export interface AgentRequest {
   readonly input: string
@@ -267,6 +273,199 @@ export interface DocumentProposal {
 export interface ToolProvider {
   listTools(): Promise<readonly ToolDefinition[]>
   resolveTool(id: ToolId): Promise<ToolDefinition | undefined>
+}
+
+export type ResearchSourceKind =
+  | 'reference_pdf'
+  | 'manuscript'
+  | 'dataset'
+  | 'web'
+  | 'regulation'
+  | 'other'
+export type ResearchCaptureMethod =
+  | 'user_provided'
+  | 'uploaded_artifact'
+  | 'active_document'
+  | 'office_cli'
+  | 'web_retrieval'
+  | 'external_import'
+export type ResearchHashAlgorithm = 'sha256'
+
+export type ResearchSourceOrigin =
+  | {
+      readonly kind: 'uploaded_artifact'
+      readonly artifact_id: string
+      readonly revision_id: string | null
+    }
+  | {
+      readonly kind: 'active_document_snapshot'
+      readonly document_id: string
+      readonly document_version: string
+    }
+  | {
+      readonly kind: 'office_cli_artifact_revision'
+      readonly artifact_id: string
+      readonly revision_id: string
+    }
+  | {
+      readonly kind: 'web_retrieval'
+      readonly url: string
+      readonly retrieved_at_ms: number
+    }
+  | {
+      readonly kind: 'external_import'
+      readonly provider: string
+      readonly external_reference: string
+    }
+
+export type ResearchEvidenceLocator =
+  | { readonly kind: 'text_range'; readonly start: number; readonly end: number }
+  | { readonly kind: 'pdf'; readonly page: number; readonly end_page: number | null }
+  | {
+      readonly kind: 'manuscript'
+      readonly block_id: string
+      readonly start: number | null
+      readonly end: number | null
+    }
+  | { readonly kind: 'spreadsheet'; readonly sheet: string; readonly range: string }
+  | {
+      readonly kind: 'web'
+      readonly fragment: string | null
+      readonly start: number | null
+      readonly end: number | null
+    }
+  | {
+      readonly kind: 'regulation'
+      readonly article: string
+      readonly section: string | null
+      readonly clause: string | null
+    }
+
+export type ResearchClaimOrigin =
+  | {
+      readonly kind: 'manuscript'
+      readonly document_id: string
+      readonly document_version: string
+      readonly locator: ResearchEvidenceLocator | null
+    }
+  | { readonly kind: 'user' }
+  | { readonly kind: 'agent' }
+  | { readonly kind: 'imported'; readonly source: string }
+
+export type ResearchClaimEvidenceRelation =
+  | 'supports'
+  | 'contradicts'
+  | 'contextualizes'
+  | 'insufficient'
+export type ResearchAssessmentMethod =
+  | 'human'
+  | 'deterministic_checker'
+  | 'agent'
+  | 'external_service'
+
+export interface ResearchContentHash {
+  readonly algorithm: ResearchHashAlgorithm
+  readonly value: string
+}
+
+export interface ResearchCase {
+  readonly caseId: ResearchCaseId
+  readonly title: string
+  readonly createdAtMs: number
+  readonly updatedAtMs: number
+}
+
+export interface ResearchSource {
+  readonly sourceId: ResearchSourceId
+  readonly researchCaseId: ResearchCaseId
+  readonly kind: ResearchSourceKind
+  readonly label: string
+  readonly createdAtMs: number
+}
+
+export interface ResearchSourceSnapshot {
+  readonly snapshotId: ResearchSourceSnapshotId
+  readonly sourceId: ResearchSourceId
+  readonly contentHash: ResearchContentHash
+  readonly capturedAtMs: number
+  readonly captureMethod: ResearchCaptureMethod
+  readonly origin: ResearchSourceOrigin
+  readonly metadata: Readonly<Record<string, string>>
+}
+
+export interface ResearchEvidence {
+  readonly evidenceId: ResearchEvidenceId
+  readonly researchCaseId: ResearchCaseId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly verbatimExcerpt: string
+  readonly normalizedText: string | null
+  readonly locator: ResearchEvidenceLocator
+  readonly excerptHash: ResearchContentHash
+  readonly capturedAtMs: number
+  readonly captureMethod: ResearchCaptureMethod
+}
+
+export interface ResearchClaim {
+  readonly claimId: ResearchClaimId
+  readonly researchCaseId: ResearchCaseId
+  readonly text: string
+  readonly origin: ResearchClaimOrigin
+  readonly createdAtMs: number
+}
+
+export interface ClaimEvidenceLink {
+  readonly linkId: ClaimEvidenceLinkId
+  readonly researchCaseId: ResearchCaseId
+  readonly claimId: ResearchClaimId
+  readonly evidenceId: ResearchEvidenceId
+  readonly relation: ResearchClaimEvidenceRelation
+  readonly rationale: string | null
+  readonly assessmentMethod: ResearchAssessmentMethod
+  readonly assessmentMetadata: Readonly<Record<string, string>>
+  readonly createdAtMs: number
+}
+
+export interface CreateResearchCaseInput {
+  readonly title: string
+}
+
+export interface CreateResearchSourceInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly kind: ResearchSourceKind
+  readonly label: string
+}
+
+export interface CaptureResearchSourceSnapshotInput {
+  readonly sourceId: ResearchSourceId
+  readonly content: string
+  readonly captureMethod: ResearchCaptureMethod
+  readonly origin: ResearchSourceOrigin
+  readonly metadata?: Readonly<Record<string, string>>
+}
+
+export interface CreateResearchEvidenceInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly verbatimExcerpt: string
+  readonly normalizedText?: string | null
+  readonly locator: ResearchEvidenceLocator
+  readonly captureMethod: ResearchCaptureMethod
+}
+
+export interface CreateResearchClaimInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly text: string
+  readonly origin: ResearchClaimOrigin
+}
+
+export interface CreateClaimEvidenceLinkInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly claimId: ResearchClaimId
+  readonly evidenceId: ResearchEvidenceId
+  readonly relation: ResearchClaimEvidenceRelation
+  readonly rationale?: string | null
+  readonly assessmentMethod: ResearchAssessmentMethod
+  readonly assessmentMetadata?: Readonly<Record<string, string>>
 }
 
 export interface SkillDefinition {
