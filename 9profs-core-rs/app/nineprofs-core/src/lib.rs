@@ -11,10 +11,12 @@ use nineprofs_agent::{AgentBackendDescriptor, AgentRunContext, AgentTaskId, RunI
 use nineprofs_api_types::{
     ActiveDocsAgentRunRequest, ActiveDocumentDto, AgentRunContextDto, AgentRunDto, AgentRunRequest,
     AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
-    CreateAssistantRequest, CreateMcpServerRequest, DocsAgentProfile, DocumentProposalChangeDto,
-    DocumentProposalDto, ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto,
-    McpServerDto, McpToolDto, McpTransportDto, McpTransportInputDto, RuntimeInfo, SkillCatalogDto,
-    SkillDto, SkillIssueDto, UpdateAssistantRequest, UpdateMcpServerRequest,
+    CreateAssistantRequest, CreateDocumentAgentConversationRequest,
+    CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, DocsAgentProfile,
+    DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse,
+    EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
+    McpTransportInputDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
+    UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -132,6 +134,83 @@ mod agent_api_tests {
         assert!(!serialized.contains("api_key"));
         assert!(!serialized.contains("credential"));
         assert!(!serialized.contains("session_secret"));
+    }
+
+    #[tokio::test]
+    async fn docs_conversation_api_creates_bound_safe_metadata() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        runtime
+            .agent_registry()
+            .set_availability(
+                "nineprofs-default",
+                nineprofs_agent::AvailabilityState::Available,
+                None,
+            )
+            .await
+            .unwrap();
+        let (sender, _receiver) = tokio::sync::mpsc::channel(8);
+        runtime
+            .document_bridge()
+            .register(
+                nineprofs_documents::DocumentRegistration {
+                    protocol_version: nineprofs_documents::DOCUMENT_BRIDGE_PROTOCOL_VERSION
+                        .to_owned(),
+                    document_id: "doc-conversation".to_owned(),
+                    document_type: nineprofs_documents::DOCX_DOCUMENT_TYPE.to_owned(),
+                    version: 1,
+                    capabilities: vec![
+                        nineprofs_documents::DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        nineprofs_documents::DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+        let router = build_router(runtime);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/document-agent-conversations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "assistant_id": "document-foundation",
+                            "document_id": "doc-conversation"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["data"]["assistantId"], "document-foundation");
+        assert_eq!(payload["data"]["documentId"], "doc-conversation");
+        assert_eq!(payload["data"]["state"], "idle");
+        let conversation_id = payload["data"]["conversationId"].as_str().unwrap();
+        assert!(conversation_id.starts_with("docs-"));
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains("backend"));
+        assert!(!serialized.contains("credential"));
+
+        let response = router
+            .oneshot(
+                Request::get(format!(
+                    "/api/document-agent-conversations/{conversation_id}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -528,6 +607,18 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             "/api/document-agent-runs",
             post(create_active_docs_agent_run),
         )
+        .route(
+            "/api/document-agent-conversations",
+            post(create_document_agent_conversation),
+        )
+        .route(
+            "/api/document-agent-conversations/{id}",
+            get(get_document_agent_conversation),
+        )
+        .route(
+            "/api/document-agent-conversations/{id}/runs",
+            post(create_document_agent_conversation_run),
+        )
         .route("/api/agent-runs/{run_id}", get(get_agent_run))
         .route("/api/agent-runs/{run_id}/tasks", get(list_agent_run_tasks))
         .route("/api/agent-tasks/{task_id}/cancel", post(cancel_agent_task))
@@ -832,6 +923,7 @@ enum ApiError {
     RunNotFound(String),
     DocumentNotFound(String),
     DocumentProposalNotFound(String),
+    ConversationNotFound(String),
     ProposalWorkflow(ProposalWorkflowError),
     InvalidRequest(String),
     Unauthorized,
@@ -894,6 +986,11 @@ impl IntoResponse for ApiError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 format!("document proposal not found: {id}"),
+            ),
+            Self::ConversationNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "conversation_not_found",
+                format!("Docs agent conversation not found: {id}"),
             ),
             Self::ProposalWorkflow(error) => match error {
                 ProposalWorkflowError::Store(ProposalStoreError::NotFound(id)) => (
@@ -958,6 +1055,24 @@ impl IntoResponse for ApiError {
                     }
                     AgentExecutionServiceError::ActiveDocumentUnsupported(_) => {
                         (StatusCode::BAD_REQUEST, "active_document_unsupported")
+                    }
+                    AgentExecutionServiceError::ConversationNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "conversation_not_found")
+                    }
+                    AgentExecutionServiceError::ConversationBusy(_) => {
+                        (StatusCode::CONFLICT, "conversation_busy")
+                    }
+                    AgentExecutionServiceError::ConversationUnavailable(_) => {
+                        (StatusCode::CONFLICT, "conversation_unavailable")
+                    }
+                    AgentExecutionServiceError::ConversationCapacity => {
+                        (StatusCode::SERVICE_UNAVAILABLE, "conversation_capacity")
+                    }
+                    AgentExecutionServiceError::ConversationTurnLimit => {
+                        (StatusCode::CONFLICT, "conversation_turn_limit")
+                    }
+                    AgentExecutionServiceError::RequiredToolMissing(_) => {
+                        (StatusCode::SERVICE_UNAVAILABLE, "required_tool_missing")
                     }
                     AgentExecutionServiceError::BackendUnavailable(_, _) => {
                         (StatusCode::SERVICE_UNAVAILABLE, "agent_execution_error")
@@ -1048,6 +1163,55 @@ async fn create_active_docs_agent_run(
     })))
 }
 
+async fn create_document_agent_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateDocumentAgentConversationRequest>,
+) -> Result<axum::Json<ApiResponse<DocumentAgentConversationDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let conversation = state
+        .runtime
+        .execution_service()
+        .create_docs_agent_conversation(&request.assistant_id, &request.document_id)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(
+        document_agent_conversation_dto(conversation),
+    )))
+}
+
+async fn get_document_agent_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<DocumentAgentConversationDto>>, ApiError> {
+    let conversation = state
+        .runtime
+        .execution_service()
+        .docs_agent_conversation(&id)
+        .ok_or_else(|| ApiError::ConversationNotFound(id))?;
+    Ok(axum::Json(ApiResponse::ok(
+        document_agent_conversation_dto(conversation),
+    )))
+}
+
+async fn create_document_agent_conversation_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateDocumentAgentConversationRunRequest>,
+) -> Result<axum::Json<ApiResponse<AgentRunStartedDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let started = state
+        .runtime
+        .execution_service()
+        .start_docs_agent_conversation_run(&id, &request.input)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(AgentRunStartedDto {
+        run_id: started.run_id.to_string(),
+        task: task_dto(&started.task),
+        context: agent_run_context_dto(started.context.as_ref()),
+    })))
+}
+
 async fn get_agent_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -1090,6 +1254,20 @@ async fn cancel_agent_task(
         .cancel(&AgentTaskId::from_string(task_id))
         .await?;
     Ok(axum::Json(ApiResponse::ok(task_dto(&task))))
+}
+
+fn document_agent_conversation_dto(
+    conversation: nineprofs_runtime::DocsAgentConversationMetadata,
+) -> DocumentAgentConversationDto {
+    DocumentAgentConversationDto {
+        conversation_id: conversation.conversation_id,
+        assistant_id: conversation.assistant_id,
+        document_id: conversation.document_id,
+        state: conversation.state.as_str().to_owned(),
+        turn_count: conversation.turn_count,
+        created_at_ms: conversation.created_at_ms,
+        updated_at_ms: conversation.updated_at_ms,
+    }
 }
 
 fn task_dto(task: &nineprofs_agent::AgentTask) -> AgentTaskDto {

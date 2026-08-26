@@ -152,6 +152,8 @@ pub struct AgentExecutionRequest {
     pub limits: ExecutionLimits,
     pub tool_set: ToolSet,
     pub context: Option<AgentRunContext>,
+    /// Core-owned conversation identity. Generic agent runs leave this unset.
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

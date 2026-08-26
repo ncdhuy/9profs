@@ -26,9 +26,15 @@ use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
 
+mod docs_conversation;
 mod docs_profile;
 mod execution;
 
+pub use docs_conversation::{
+    DocsAgentConversationMetadata, DocsAgentConversationSeed, DocsAgentConversationState,
+    DocsAgentConversationStoreError, DocsAgentConversationTurn, MAX_DOCS_AGENT_CONVERSATIONS,
+    MAX_DOCS_AGENT_TURNS, MAX_IDLE_DOCS_AGENT_CONVERSATIONS,
+};
 pub use docs_profile::{DEFAULT_DOCS_ASSISTANT_ID, REQUIRED_DOCS_AGENT_TOOLS};
 pub use execution::{
     AgentExecutionService, AgentExecutionServiceError, AgentRunStarted, build_system_instructions,
@@ -216,6 +222,7 @@ impl CoreRuntime {
             Arc::clone(&event_bus),
             provider,
             Arc::clone(&document_bridge),
+            tool_registry.clone(),
         ));
         Ok(Self {
             config,

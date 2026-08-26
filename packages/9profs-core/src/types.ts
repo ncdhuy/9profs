@@ -23,6 +23,27 @@ export interface ActiveDocsAgentRunRequest {
   readonly input: string
 }
 
+export type DocsAgentConversationState = 'idle' | 'running' | 'unavailable'
+
+export interface CreateDocumentAgentConversationRequest {
+  readonly assistantId: AssistantId
+  readonly documentId: string
+}
+
+export interface CreateDocumentAgentConversationRunRequest {
+  readonly input: string
+}
+
+export interface DocumentAgentConversation {
+  readonly conversationId: string
+  readonly assistantId: AssistantId
+  readonly documentId: string
+  readonly state: DocsAgentConversationState
+  readonly turnCount: number
+  readonly createdAtMs: number
+  readonly updatedAtMs: number
+}
+
 export type DocsAgentReadiness =
   | 'ready'
   | 'assistant_missing'

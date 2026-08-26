@@ -5,6 +5,8 @@
 import type {
   AgentBackendDescriptor,
   ActiveDocsAgentRunRequest,
+  CreateDocumentAgentConversationRequest,
+  CreateDocumentAgentConversationRunRequest,
   AgentRunRequest,
   AgentRunResponse,
   AgentRunStarted,
@@ -17,6 +19,7 @@ import type {
   CreateMcpServerInput,
   CreateAssistantInput,
   DocsAgentProfile,
+  DocumentAgentConversation,
   McpConnectionTest,
   McpServer,
   McpTool,
@@ -68,6 +71,14 @@ export interface CoreTransport {
   agents(): Promise<AgentBackendDescriptor[]>
   agent(id: string): Promise<AgentBackendDescriptor>
   documentAgentProfile(): Promise<DocsAgentProfile>
+  createDocumentAgentConversation(
+    input: CreateDocumentAgentConversationRequest,
+  ): Promise<DocumentAgentConversation>
+  createDocumentAgentConversationRun(
+    conversationId: string,
+    input: CreateDocumentAgentConversationRunRequest,
+  ): Promise<AgentRunStarted>
+  documentAgentConversation(conversationId: string): Promise<DocumentAgentConversation>
   createAgentRun(input: AgentRunRequest): Promise<AgentRunStarted>
   createActiveDocsAgentRun(input: ActiveDocsAgentRunRequest): Promise<AgentRunStarted>
   agentRun(id: string): Promise<AgentRunResponse>
@@ -156,6 +167,21 @@ export function createCoreTransport(
     agents: () => get<AgentBackendDescriptor[]>('/api/agents'),
     agent: (id) => get<AgentBackendDescriptor>(`/api/agents/${encodeURIComponent(id)}`),
     documentAgentProfile: () => get<DocsAgentProfile>('/api/document-agent-profile'),
+    createDocumentAgentConversation: (input) =>
+      trustedRequest<DocumentAgentConversation>('/api/document-agent-conversations', 'POST', {
+        assistant_id: input.assistantId,
+        document_id: input.documentId,
+      }),
+    createDocumentAgentConversationRun: (conversationId, input) =>
+      trustedRequest<AgentRunStarted>(
+        `/api/document-agent-conversations/${encodeURIComponent(conversationId)}/runs`,
+        'POST',
+        input,
+      ),
+    documentAgentConversation: (conversationId) =>
+      get<DocumentAgentConversation>(
+        `/api/document-agent-conversations/${encodeURIComponent(conversationId)}`,
+      ),
     createAgentRun: (input) => request<AgentRunStarted>('/api/agent-runs', 'POST', input),
     createActiveDocsAgentRun: (input) =>
       trustedRequest<AgentRunStarted>('/api/document-agent-runs', 'POST', {

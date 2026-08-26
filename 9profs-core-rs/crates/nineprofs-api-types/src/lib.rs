@@ -6,6 +6,7 @@ mod agent_run;
 mod assistant;
 mod docs_agent_profile;
 mod document;
+mod document_agent_conversation;
 mod mcp;
 mod response;
 mod runtime;
@@ -19,6 +20,10 @@ pub use agent_run::{
 pub use assistant::{AssistantDto, CreateAssistantRequest, UpdateAssistantRequest};
 pub use docs_agent_profile::{DocsAgentAvailability, DocsAgentProfile, DocsAgentReadiness};
 pub use document::{ActiveDocumentDto, DocumentProposalChangeDto, DocumentProposalDto};
+pub use document_agent_conversation::{
+    CreateDocumentAgentConversationRequest, CreateDocumentAgentConversationRunRequest,
+    DocumentAgentConversationDto,
+};
 pub use mcp::{
     CreateMcpServerRequest, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
     McpTransportInputDto, UpdateMcpServerRequest,

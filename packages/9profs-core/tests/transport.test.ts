@@ -111,6 +111,62 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('maps Docs conversation APIs with trusted writes and safe metadata', async () => {
+    const requests: Array<{ input: string; method?: string; headers?: Record<string, string>; body?: string }> = []
+    const conversation = {
+      conversationId: 'docs-conversation-1',
+      assistantId: 'document-foundation',
+      documentId: 'doc-a',
+      state: 'idle',
+      turnCount: 1,
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    }
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
+      requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+      const data = input.endsWith('/runs')
+        ? { run_id: 'run-1', task: { task_id: 'task-1' } }
+        : conversation
+      return { ok: true, json: async () => ({ success: true, data }) }
+    }, { sessionSecret: 'test-only-secret' })
+
+    await expect(
+      transport.createDocumentAgentConversation({
+        assistantId: 'document-foundation',
+        documentId: 'doc-a',
+      }),
+    ).resolves.toEqual(conversation)
+    await expect(
+      transport.createDocumentAgentConversationRun('docs-conversation-1', { input: 'continue' }),
+    ).resolves.toMatchObject({ run_id: 'run-1' })
+    await expect(transport.documentAgentConversation('docs-conversation-1')).resolves.toEqual(conversation)
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/document-agent-conversations',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-nineprofs-session-secret': 'test-only-secret',
+        },
+        body: '{"assistant_id":"document-foundation","document_id":"doc-a"}',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/document-agent-conversations/docs-conversation-1/runs',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-nineprofs-session-secret': 'test-only-secret',
+        },
+        body: '{"input":"continue"}',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/document-agent-conversations/docs-conversation-1',
+      },
+    ])
+    expect(JSON.stringify(conversation)).not.toMatch(/secret|credential|tool|backend|session/i)
+  })
+
   it('maps safe Docs Agent profile readiness without provider secrets', async () => {
     const requests: string[] = []
     const profiles = [

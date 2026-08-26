@@ -1,9 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
+use futures_util::FutureExt;
 use nineprofs_agent::{
     AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest, AgentExecutorRegistry,
     AgentProviderConfig, AgentProviderConfigError, AgentRunContext, AgentTask, AgentTaskManager,
-    BackendResolution, ExecutionLimits, RunId, TaskFailure,
+    BackendResolution, ExecutionLimits, RunId, TaskFailure, TaskState,
 };
 use nineprofs_api_types::EventEnvelope;
 use nineprofs_assistant::{AssistantError, AssistantService};
@@ -15,10 +16,15 @@ use nineprofs_documents::{
 };
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_skills::{Skill, SkillCatalog};
-use nineprofs_tools::ToolSet;
+use nineprofs_tools::{ToolRegistry, ToolSet};
 use serde_json::json;
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc, watch};
+
+use crate::docs_conversation::{
+    DocsAgentConversationMetadata, DocsAgentConversationSeed, DocsAgentConversationStore,
+    DocsAgentConversationStoreError,
+};
 
 #[derive(Debug, Error)]
 pub enum AgentExecutionServiceError {
@@ -44,6 +50,18 @@ pub enum AgentExecutionServiceError {
     ActiveDocumentUnavailable(String),
     #[error("active document is unsupported: {0}")]
     ActiveDocumentUnsupported(String),
+    #[error("required Docs tool is not registered: {0}")]
+    RequiredToolMissing(String),
+    #[error("Docs agent conversation is not found: {0}")]
+    ConversationNotFound(String),
+    #[error("Docs agent conversation is busy: {0}")]
+    ConversationBusy(String),
+    #[error("Docs agent conversation is unavailable: {0}")]
+    ConversationUnavailable(String),
+    #[error("Docs agent conversation store is at capacity")]
+    ConversationCapacity,
+    #[error("Docs agent conversation reached its turn limit")]
+    ConversationTurnLimit,
     #[error(transparent)]
     Task(#[from] nineprofs_agent::AgentTaskManagerError),
 }
@@ -59,6 +77,8 @@ pub struct AgentExecutionService {
     provider: AgentProviderConfig,
     document_bridge: Arc<DocumentBridgeService>,
     run_contexts: Arc<RwLock<HashMap<RunId, AgentRunContext>>>,
+    tools: ToolRegistry,
+    docs_conversations: DocsAgentConversationStore,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +86,13 @@ pub struct AgentRunStarted {
     pub run_id: RunId,
     pub task: AgentTask,
     pub context: Option<AgentRunContext>,
+}
+
+struct PreparedDocsAgent {
+    assistant_id: String,
+    backend_id: String,
+    executor: Arc<dyn nineprofs_agent::AgentExecutor>,
+    system_instructions: String,
 }
 
 impl AgentExecutionService {
@@ -78,6 +105,7 @@ impl AgentExecutionService {
         events: Arc<BroadcastEventBus>,
         provider: AgentProviderConfig,
         document_bridge: Arc<DocumentBridgeService>,
+        tools: ToolRegistry,
     ) -> Self {
         Self {
             assistants,
@@ -89,6 +117,8 @@ impl AgentExecutionService {
             provider,
             document_bridge,
             run_contexts: Arc::new(RwLock::new(HashMap::new())),
+            tools,
+            docs_conversations: DocsAgentConversationStore::new(),
         }
     }
 
@@ -130,6 +160,247 @@ impl AgentExecutionService {
             }),
         )
         .await
+    }
+
+    pub async fn create_docs_agent_conversation(
+        &self,
+        assistant_id: &str,
+        document_id: &str,
+    ) -> Result<DocsAgentConversationMetadata, AgentExecutionServiceError> {
+        let descriptor = self.document_bridge.get(document_id).await.ok_or_else(|| {
+            AgentExecutionServiceError::ActiveDocumentUnavailable(document_id.to_owned())
+        })?;
+        validate_active_docs_document(&descriptor)?;
+        let prepared = self.prepare_docs_agent(assistant_id, document_id).await?;
+        self.ensure_docs_tools()?;
+        self.docs_conversations
+            .create(DocsAgentConversationSeed {
+                assistant_id: prepared.assistant_id,
+                document_id: document_id.to_owned(),
+                backend_id: prepared.backend_id,
+                system_instructions: prepared.system_instructions,
+                tool_set: docs_active_tool_set(),
+            })
+            .map_err(map_conversation_error)
+    }
+
+    pub fn docs_agent_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Option<DocsAgentConversationMetadata> {
+        self.docs_conversations.get(conversation_id)
+    }
+
+    pub async fn start_docs_agent_conversation_run(
+        &self,
+        conversation_id: &str,
+        input: &str,
+    ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(AgentExecutionServiceError::EmptyInput);
+        }
+        let metadata = self
+            .docs_conversations
+            .get(conversation_id)
+            .ok_or_else(|| {
+                AgentExecutionServiceError::ConversationNotFound(conversation_id.to_owned())
+            })?;
+        let descriptor = match self.document_bridge.get(&metadata.document_id).await {
+            Some(descriptor) => descriptor,
+            None => {
+                self.docs_conversations.mark_unavailable(conversation_id);
+                return Err(AgentExecutionServiceError::ConversationUnavailable(
+                    conversation_id.to_owned(),
+                ));
+            }
+        };
+        if let Err(error) = validate_active_docs_document(&descriptor) {
+            self.docs_conversations.mark_unavailable(conversation_id);
+            return Err(AgentExecutionServiceError::ConversationUnavailable(
+                error.to_string(),
+            ));
+        }
+        let turn = self
+            .docs_conversations
+            .begin(conversation_id)
+            .map_err(map_conversation_error)?;
+        let prepared = match self.prepare_bound_docs_agent(&turn).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.docs_conversations.finish(conversation_id, false);
+                return Err(error);
+            }
+        };
+        let started = self
+            .start_prepared_run(
+                input,
+                prepared,
+                docs_active_tool_set(),
+                Some(AgentRunContext::ActiveDocs {
+                    document_id: turn.document_id,
+                }),
+                Some(turn.conversation_id),
+            )
+            .await;
+        if started.is_err() {
+            self.docs_conversations.finish(conversation_id, false);
+        }
+        started
+    }
+
+    async fn prepare_docs_agent(
+        &self,
+        assistant_id: &str,
+        document_id: &str,
+    ) -> Result<PreparedDocsAgent, AgentExecutionServiceError> {
+        let assistant = self.assistants.get(assistant_id).await?;
+        if !assistant.enabled {
+            return Err(AgentExecutionServiceError::AssistantDisabled(assistant.id));
+        }
+        let descriptor =
+            resolve_backend(&self.registry, assistant.backend_agent_id.as_deref()).await?;
+        let executor = self
+            .executors
+            .get(&descriptor.id)
+            .ok_or_else(|| AgentExecutionServiceError::ExecutorMissing(descriptor.id.clone()))?;
+        let mut resolved_skills = Vec::with_capacity(assistant.skill_ids.len());
+        for skill_id in &assistant.skill_ids {
+            resolved_skills.push(
+                self.skills
+                    .resolve(skill_id)
+                    .ok_or_else(|| AgentExecutionServiceError::MissingSkill(skill_id.clone()))?,
+            );
+        }
+        Ok(PreparedDocsAgent {
+            assistant_id: assistant.id,
+            backend_id: descriptor.id,
+            executor,
+            system_instructions: build_system_instructions_with_context(
+                &assistant.rules,
+                &resolved_skills,
+                Some(&AgentRunContext::ActiveDocs {
+                    document_id: document_id.to_owned(),
+                }),
+            ),
+        })
+    }
+
+    async fn prepare_bound_docs_agent(
+        &self,
+        turn: &crate::docs_conversation::DocsAgentConversationTurn,
+    ) -> Result<PreparedDocsAgent, AgentExecutionServiceError> {
+        let assistant = self.assistants.get(&turn.assistant_id).await?;
+        if !assistant.enabled {
+            return Err(AgentExecutionServiceError::AssistantDisabled(assistant.id));
+        }
+        let descriptor = resolve_backend(&self.registry, Some(&turn.backend_id)).await?;
+        if descriptor.id != turn.backend_id {
+            return Err(AgentExecutionServiceError::BackendMissing(
+                turn.backend_id.clone(),
+            ));
+        }
+        let executor = self
+            .executors
+            .get(&turn.backend_id)
+            .ok_or_else(|| AgentExecutionServiceError::ExecutorMissing(turn.backend_id.clone()))?;
+        Ok(PreparedDocsAgent {
+            assistant_id: turn.assistant_id.clone(),
+            backend_id: turn.backend_id.clone(),
+            executor,
+            // Rules and ordered skills were snapshotted when the conversation was created.
+            system_instructions: turn.system_instructions.clone(),
+        })
+    }
+
+    fn ensure_docs_tools(&self) -> Result<(), AgentExecutionServiceError> {
+        for required in crate::REQUIRED_DOCS_AGENT_TOOLS {
+            if !self
+                .tools
+                .list_definitions()
+                .iter()
+                .any(|definition| definition.id.to_string() == required)
+            {
+                return Err(AgentExecutionServiceError::RequiredToolMissing(
+                    required.to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn start_prepared_run(
+        &self,
+        input: &str,
+        prepared: PreparedDocsAgent,
+        tool_set: ToolSet,
+        context: Option<AgentRunContext>,
+        conversation_id: Option<String>,
+    ) -> Result<AgentRunStarted, AgentExecutionServiceError> {
+        let run_id = RunId::new();
+        let task = self
+            .tasks
+            .register_new(run_id.clone(), prepared.backend_id.clone())
+            .await?;
+        let cancellation = self.tasks.cancellation(&task.task_id).await?;
+        if let Some(context_value) = context.as_ref() {
+            self.run_contexts
+                .write()
+                .await
+                .insert(run_id.clone(), context_value.clone());
+        }
+        let request = AgentExecutionRequest {
+            run_id: run_id.clone(),
+            task_id: task.task_id.clone(),
+            backend_id: prepared.backend_id,
+            assistant_id: prepared.assistant_id,
+            input: input.to_owned(),
+            workspace_root: None,
+            provider: self.provider.clone(),
+            system_instructions: prepared.system_instructions,
+            limits: ExecutionLimits::default(),
+            tool_set,
+            context: context.clone(),
+            conversation_id: conversation_id.clone(),
+        };
+        let tasks = self.tasks.clone();
+        let events = Arc::clone(&self.events);
+        let conversations = self.docs_conversations.clone();
+        let task_id = task.task_id.clone();
+        tokio::spawn(async move {
+            let task_run = std::panic::AssertUnwindSafe(run_task(
+                tasks.clone(),
+                events,
+                prepared.executor,
+                request,
+                cancellation,
+            ))
+            .catch_unwind()
+            .await;
+            if task_run.is_err() {
+                let _ = tasks
+                    .fail(
+                        &task_id,
+                        TaskFailure {
+                            code: "task_panicked".to_owned(),
+                            message: "agent task panicked before completion".to_owned(),
+                        },
+                    )
+                    .await;
+            }
+            if let Some(conversation_id) = conversation_id {
+                let successful = tasks
+                    .get(&task_id)
+                    .await
+                    .is_some_and(|task| task.state == TaskState::Succeeded);
+                conversations.finish(&conversation_id, successful);
+            }
+        });
+        Ok(AgentRunStarted {
+            run_id,
+            task,
+            context,
+        })
     }
 
     async fn start_run_with_context(
@@ -216,6 +487,7 @@ impl AgentExecutionService {
             limits: ExecutionLimits::default(),
             tool_set,
             context: context.clone(),
+            conversation_id: None,
         };
 
         let tasks = self.tasks.clone();
@@ -282,6 +554,49 @@ fn build_system_instructions_with_context(
         ));
     }
     instructions
+}
+
+async fn resolve_backend(
+    registry: &Arc<nineprofs_agent::AgentRegistry>,
+    backend_id: Option<&str>,
+) -> Result<nineprofs_agent::AgentBackendDescriptor, AgentExecutionServiceError> {
+    match registry.resolve_assistant_backend(backend_id).await {
+        BackendResolution::NotConfigured => Err(AgentExecutionServiceError::BackendNotConfigured),
+        BackendResolution::Missing { id } => Err(AgentExecutionServiceError::BackendMissing(id)),
+        BackendResolution::Unknown { descriptor }
+        | BackendResolution::Unavailable { descriptor } => {
+            Err(AgentExecutionServiceError::BackendUnavailable(
+                descriptor.id,
+                descriptor
+                    .availability_reason
+                    .unwrap_or_else(|| "availability is unknown".to_owned()),
+            ))
+        }
+        BackendResolution::Disabled { descriptor } => {
+            Err(AgentExecutionServiceError::BackendDisabled(descriptor.id))
+        }
+        BackendResolution::Resolved { descriptor } => Ok(descriptor),
+    }
+}
+
+fn map_conversation_error(error: DocsAgentConversationStoreError) -> AgentExecutionServiceError {
+    match error {
+        DocsAgentConversationStoreError::NotFound(id) => {
+            AgentExecutionServiceError::ConversationNotFound(id)
+        }
+        DocsAgentConversationStoreError::Busy(id) => {
+            AgentExecutionServiceError::ConversationBusy(id)
+        }
+        DocsAgentConversationStoreError::Unavailable(id) => {
+            AgentExecutionServiceError::ConversationUnavailable(id)
+        }
+        DocsAgentConversationStoreError::TurnLimit => {
+            AgentExecutionServiceError::ConversationTurnLimit
+        }
+        DocsAgentConversationStoreError::Capacity => {
+            AgentExecutionServiceError::ConversationCapacity
+        }
+    }
 }
 
 fn validate_active_docs_document(
@@ -459,6 +774,7 @@ fn publish_execution_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DocsAgentConversationState;
     use async_trait::async_trait;
     use nineprofs_agent::{
         AgentEventSink, AgentExecutionResult, AgentExecutor, AgentRegistry, AvailabilityState,
@@ -468,6 +784,7 @@ mod tests {
         BuiltinAssistantCatalog, CreateAssistant, SqliteAssistantRepository,
     };
     use nineprofs_db::Database;
+    use nineprofs_document_tools::DocumentToolProvider;
     use nineprofs_documents::{
         DOCUMENT_BRIDGE_CAPABILITY_COMMIT, DOCUMENT_BRIDGE_CAPABILITY_INSPECT,
         DOCUMENT_BRIDGE_PROTOCOL_VERSION, DOCX_DOCUMENT_TYPE, DocumentRegistration,
@@ -620,6 +937,7 @@ mod tests {
             limits: ExecutionLimits::default(),
             tool_set: ToolSet::default(),
             context: None,
+            conversation_id: None,
         }
     }
 
@@ -795,6 +1113,14 @@ mod tests {
 
         let executor_registry = AgentExecutorRegistry::new([executor]);
         let tasks = AgentTaskManager::new(Arc::clone(&events));
+        let tools = ToolRegistry::new();
+        tools
+            .register_provider(&DocumentToolProvider::new(
+                Arc::clone(&document_bridge),
+                Arc::clone(&events),
+            ))
+            .await
+            .unwrap();
         AgentExecutionService::new(
             assistants,
             skills,
@@ -804,6 +1130,7 @@ mod tests {
             events,
             AgentProviderConfig::from_env(),
             document_bridge,
+            tools,
         )
     }
 
@@ -977,6 +1304,175 @@ mod tests {
                 .await,
             Err(AgentExecutionServiceError::ActiveDocumentUnsupported(id)) if id == "pdf-a"
         ));
+    }
+
+    #[tokio::test]
+    async fn docs_conversation_reuses_binding_and_refreshes_each_turn_identity() {
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let service = test_service_with_executor(
+            AvailabilityState::Available,
+            Arc::new(CapturingExecutor {
+                captured: Arc::clone(&captured),
+            }),
+        )
+        .await;
+        let (sender, _receiver) = mpsc::channel(8);
+        service
+            .document_bridge
+            .register(
+                DocumentRegistration {
+                    protocol_version: DOCUMENT_BRIDGE_PROTOCOL_VERSION.to_owned(),
+                    document_id: "conversation-doc".to_owned(),
+                    document_type: DOCX_DOCUMENT_TYPE.to_owned(),
+                    version: 1,
+                    capabilities: vec![
+                        DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+
+        let conversation = service
+            .create_docs_agent_conversation("execution-assistant", "conversation-doc")
+            .await
+            .unwrap();
+        assert!(conversation.conversation_id.starts_with("docs-"));
+
+        let first = service
+            .start_docs_agent_conversation_run(&conversation.conversation_id, "My marker is ALPHA.")
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if service
+                .task(&first.task.task_id)
+                .await
+                .is_some_and(|task| task.state == TaskState::Succeeded)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let first_request = captured.lock().unwrap().take().unwrap();
+        assert_eq!(
+            first_request.conversation_id,
+            Some(conversation.conversation_id.clone())
+        );
+        assert_eq!(
+            first_request.context,
+            Some(AgentRunContext::ActiveDocs {
+                document_id: "conversation-doc".to_owned(),
+            })
+        );
+        assert_eq!(
+            first_request
+                .tool_set
+                .ids()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "document.inspect_active",
+                "document.list_active",
+                "document.propose_active_changes",
+            ]
+        );
+
+        for _ in 0..100 {
+            if service
+                .docs_agent_conversation(&conversation.conversation_id)
+                .is_some_and(|metadata| metadata.turn_count == 1)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let second = service
+            .start_docs_agent_conversation_run(
+                &conversation.conversation_id,
+                "What marker did I give you?",
+            )
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if captured.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let second_request = captured.lock().unwrap().take().unwrap();
+        assert_eq!(
+            second_request.conversation_id,
+            Some(conversation.conversation_id)
+        );
+        assert_ne!(first_request.run_id, second_request.run_id);
+        assert_ne!(first_request.task_id, second_request.task_id);
+        assert_eq!(
+            second_request
+                .tool_set
+                .ids()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "document.inspect_active",
+                "document.list_active",
+                "document.propose_active_changes",
+            ]
+        );
+        assert_eq!(second.context, first.context);
+    }
+
+    #[tokio::test]
+    async fn docs_conversation_becomes_unavailable_when_bound_document_is_replaced() {
+        let service = test_service(AvailabilityState::Available).await;
+        let (sender, _receiver) = mpsc::channel(8);
+        service
+            .document_bridge
+            .register(
+                DocumentRegistration {
+                    protocol_version: DOCUMENT_BRIDGE_PROTOCOL_VERSION.to_owned(),
+                    document_id: "replace-a".to_owned(),
+                    document_type: DOCX_DOCUMENT_TYPE.to_owned(),
+                    version: 1,
+                    capabilities: vec![
+                        DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+        let conversation = service
+            .create_docs_agent_conversation("execution-assistant", "replace-a")
+            .await
+            .unwrap();
+        let session_id = service
+            .document_bridge
+            .get("replace-a")
+            .await
+            .unwrap()
+            .session_id;
+        service
+            .document_bridge
+            .unregister("replace-a", &session_id)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            service
+                .start_docs_agent_conversation_run(&conversation.conversation_id, "follow-up")
+                .await,
+            Err(AgentExecutionServiceError::ConversationUnavailable(id)) if id == conversation.conversation_id
+        ));
+        assert_eq!(
+            service
+                .docs_agent_conversation(&conversation.conversation_id)
+                .unwrap()
+                .state,
+            DocsAgentConversationState::Unavailable
+        );
     }
 
     #[tokio::test]

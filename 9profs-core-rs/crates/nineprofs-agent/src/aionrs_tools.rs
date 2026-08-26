@@ -109,10 +109,22 @@ mod tests {
 
     struct EchoHandler;
 
+    struct ContextHandler {
+        seen: Arc<std::sync::Mutex<Vec<ToolInvocationContext>>>,
+    }
+
     #[async_trait]
     impl ToolHandler for EchoHandler {
         async fn execute(&self, invocation: ToolInvocation) -> Result<ToolResult, ToolError> {
             Ok(ToolResult::new(invocation.arguments))
+        }
+    }
+
+    #[async_trait]
+    impl ToolHandler for ContextHandler {
+        async fn execute(&self, invocation: ToolInvocation) -> Result<ToolResult, ToolError> {
+            self.seen.lock().unwrap().push(invocation.context.unwrap());
+            Ok(ToolResult::new(json!({"ok": true})))
         }
     }
 
@@ -129,6 +141,12 @@ mod tests {
             },
             handler: Arc::new(EchoHandler),
         }
+    }
+
+    fn echo_registration_with_handler(handler: Arc<dyn ToolHandler>) -> ToolRegistration {
+        let mut registration = echo_registration();
+        registration.handler = handler;
+        registration
     }
 
     #[test]
@@ -163,6 +181,38 @@ mod tests {
             .await;
         assert_eq!(result.content, r#"{"value":9}"#);
         assert!(!result.is_error);
+    }
+
+    #[tokio::test]
+    async fn each_aionrs_tool_registry_carries_the_current_run_and_task_context() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registry = ToolRegistry::new();
+        registry
+            .register(echo_registration_with_handler(Arc::new(ContextHandler {
+                seen: Arc::clone(&seen),
+            })))
+            .unwrap();
+
+        for (run_id, task_id) in [("run-1", "task-1"), ("run-2", "task-2")] {
+            let aionrs = build_aionrs_tool_registry(
+                &registry,
+                &ToolSet::from_ids([ToolId::new("echo")]),
+                ToolInvocationContext::new(run_id, task_id),
+            )
+            .unwrap();
+            aionrs
+                .get("echo")
+                .unwrap()
+                .execute(json!({"turn": run_id}))
+                .await;
+        }
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].run_id, "run-1");
+        assert_eq!(seen[0].task_id, "task-1");
+        assert_eq!(seen[1].run_id, "run-2");
+        assert_eq!(seen[1].task_id, "task-2");
     }
 
     struct EmptyProvider;

@@ -2293,6 +2293,7 @@ name = "nineprofs-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "nineprofs-agent",
  "nineprofs-api-types",
  "nineprofs-assistant",

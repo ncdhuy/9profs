@@ -1,28 +1,253 @@
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
-use aion_agent::{engine::AgentEngine, output::OutputSink};
+use aion_agent::{
+    engine::AgentEngine,
+    output::OutputSink,
+    session::{Session, SessionManager},
+};
 use aion_config::config::CliArgs;
 use async_trait::async_trait;
 use tokio::sync::watch;
 
 use crate::{
     AgentEventSink, AgentExecutionError, AgentExecutionEvent, AgentExecutionRequest,
-    AgentExecutionResult, AgentExecutor, AgentProviderConfig, AgentRunContext,
+    AgentExecutionResult, AgentExecutor, AgentProviderConfig, AgentRunContext, RunId,
     aionrs_tools::build_aionrs_tool_registry,
 };
 use nineprofs_tools::{ToolInvocationContext, ToolInvocationScope, ToolRegistry};
 
 pub const NINEPROFS_DEFAULT_BACKEND_ID: &str = "nineprofs-default";
 
+const MAX_CONVERSATIONS: usize = 32;
+const MAX_IDLE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const MAX_SESSION_BYTES: usize = 4 * 1024 * 1024;
+
+struct StoredConversation {
+    session: Session,
+    directory: PathBuf,
+    last_used: Instant,
+    active: bool,
+}
+
+struct AionRsConversationStore {
+    root: PathBuf,
+    states: Mutex<HashMap<String, StoredConversation>>,
+}
+
+impl AionRsConversationStore {
+    fn new() -> Self {
+        Self {
+            root: std::env::temp_dir()
+                .join("9profs-core-docs-agent")
+                .join(RunId::new().to_string()),
+            states: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn begin(
+        self: &Arc<Self>,
+        conversation_id: &str,
+        provider: &str,
+        model: &str,
+        cwd: &str,
+    ) -> Result<AionRsConversationLease, AgentExecutionError> {
+        if !is_safe_conversation_id(conversation_id) {
+            return Err(AgentExecutionError::Configuration(
+                "conversation state identity is invalid".to_owned(),
+            ));
+        }
+
+        let mut states = self
+            .states
+            .lock()
+            .expect("AionRS conversation store lock poisoned");
+        let expired_ids: Vec<_> = states
+            .iter()
+            .filter(|(_, state)| !state.active && state.last_used.elapsed() > MAX_IDLE)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for expired_id in expired_ids {
+            if let Some(expired) = states.remove(&expired_id) {
+                let _ = std::fs::remove_dir_all(expired.directory);
+            }
+        }
+        if let Some(state) = states.get(conversation_id)
+            && state.active
+        {
+            return Err(AgentExecutionError::Configuration(
+                "conversation is already running".to_owned(),
+            ));
+        }
+
+        if !states.contains_key(conversation_id) && states.len() >= MAX_CONVERSATIONS {
+            let Some(evicted_id) = states
+                .iter()
+                .filter(|(_, state)| !state.active)
+                .min_by_key(|(_, state)| state.last_used)
+                .map(|(id, _)| id.clone())
+            else {
+                return Err(AgentExecutionError::Configuration(
+                    "conversation state store is at capacity".to_owned(),
+                ));
+            };
+            if let Some(evicted) = states.remove(&evicted_id) {
+                let _ = std::fs::remove_dir_all(evicted.directory);
+            }
+        }
+
+        let (session, directory) = if let Some(state) = states.get(conversation_id) {
+            (state.session.clone(), state.directory.clone())
+        } else {
+            let directory = self.root.join(conversation_id);
+            let manager = SessionManager::new(directory.clone(), 1);
+            let session = manager
+                .create(provider, model, cwd, Some(conversation_id))
+                .map_err(|_| {
+                    AgentExecutionError::Configuration(
+                        "AionRS conversation state could not be initialized".to_owned(),
+                    )
+                })?;
+            (session, directory)
+        };
+
+        let manager = SessionManager::new(directory.clone(), 1);
+        manager.save(&session).map_err(|_| {
+            AgentExecutionError::Configuration(
+                "AionRS conversation state could not be checkpointed".to_owned(),
+            )
+        })?;
+        states.insert(
+            conversation_id.to_owned(),
+            StoredConversation {
+                session: session.clone(),
+                directory: directory.clone(),
+                last_used: Instant::now(),
+                active: true,
+            },
+        );
+        drop(states);
+
+        Ok(AionRsConversationLease {
+            store: Arc::clone(self),
+            conversation_id: conversation_id.to_owned(),
+            previous: session,
+            directory,
+            committed: false,
+        })
+    }
+
+    fn commit(
+        &self,
+        conversation_id: &str,
+        session: Session,
+        directory: &PathBuf,
+    ) -> Result<(), AgentExecutionError> {
+        let state_size = serde_json::to_vec(&session)
+            .map_err(|_| {
+                AgentExecutionError::Configuration(
+                    "conversation state could not be measured".to_owned(),
+                )
+            })?
+            .len();
+        if state_size > MAX_SESSION_BYTES {
+            return Err(AgentExecutionError::Configuration(
+                "conversation state exceeded the Core memory limit".to_owned(),
+            ));
+        }
+        SessionManager::new(directory.clone(), 1)
+            .save(&session)
+            .map_err(|_| {
+                AgentExecutionError::Configuration(
+                    "conversation state could not be committed".to_owned(),
+                )
+            })?;
+        let mut states = self
+            .states
+            .lock()
+            .expect("AionRS conversation store lock poisoned");
+        if let Some(state) = states.get_mut(conversation_id) {
+            state.session = session;
+            state.last_used = Instant::now();
+            state.active = false;
+        }
+        Ok(())
+    }
+
+    fn rollback(&self, conversation_id: &str, session: &Session, directory: &PathBuf) {
+        let _ = SessionManager::new(directory.clone(), 1).save(session);
+        if let Ok(mut states) = self.states.lock()
+            && let Some(state) = states.get_mut(conversation_id)
+        {
+            state.session = session.clone();
+            state.last_used = Instant::now();
+            state.active = false;
+        }
+    }
+}
+
+impl Drop for AionRsConversationStore {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+        if let Some(parent) = self.root.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+}
+
+struct AionRsConversationLease {
+    store: Arc<AionRsConversationStore>,
+    conversation_id: String,
+    previous: Session,
+    directory: PathBuf,
+    committed: bool,
+}
+
+impl AionRsConversationLease {
+    fn commit(&mut self, session: Session) -> Result<(), AgentExecutionError> {
+        self.store
+            .commit(&self.conversation_id, session, &self.directory)?;
+        self.committed = true;
+        Ok(())
+    }
+
+    fn rollback(&mut self) {
+        self.store
+            .rollback(&self.conversation_id, &self.previous, &self.directory);
+        self.committed = true;
+    }
+}
+
+impl Drop for AionRsConversationLease {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.store
+                .rollback(&self.conversation_id, &self.previous, &self.directory);
+        }
+    }
+}
+
+fn is_safe_conversation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value != "."
+        && value != ".."
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+}
+
 pub struct AionRsExecutor {
     provider: AgentProviderConfig,
     tools: ToolRegistry,
+    conversations: Arc<AionRsConversationStore>,
 }
 
 impl AionRsExecutor {
@@ -39,7 +264,11 @@ impl AionRsExecutor {
     }
 
     pub fn with_tools(provider: AgentProviderConfig, tools: ToolRegistry) -> Self {
-        Self { provider, tools }
+        Self {
+            provider,
+            tools,
+            conversations: Arc::new(AionRsConversationStore::new()),
+        }
     }
 
     pub fn provider(&self) -> &AgentProviderConfig {
@@ -152,7 +381,7 @@ impl AgentExecutor for AionRsExecutor {
         let mut config = aion_config::config::Config::resolve(&cli_args).map_err(|_| {
             AgentExecutionError::Configuration("AionRS configuration invalid".to_owned())
         })?;
-        config.system_prompt = Some(request.system_instructions);
+        config.system_prompt = Some(request.system_instructions.clone());
         config.session.enabled = false;
         config.mcp.servers.clear();
         config.tools.allow_list.clear();
@@ -175,16 +404,59 @@ impl AgentExecutor for AionRsExecutor {
         let aionrs_tools =
             build_aionrs_tool_registry(&self.tools, &request.tool_set, invocation_context)
                 .map_err(|error| AgentExecutionError::Configuration(error.to_string()))?;
-        let mut engine = AgentEngine::new(config, aionrs_tools, output, workspace);
+        let mut conversation_lease =
+            if let Some(conversation_id) = request.conversation_id.as_deref() {
+                let workspace_string = workspace.to_string_lossy().into_owned();
+                let lease = self.conversations.begin(
+                    conversation_id,
+                    &request.provider.provider,
+                    &request.provider.model,
+                    &workspace_string,
+                )?;
+                config.session.enabled = true;
+                config.session.directory = lease.directory.to_string_lossy().into_owned();
+                Some(lease)
+            } else {
+                None
+            };
+        let mut engine = if let Some(lease) = conversation_lease.as_ref() {
+            AgentEngine::resume(
+                config,
+                aionrs_tools,
+                output,
+                lease.previous.clone(),
+                workspace,
+            )
+        } else {
+            AgentEngine::new(config, aionrs_tools, output, workspace)
+        };
         let run = engine.run(&request.input, request.task_id.as_str());
         let result = tokio::select! {
-            result = run => result.map_err(|_| AgentExecutionError::Failed)?,
+            result = run => match result {
+                Ok(result) => result,
+                Err(_) => {
+                    if let Some(lease) = conversation_lease.as_mut() {
+                        lease.rollback();
+                    }
+                    return Err(AgentExecutionError::Failed);
+                }
+            },
             changed = wait_for_cancellation(&mut cancellation) => {
                 changed?;
                 engine.abort_current_turn("cancelled by 9Profs");
+                if let Some(lease) = conversation_lease.as_mut() {
+                    lease.rollback();
+                }
                 return Err(AgentExecutionError::Cancelled);
             }
         };
+        if let Some(lease) = conversation_lease.as_mut() {
+            let session_id = lease.previous.id.clone();
+            let session = SessionManager::new(lease.directory.clone(), 1)
+                .load(&session_id)
+                .map_err(|_| AgentExecutionError::Failed)?;
+            lease.commit(session)?;
+        }
         let _ = event_sink.send(AgentExecutionEvent::OutputCompleted {
             output: result.text.clone(),
         });
@@ -211,6 +483,7 @@ async fn wait_for_cancellation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aion_types::message::{ContentBlock, Message, Role};
     use nineprofs_tools::ToolSet;
 
     #[test]
@@ -304,6 +577,7 @@ mod tests {
             limits: crate::ExecutionLimits::default(),
             tool_set: ToolSet::default(),
             context: None,
+            conversation_id: None,
         };
         let result = executor
             .execute(request, event_sink, cancellation)
@@ -328,5 +602,81 @@ mod tests {
             }
         }
         assert!(saw_started && saw_delta && saw_completed);
+    }
+
+    #[test]
+    fn conversation_checkpoint_rollback_is_core_owned_and_ephemeral() {
+        let store = Arc::new(AionRsConversationStore::new());
+        let mut lease = store
+            .begin("docs-test", "openai", "test-model", ".")
+            .unwrap();
+        let directory = lease.directory.clone();
+        assert!(directory.starts_with(std::env::temp_dir()));
+        assert!(!directory.starts_with(std::env::current_dir().unwrap()));
+        assert!(directory.exists());
+        lease.rollback();
+        let states = store.states.lock().unwrap();
+        assert!(!states.get("docs-test").unwrap().active);
+        assert!(states.get("docs-test").unwrap().session.messages.is_empty());
+        drop(states);
+        drop(lease);
+        drop(store.clone());
+        assert!(directory.exists());
+        drop(store);
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn conversation_checkpoint_preserves_real_message_roles_across_turns() {
+        let store = Arc::new(AionRsConversationStore::new());
+        let mut first = store
+            .begin("docs-continuity", "openai", "test-model", ".")
+            .unwrap();
+        let mut first_session = first.previous.clone();
+        first_session.messages.push(Message::now(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "My marker is ALPHA.".to_owned(),
+            }],
+        ));
+        first_session.messages.push(Message::now(
+            Role::Assistant,
+            vec![ContentBlock::Text {
+                text: "Acknowledged.".to_owned(),
+            }],
+        ));
+        first.commit(first_session).unwrap();
+
+        let mut second = store
+            .begin("docs-continuity", "openai", "test-model", ".")
+            .unwrap();
+        assert_eq!(second.previous.messages.len(), 2);
+        assert!(matches!(second.previous.messages[0].role, Role::User));
+        assert!(matches!(second.previous.messages[1].role, Role::Assistant));
+        let mut partial = second.previous.clone();
+        partial.messages.push(Message::now(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "failed follow-up".to_owned(),
+            }],
+        ));
+        assert_eq!(partial.messages.len(), 3);
+        second.rollback();
+        let retry = store
+            .begin("docs-continuity", "openai", "test-model", ".")
+            .unwrap();
+        assert_eq!(retry.previous.messages.len(), 2);
+        assert!(
+            !retry
+                .previous
+                .messages
+                .iter()
+                .any(|message| message.content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text { text } if text == "failed follow-up"
+                )))
+        );
+        drop(retry);
+        drop(store);
     }
 }

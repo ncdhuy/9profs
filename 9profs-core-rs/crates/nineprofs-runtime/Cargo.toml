@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+futures-util.workspace = true
 nineprofs-agent = { path = "../nineprofs-agent" }
 nineprofs-api-types = { path = "../nineprofs-api-types" }
 nineprofs-assistant = { path = "../nineprofs-assistant" }

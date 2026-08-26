@@ -137,6 +137,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4C2 proposal review/live commit | IMPLEMENTED     | Core-owned review workflow, trusted approve/reject/retry endpoints, bounded renderer idempotency, and existing Docs AI-panel command summaries |
 | Phase 4D1 Core-owned active Docs runs | IMPLEMENTED     | Trusted Docs run API, server-owned proposal-only ToolSet, per-run document scope enforcement, and typed `/ws` event client                 |
 | Phase 4D1.1 Docs Core Agent readiness | IMPLEMENTED     | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API             |
+| Phase 4D1.2 Docs Core conversation continuity | IMPLEMENTED | Core-owned conversation identity, bounded ephemeral state, transactional multi-turn AionRS context, and conversation-bound Docs scope |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
@@ -789,6 +790,58 @@ Provider configuration remains launch-scoped through `NINEPROFS_AGENT_*`
 environment variables. No provider settings synchronization, vault, secret
 database, hot reconfiguration, or account-level provider profile exists yet.
 
+### Phase 4D1.2 - Docs Core conversation continuity (IMPLEMENTED)
+
+Docs conversations provide ephemeral Core-owned model context without changing
+the legacy Docs UI execution path. Core generates a `ConversationId` when a
+conversation is created and binds it permanently to one `DocumentId`, one
+`AssistantId`, and a snapshot of the effective Assistant Rules, ordered Skills,
+and Docs proposal-only policy. Each conversation turn receives a new `RunId`
+and `TaskId`; those identities remain distinct:
+
+```text
+ConversationId = model-context/session identity
+RunId          = one execution turn
+TaskId         = lifecycle/cancellation unit
+DocumentId     = active document identity
+```
+
+The conversation API is:
+
+- `POST /api/document-agent-conversations` to create a Core-generated,
+  document-bound conversation;
+- `GET /api/document-agent-conversations/:id` for safe metadata;
+- `POST /api/document-agent-conversations/:id/runs` for subsequent turns.
+
+The API accepts only the assistant/document binding at creation and `input` for
+a turn. Tool IDs, backend/provider selection, credentials, filesystem paths,
+and AionRS session objects are never client-controlled or returned.
+
+Pinned AionRS `v0.2.11` (`8e61a90329fa9f67c4fdf7e97fe02c24dba33f75`) state is continued using its supported `Session`
+snapshot/restore API. Core creates a fresh AionRS engine and Docs ToolSet for
+each turn, then commits the new session snapshot only after successful
+execution. Failed or cancelled turns discard the new snapshot and restore the
+last successful state. This preserves real user/assistant/tool message roles,
+refreshes `ToolInvocationContext` with the current RunId/TaskId, and avoids
+stale tool adapters from a reused engine.
+
+Conversation state is bounded and in-memory at the Core domain level: at most
+32 conversations, at most 24 idle entries, a 30-minute idle lifetime, and 100
+successful turns per conversation. Active turns are never evicted and a second
+turn on the same conversation returns `conversation_busy`; different
+conversations remain concurrent. A replaced/disconnected active document makes
+its conversation unavailable rather than redirecting it to another document.
+
+AionRS's temporary session files, when needed for its supported state API, are
+written only below a Core-owned process-temporary directory and removed when
+the conversation store is dropped. No home-directory, AionRS-global, project,
+durable chat-history, or cross-restart restore behavior is enabled.
+
+The Docs ToolSet remains exactly `document.list_active`,
+`document.inspect_active`, and `document.propose_active_changes`. No MCP,
+OfficeCLI, shell/filesystem, commit, approval, or rejection capability is
+added. The proposal-only authority boundary remains unchanged.
+
 ### Phase 4D2 - Docs AiPanel Core migration (NOT IMPLEMENTED)
 
 The Docs AI panel has not yet migrated from the legacy GenOffice AgentLoop to
@@ -801,6 +854,10 @@ Phase 4D2 must still preserve legacy local attachment/file handling through an
 explicit compatibility strategy; Core Docs tools do not expose arbitrary local
 filesystem access. AiPanel migration is not implemented yet and continues to
 use the legacy GenOffice `@genoffice/agent-core` `AgentLoop`.
+
+Phase 4D1.2 does not migrate the AiPanel, attachments, provider settings
+synchronization, durable conversation persistence, or cross-restart conversation
+restore. Those remain future compatibility/product integration work.
 
 Attachment Core migration, provider settings synchronization, and final Core
 desktop process lifecycle remain NOT IMPLEMENTED.
