@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
+import type { ParsedDocFull } from '@genoffice/docx-engine'
 import { createGenOfficeDocsAdapter, DOCS_COMMAND_ENVELOPE } from '@genoffice/genoffice-adapter'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { executeCommands, type Command } from '../src/renderer/ai/commands'
 import { buildDocumentContext } from '../src/renderer/ai/protocol'
 import { collectRevisions } from '../src/renderer/editor/revisions'
+import { withSavedDocumentState } from '../src/renderer/doc-state'
 
 const editors = new Set<Editor>()
 
@@ -162,6 +164,48 @@ describe('active DOCX GenOffice adapter integration', () => {
       previousVersion: 0,
       newVersion: 0,
       changedCount: 0,
+    })
+    adapter.dispose()
+  })
+
+  it('keeps the adapter version and pending changes valid across unchanged Save As', async () => {
+    const editor = createEditor()
+    const adapter = createAdapter(editor)
+    const inspected = await adapter.inspector.inspect({ documentId: 'active-doc-1' })
+    const savedState = withSavedDocumentState(
+      {
+        parsed: {} as ParsedDocFull,
+        documentId: inspected.documentId,
+        filePath: 'C:\\docs\\active.docx',
+        fileName: 'active.docx',
+        hash: '',
+      },
+      {} as ParsedDocFull,
+      'D:\\archive\\active.docx',
+    )
+
+    expect(savedState.documentId).toBe(inspected.documentId)
+    expect((await adapter.inspector.inspect({ documentId: savedState.documentId })).version).toBe(0)
+
+    editor.commands.insertContentAt(1, ' changed')
+    expect((await adapter.inspector.inspect({ documentId: savedState.documentId })).version).toBe(1)
+
+    const stale = await adapter.mutationGateway.commit(
+      changeSet(0, [
+        {
+          updateTextStyle: {
+            target: { blockIndexes: [0] },
+            style: { bold: true },
+            fields: ['bold'],
+          },
+        },
+      ]),
+    )
+    expect(stale).toMatchObject({
+      status: 'conflict',
+      reason: 'stale-version',
+      currentVersion: 1,
+      documentId: 'active-doc-1',
     })
     adapter.dispose()
   })

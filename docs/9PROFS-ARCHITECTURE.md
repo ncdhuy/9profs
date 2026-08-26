@@ -402,6 +402,21 @@ inside the 9Profs copy-on-write transaction; it does not rely on upstream batch
 rollback for atomicity. Resident mode remains deferred, and confirmation
 metadata is declared but runtime confirmation enforcement/UI remains deferred.
 
+For the active DOCX adapter, `DocumentId` is the identity of one continuous
+editor document session. It rotates only when the active document is replaced
+(open another file, create a new document, or an equivalent replacement
+operation). Saving, autosaving, Save As, and reparsing the same active document
+preserve it. `DocumentVersion` is the monotonic content revision within that
+session and is independent of persistence. The file path is only the current
+persistence location and may change independently through Save As:
+
+```text
+Active Document Session
+├── DocumentId       stable
+├── DocumentVersion  monotonic
+└── filePath         may change via Save As
+```
+
 Future: research tools, extension tools, OAuth, full
 permission/confirmation UX, MCP resources, external-agent sync, and external
 CLI agents.

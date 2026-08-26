@@ -18,7 +18,7 @@ export const EMPTY_HF_VARIANTS: HfVariantsState = {
 
 export interface DocState {
   parsed: ParsedDocFull
-  /** opaque active-editor identity; never derived from the local file path */
+  /** identity of one continuous active-editor session; independent of filePath and saves */
   documentId: string
   /** null until a new document is saved for the first time */
   filePath: string | null
@@ -32,6 +32,23 @@ export interface DocState {
 
 export function createDocumentId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `genoffice-${Date.now()}-${Math.random()}`
+}
+
+/**
+ * Apply persistence metadata after saving without replacing the active editor
+ * session. A path is a storage location, not a document-session identity.
+ */
+export function withSavedDocumentState(
+  prev: DocState,
+  parsed: ParsedDocFull,
+  savedPath: string | null,
+): DocState {
+  return {
+    ...prev,
+    parsed,
+    filePath: savedPath,
+    fileName: savedPath?.split(/[\\/]/).pop() ?? prev.fileName,
+  }
 }
 
 /** A restored recovery snapshot has not reached the original path yet. */

@@ -42,6 +42,7 @@ import {
   hfVariantsFromParsed,
   createDocumentId,
   openedFileStartsDirty,
+  withSavedDocumentState,
   type DocState,
   type HfVariantKey,
   type HfVariantsState,
@@ -768,17 +769,7 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
       chain.run()
     }
     ctx.setDocCss(docStyleCss(reparsed))
-    ctx.setDoc((prev) =>
-      prev
-        ? {
-            ...prev,
-            parsed: reparsed,
-            documentId: createDocumentId(),
-            filePath: savedPath,
-            fileName: savedPath?.split(/[\\/]/).pop() ?? prev.fileName,
-          }
-        : prev,
-    )
+    ctx.setDoc((prev) => (prev ? withSavedDocumentState(prev, reparsed, savedPath) : prev))
     ctx.setSection(readSectionSettings(reparsed))
     ctx.setSections(readSections(reparsed))
     ctx.setSectionDirty(false)

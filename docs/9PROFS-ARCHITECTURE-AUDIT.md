@@ -55,10 +55,23 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Research/product backend               | No research domain, account/billing backend, or OfficeCLI resident mode                                                                                               | Future                                                                 |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
-`DocumentVersion` — IMPLEMENTED; stale ChangeSet protection — IMPLEMENTED;
-approved active DOCX mutation gateway — IMPLEMENTED; existing GenOffice Docs
-command engine reuse — IMPLEMENTED. OfficeCLI writes detached artifacts;
-GenOffice writes active documents.
+`DocumentVersion` — IMPLEMENTED; stable active-session `DocumentId` —
+IMPLEMENTED; stale ChangeSet protection — IMPLEMENTED; approved active DOCX
+mutation gateway — IMPLEMENTED; existing GenOffice Docs command engine reuse —
+IMPLEMENTED. OfficeCLI writes detached artifacts; GenOffice writes active
+documents.
+
+For an active DOCX session, `DocumentId` identifies one continuous editor
+session and rotates only when the active document is replaced. `DocumentVersion`
+is the monotonic content revision within that session. The file path is an
+independent persistence location and may change through Save As:
+
+```text
+Active Document Session
+├── DocumentId       stable
+├── DocumentVersion  monotonic
+└── filePath         may change via Save As
+```
 
 ## GenOffice inheritance and current divergence
 
