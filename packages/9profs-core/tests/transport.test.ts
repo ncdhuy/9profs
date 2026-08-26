@@ -158,6 +158,62 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('maps safe active-document and read-only proposal APIs', async () => {
+    const requests: Array<{ input: string; method?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (input, init) => {
+      requests.push({ input, method: init?.method })
+      const data = input.includes('/api/document-proposals/')
+        ? {
+            proposalId: 'proposal-1',
+            changeSetId: 'proposal-1',
+            documentId: 'doc-1',
+            authority: 'genoffice-active',
+            baseVersion: 5,
+            status: 'proposed',
+            freshness: 'fresh',
+            availability: 'available',
+            currentVersion: 5,
+            createdAtMs: 1,
+            changes: [],
+          }
+        : input.includes('/api/document-proposals')
+          ? []
+          : input.endsWith('/api/documents/doc-1')
+            ? {
+                documentId: 'doc-1',
+                documentType: 'docx',
+                authority: 'genoffice-active',
+                version: 5,
+                capabilities: ['inspect', 'commitApprovedChangeSet'],
+                availability: 'available',
+              }
+            : []
+      return { ok: true, json: async () => ({ success: true, data }) }
+    })
+
+    await expect(transport.activeDocuments()).resolves.toEqual([])
+    await expect(transport.activeDocument('doc-1')).resolves.toMatchObject({ documentId: 'doc-1' })
+    await expect(transport.documentProposals()).resolves.toEqual([])
+    await expect(transport.documentProposals('doc/1')).resolves.toEqual([])
+    await expect(transport.documentProposal('proposal/1')).resolves.toMatchObject({
+      proposalId: 'proposal-1',
+      status: 'proposed',
+    })
+    expect(requests).toEqual([
+      { input: 'http://127.0.0.1:39761/api/documents', method: undefined },
+      { input: 'http://127.0.0.1:39761/api/documents/doc-1', method: undefined },
+      { input: 'http://127.0.0.1:39761/api/document-proposals', method: undefined },
+      {
+        input: 'http://127.0.0.1:39761/api/document-proposals?documentId=doc%2F1',
+        method: undefined,
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/document-proposals/proposal%2F1',
+        method: undefined,
+      },
+    ])
+  })
+
   it('maps MCP configuration, diagnostics, and tool APIs without exposing secrets', async () => {
     const requests: Array<{ input: string; method?: string; body?: string }> = []
     const server = {

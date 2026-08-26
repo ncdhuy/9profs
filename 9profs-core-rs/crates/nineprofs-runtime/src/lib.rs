@@ -12,6 +12,7 @@ use nineprofs_assistant::{
     AssistantError, AssistantService, BuiltinAssistantCatalog, SqliteAssistantRepository,
 };
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
+use nineprofs_document_tools::DocumentToolProvider;
 use nineprofs_documents::{
     DocumentBridgeError, DocumentBridgeService, DocumentChangeSet, DocumentInspection,
     DocumentMutationResult,
@@ -103,6 +104,8 @@ pub enum RuntimeError {
     AgentRegistry(#[from] AgentRegistryError),
     #[error(transparent)]
     Mcp(#[from] McpError),
+    #[error("tool registry initialization failed: {0}")]
+    ToolRegistry(String),
 }
 
 pub struct CoreRuntime {
@@ -111,6 +114,7 @@ pub struct CoreRuntime {
     metadata_repository: SqliteMetadataRepository,
     event_bus: Arc<BroadcastEventBus>,
     document_bridge: Arc<DocumentBridgeService>,
+    document_tools: Arc<DocumentToolProvider>,
     skill_catalog: Arc<SkillCatalog>,
     assistant_service: Arc<AssistantService>,
     agent_registry: Arc<AgentRegistry>,
@@ -145,6 +149,10 @@ impl CoreRuntime {
             },
             Arc::clone(&event_bus),
         ));
+        let document_tools = Arc::new(DocumentToolProvider::new(
+            Arc::clone(&document_bridge),
+            Arc::clone(&event_bus),
+        ));
         let agent_registry = Arc::new(AgentRegistry::new(
             Arc::new(SqliteAgentMetadataRepository::new(database.pool().clone())),
             BuiltinAgentCatalog::load(),
@@ -152,6 +160,10 @@ impl CoreRuntime {
         ));
         agent_registry.hydrate().await?;
         let tool_registry = ToolRegistry::new();
+        tool_registry
+            .register_provider(document_tools.as_ref())
+            .await
+            .map_err(|error| RuntimeError::ToolRegistry(error.to_string()))?;
         let mcp_service = Arc::new(McpService::new(
             SqliteMcpServerRepository::new(database.pool().clone()),
             tool_registry.clone(),
@@ -202,6 +214,7 @@ impl CoreRuntime {
             metadata_repository,
             event_bus,
             document_bridge,
+            document_tools,
             skill_catalog,
             assistant_service,
             agent_registry,
@@ -231,6 +244,10 @@ impl CoreRuntime {
 
     pub fn document_bridge(&self) -> Arc<DocumentBridgeService> {
         Arc::clone(&self.document_bridge)
+    }
+
+    pub fn document_tools(&self) -> Arc<DocumentToolProvider> {
+        Arc::clone(&self.document_tools)
     }
 
     pub async fn inspect_active_document(
@@ -326,6 +343,7 @@ impl CoreRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nineprofs_tools::{ToolId, ToolSet};
 
     #[tokio::test]
     async fn composition_root_constructs_shared_infrastructure() {
@@ -337,6 +355,51 @@ mod tests {
         assert_eq!(runtime.info().service, "9profs-core");
         assert_eq!(runtime.event_bus().receiver_count(), 0);
         assert!(!runtime.config().session_secret_configured());
+    }
+
+    #[tokio::test]
+    async fn active_document_tools_are_registered_but_default_runs_receive_none() {
+        let runtime = CoreRuntime::initialize_in_memory(RuntimeConfig::default())
+            .await
+            .unwrap();
+        let document_tools: Vec<_> = runtime
+            .tool_registry()
+            .list_definitions()
+            .into_iter()
+            .filter(|definition| definition.name.starts_with("document."))
+            .collect();
+        assert_eq!(
+            document_tools
+                .iter()
+                .map(|definition| definition.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "document.inspect_active",
+                "document.list_active",
+                "document.propose_active_changes"
+            ]
+        );
+        assert!(
+            runtime
+                .tool_registry()
+                .registrations_for(&ToolSet::default())
+                .unwrap()
+                .is_empty()
+        );
+        let explicit = runtime
+            .tool_registry()
+            .registrations_for(&ToolSet::from_ids([
+                ToolId::new("document.list_active"),
+                ToolId::new("document.inspect_active"),
+                ToolId::new("document.propose_active_changes"),
+            ]))
+            .unwrap();
+        assert_eq!(explicit.len(), 3);
+        assert!(
+            document_tools
+                .iter()
+                .all(|definition| !definition.name.contains("commit"))
+        );
     }
 
     #[tokio::test]

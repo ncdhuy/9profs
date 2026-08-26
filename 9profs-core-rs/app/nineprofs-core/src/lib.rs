@@ -2,20 +2,22 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Path, State, WebSocketUpgrade},
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use nineprofs_agent::{AgentBackendDescriptor, AgentTaskId, RunId, TaskState};
 use nineprofs_api_types::{
-    AgentRunDto, AgentRunRequest, AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto,
-    ApiResponse, AssistantDto, CreateAssistantRequest, CreateMcpServerRequest, ErrorResponse,
-    EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
-    McpTransportInputDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
-    UpdateAssistantRequest, UpdateMcpServerRequest,
+    ActiveDocumentDto, AgentRunDto, AgentRunRequest, AgentRunStartedDto, AgentTaskDto,
+    AgentTaskFailureDto, ApiResponse, AssistantDto, CreateAssistantRequest, CreateMcpServerRequest,
+    DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse, EventEnvelope, HealthResponse,
+    McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto, McpTransportInputDto,
+    RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
+    UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
+use nineprofs_document_tools::{DocumentProposalView, ProposalAvailability, ProposalFreshness};
 use nineprofs_documents::ActiveDocumentDescriptor;
 use nineprofs_mcp::{
     CreateMcpServer, McpError, McpServerSnapshot, McpTransportConfig, McpTransportSummary,
@@ -222,6 +224,101 @@ mod officecli_api_tests {
     }
 }
 
+#[cfg(test)]
+mod document_proposal_api_tests {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use nineprofs_documents::{
+        DOCUMENT_BRIDGE_CAPABILITY_COMMIT, DOCUMENT_BRIDGE_CAPABILITY_INSPECT,
+        DOCUMENT_BRIDGE_PROTOCOL_VERSION, DOCX_DOCUMENT_TYPE, DocumentRegistration,
+    };
+    use tokio::sync::mpsc;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn document_metadata_and_proposal_apis_are_read_only_and_safe() {
+        let runtime = Arc::new(
+            CoreRuntime::initialize_in_memory(nineprofs_runtime::RuntimeConfig::default())
+                .await
+                .unwrap(),
+        );
+        let (sender, _receiver) = mpsc::channel(8);
+        runtime
+            .document_bridge()
+            .register(
+                DocumentRegistration {
+                    protocol_version: DOCUMENT_BRIDGE_PROTOCOL_VERSION.to_owned(),
+                    document_id: "api-doc".to_owned(),
+                    document_type: DOCX_DOCUMENT_TYPE.to_owned(),
+                    version: 5,
+                    capabilities: vec![
+                        DOCUMENT_BRIDGE_CAPABILITY_INSPECT.to_owned(),
+                        DOCUMENT_BRIDGE_CAPABILITY_COMMIT.to_owned(),
+                    ],
+                },
+                sender,
+            )
+            .await
+            .unwrap();
+        let router = build_router(runtime);
+
+        let response = router
+            .clone()
+            .oneshot(Request::get("/api/documents").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(text.contains("api-doc"));
+        assert!(!text.contains("sessionId"));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/document-proposals?documentId=api-doc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["data"], serde_json::json!([]));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/document-proposals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let response = router
+            .oneshot(
+                Request::get("/api/document-proposals/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+}
+
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
     let state = AppState { runtime };
     Router::new()
@@ -229,6 +326,8 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/runtime", get(runtime_info))
         .route("/api/documents", get(list_documents))
         .route("/api/documents/{id}", get(get_document))
+        .route("/api/document-proposals", get(list_document_proposals))
+        .route("/api/document-proposals/{id}", get(get_document_proposal))
         .route("/api/officecli/status", get(officecli_status))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
@@ -314,23 +413,110 @@ async fn document_websocket(State(state): State<AppState>, upgrade: WebSocketUpg
 
 async fn list_documents(
     State(state): State<AppState>,
-) -> axum::Json<ApiResponse<Vec<ActiveDocumentDescriptor>>> {
+) -> axum::Json<ApiResponse<Vec<ActiveDocumentDto>>> {
     axum::Json(ApiResponse::ok(
-        state.runtime.document_bridge().list().await,
+        state
+            .runtime
+            .document_bridge()
+            .list()
+            .await
+            .into_iter()
+            .map(active_document_dto)
+            .collect(),
     ))
 }
 
 async fn get_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<axum::Json<ApiResponse<ActiveDocumentDescriptor>>, ApiError> {
+) -> Result<axum::Json<ApiResponse<ActiveDocumentDto>>, ApiError> {
     let document = state
         .runtime
         .document_bridge()
         .get(&id)
         .await
         .ok_or_else(|| ApiError::DocumentNotFound(id.clone()))?;
-    Ok(axum::Json(ApiResponse::ok(document)))
+    Ok(axum::Json(ApiResponse::ok(active_document_dto(document))))
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct DocumentProposalQuery {
+    #[serde(rename = "documentId")]
+    document_id: Option<String>,
+}
+
+async fn list_document_proposals(
+    State(state): State<AppState>,
+    Query(query): Query<DocumentProposalQuery>,
+) -> axum::Json<ApiResponse<Vec<DocumentProposalDto>>> {
+    axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .document_tools()
+            .list_proposals(query.document_id.as_deref())
+            .await
+            .into_iter()
+            .map(document_proposal_dto)
+            .collect(),
+    ))
+}
+
+async fn get_document_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<DocumentProposalDto>>, ApiError> {
+    let proposal = state
+        .runtime
+        .document_tools()
+        .get_proposal(&id)
+        .await
+        .ok_or_else(|| ApiError::DocumentProposalNotFound(id.clone()))?;
+    Ok(axum::Json(ApiResponse::ok(document_proposal_dto(proposal))))
+}
+
+fn active_document_dto(document: ActiveDocumentDescriptor) -> ActiveDocumentDto {
+    ActiveDocumentDto {
+        document_id: document.document_id,
+        document_type: document.document_type,
+        authority: document.authority,
+        version: document.version,
+        capabilities: document.capabilities,
+        availability: "available".to_owned(),
+    }
+}
+
+fn document_proposal_dto(proposal: DocumentProposalView) -> DocumentProposalDto {
+    DocumentProposalDto {
+        proposal_id: proposal.proposal_id,
+        change_set_id: proposal.change_set.id,
+        document_id: proposal.document_id,
+        authority: proposal.change_set.target.kind,
+        base_version: proposal.base_version,
+        status: proposal.status,
+        freshness: match proposal.freshness {
+            ProposalFreshness::Fresh => "fresh",
+            ProposalFreshness::Stale => "stale",
+            ProposalFreshness::Unavailable => "unavailable",
+        }
+        .to_owned(),
+        availability: match proposal.availability {
+            ProposalAvailability::Available => "available",
+            ProposalAvailability::Unavailable => "unavailable",
+        }
+        .to_owned(),
+        current_version: proposal.current_version,
+        created_at_ms: proposal.created_at_ms,
+        summary: proposal.summary,
+        changes: proposal
+            .change_set
+            .changes
+            .into_iter()
+            .map(|change| DocumentProposalChangeDto {
+                change_type: change.change_type,
+                payload: change.payload,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug)]
@@ -343,6 +529,7 @@ enum ApiError {
     AgentNotFound(String),
     RunNotFound(String),
     DocumentNotFound(String),
+    DocumentProposalNotFound(String),
 }
 
 impl From<AssistantError> for ApiError {
@@ -391,6 +578,11 @@ impl IntoResponse for ApiError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 format!("active document not found: {id}"),
+            ),
+            Self::DocumentProposalNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                format!("document proposal not found: {id}"),
             ),
             Self::Task(error) => (
                 if matches!(error, nineprofs_agent::AgentTaskManagerError::NotFound(_)) {

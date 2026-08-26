@@ -18,12 +18,14 @@ axum.workspace = true
 nineprofs-agent = { path = "../../crates/nineprofs-agent" }
 nineprofs-api-types = { path = "../../crates/nineprofs-api-types" }
 nineprofs-documents = { path = "../../crates/nineprofs-documents" }
+nineprofs-document-tools = { path = "../../crates/nineprofs-document-tools" }
 nineprofs-assistant = { path = "../../crates/nineprofs-assistant" }
 nineprofs-mcp = { path = "../../crates/nineprofs-mcp" }
 nineprofs-officecli = { path = "../../crates/nineprofs-officecli" }
 nineprofs-realtime = { path = "../../crates/nineprofs-realtime" }
 nineprofs-runtime = { path = "../../crates/nineprofs-runtime" }
 nineprofs-skills = { path = "../../crates/nineprofs-skills" }
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 

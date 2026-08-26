@@ -8,6 +8,7 @@ import type {
   AgentRunResponse,
   AgentRunStarted,
   AgentTask,
+  ActiveDocument,
   AssistantId,
   CoreAssistant,
   CoreSkill,
@@ -20,6 +21,7 @@ import type {
   SkillId,
   UpdateAssistantInput,
   UpdateMcpServerInput,
+  DocumentProposal,
 } from './types'
 
 export interface CoreResponse<T> {
@@ -63,6 +65,10 @@ export interface CoreTransport {
   agentRun(id: string): Promise<AgentRunResponse>
   agentRunTasks(id: string): Promise<AgentTask[]>
   cancelAgentTask(id: string): Promise<AgentTask>
+  activeDocuments(): Promise<ActiveDocument[]>
+  activeDocument(id: string): Promise<ActiveDocument>
+  documentProposals(documentId?: string): Promise<DocumentProposal[]>
+  documentProposal(id: string): Promise<DocumentProposal>
   assistants(): Promise<CoreAssistant[]>
   assistant(id: AssistantId): Promise<CoreAssistant>
   createAssistant(input: CreateAssistantInput): Promise<CoreAssistant>
@@ -120,6 +126,16 @@ export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTr
     agentRunTasks: (id) => get<AgentTask[]>(`/api/agent-runs/${encodeURIComponent(id)}/tasks`),
     cancelAgentTask: (id) =>
       request<AgentTask>(`/api/agent-tasks/${encodeURIComponent(id)}/cancel`, 'POST'),
+    activeDocuments: () => get<ActiveDocument[]>('/api/documents'),
+    activeDocument: (id) => get<ActiveDocument>(`/api/documents/${encodeURIComponent(id)}`),
+    documentProposals: (documentId) =>
+      get<DocumentProposal[]>(
+        documentId === undefined
+          ? '/api/document-proposals'
+          : `/api/document-proposals?documentId=${encodeURIComponent(documentId)}`,
+      ),
+    documentProposal: (id) =>
+      get<DocumentProposal>(`/api/document-proposals/${encodeURIComponent(id)}`),
     assistants: () => get<CoreAssistant[]>('/api/assistants'),
     assistant: (id) => get<CoreAssistant>(`/api/assistants/${encodeURIComponent(id)}`),
     createAssistant: (input) => request<CoreAssistant>('/api/assistants', 'POST', input),

@@ -2188,12 +2188,14 @@ dependencies = [
  "nineprofs-agent",
  "nineprofs-api-types",
  "nineprofs-assistant",
+ "nineprofs-document-tools",
  "nineprofs-documents",
  "nineprofs-mcp",
  "nineprofs-officecli",
  "nineprofs-realtime",
  "nineprofs-runtime",
  "nineprofs-skills",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.2",
@@ -2208,6 +2210,22 @@ dependencies = [
  "nineprofs-common",
  "serde",
  "sqlx",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "nineprofs-document-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nineprofs-api-types",
+ "nineprofs-common",
+ "nineprofs-documents",
+ "nineprofs-realtime",
+ "nineprofs-tools",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
 ]
@@ -2279,6 +2297,7 @@ dependencies = [
  "nineprofs-api-types",
  "nineprofs-assistant",
  "nineprofs-db",
+ "nineprofs-document-tools",
  "nineprofs-documents",
  "nineprofs-mcp",
  "nineprofs-officecli",

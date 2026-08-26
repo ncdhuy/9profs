@@ -50,8 +50,9 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 3A OfficeCLI provider            | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, HTML-to-PNG raster boundary, artifact containment, shared registry provider, status API   | Implemented; real DOCX/XLSX/PPTX production qualification passes       |
 | Phase 3B OfficeCLI detached mutation   | `office.create`, `office.mutate_detached`, writable eligibility, copy-on-write revision transaction, structural validation, HTML-to-PNG render gate, atomic promotion | Implemented; real DOCX/XLSX/PPTX create/mutation qualification passes  |
 | Phase 4A active DOCX GenOffice adapter | `packages/genoffice-adapter/`; active inspection, DocumentVersion, stale-change protection, approved command-envelope gateway, existing Docs command engine           | Implemented; editor-side adapter and focused transaction/version tests |
-| Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, active-document ToolProvider                                                                                              | Future                                                                 |
-| Phase 4C proposal/approval/live commit | Proposal/review/approval UI and live commit workflow                                                                                                                  | Future                                                                 |
+| Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                       | Implemented                                                            |
+| Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                              | Implemented                                                            |
+| Phase 4C2 proposal review/live commit   | Proposal/review/approval UI and trusted live commit workflow                                                                                                          | Future                                                                 |
 | Research/product backend               | No research domain, account/billing backend, or OfficeCLI resident mode                                                                                               | Future                                                                 |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
@@ -242,9 +243,11 @@ AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
-OfficeCLI resident mode, the Rust Core ↔ renderer bridge, active-document
-ToolProvider, proposal/approval UI, Sheets/Slides adapters, research domain,
-conversation/session persistence, and the GenOffice AI bridge.
+OfficeCLI resident mode, proposal/review/approval UI, active-document commit
+approval, Sheets/Slides adapters, research domain, conversation/session
+persistence, and the GenOffice AI bridge. Phase 4C1 ends Agent authority at a
+Core-generated proposed ChangeSet; no Agent tool can create an approved status
+or call the document mutation gateway.
 
 Phase 1B upstream adaptation record: assistant resource/catalog patterns came
 from `crates/aionui-assistant/src/builtin.rs` and `service.rs`; SKILL.md

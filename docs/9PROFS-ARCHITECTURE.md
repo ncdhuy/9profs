@@ -133,7 +133,8 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 3B OfficeCLI detached mutation   | IMPLEMENTED     | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion    |
 | Phase 4A active DOCX GenOffice adapter | IMPLEMENTED     | Active inspection, DocumentVersion/preconditions, stale-change protection, approved mutation gateway, existing Docs command engine reuse |
 | Phase 4B Rust Core ↔ renderer bridge   | IMPLEMENTED     | Active document registry, dedicated bidirectional `/ws/documents`, DOCX inspection proxy, approved mutation proxy, and version synchronization |
-| Phase 4C proposal/approval/live commit | NOT IMPLEMENTED | No active-document proposal, review, or approval UI                                                                                      |
+| Phase 4C1 active-document proposals   | IMPLEMENTED     | `nineprofs-document-tools`, explicit list/inspect/propose tools, ephemeral proposal store, freshness, read-only proposal APIs/events    |
+| Phase 4C2 proposal review/live commit | NOT IMPLEMENTED | No review/diff UI, approval/rejection workflow, confirmation enforcement, or active-document commit tool                            |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
@@ -703,10 +704,35 @@ bidirectional document bridge — IMPLEMENTED; active DOCX inspection proxy —
 IMPLEMENTED; approved mutation proxy — IMPLEMENTED; version synchronization —
 IMPLEMENTED.
 
-### Phase 4C — proposal/approval/live commit (NOT IMPLEMENTED)
+### Phase 4C1 — active-document ToolProvider and proposal store (IMPLEMENTED)
 
-- Add proposal, diff, Accept/Reject, and confirmation UI.
-- Add the active-document Agent ToolProvider and automatic AI commit workflow.
+`nineprofs-document-tools` contributes exactly three explicit tools through the
+existing generic runtime: `document.list_active`, `document.inspect_active`,
+and `document.propose_active_changes`. Active DOCX inspection still proxies
+through `DocumentBridgeService` to the owning GenOffice renderer. Proposal
+creation requires the current registry version and `docs.commandEnvelope`
+payload shape, then Core generates the proposal/change-set ID, proposed status,
+and `genoffice-active` target before storing the immutable proposal in a bounded
+in-memory store. No proposal tool sends a mutation request over
+`/ws/documents`.
+
+The store derives `fresh`, `stale`, and `unavailable` views from the active
+registry without rewriting proposal history. `document.proposalCreated`
+contains only safe metadata. `GET /api/document-proposals` and
+`GET /api/document-proposals/:id` are read-only and support future review UI.
+
+Agent authority ends at the `PROPOSED` ChangeSet. The Agent cannot produce an
+`ApprovedDocumentChangeSet`. Only trusted user-driven application logic may
+transition `proposed` to `approved`. Tool authorization is not document
+mutation approval: the proposal tool has `Write` policy because it writes
+Core-owned runtime proposal state, but it does not write the user document.
+
+### Phase 4C2 — proposal review and live commit (NOT IMPLEMENTED)
+
+- Add proposal panel, diff viewer, Accept/Reject actions, and confirmation UI.
+- Add trusted approval transitions and the existing approved mutation gateway
+  call; never expose active-document commit/apply/approve/reject to the Agent.
+- Keep Sheets and Slides active-document tools deferred.
 
 Sheets and Slides adapters remain future work.
 Final Core desktop process lifecycle and mandatory bridge authentication remain

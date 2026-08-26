@@ -4,10 +4,12 @@ import type {
   AgentBackendDescriptor,
   AgentRequest,
   AgentRun,
+  ActiveDocument,
   AssistantRegistry,
   CoreTransport,
   CreateMcpServerInput,
   McpServer,
+  DocumentProposal,
   SkillProvider,
   ToolProvider,
 } from '../src'
@@ -35,6 +37,20 @@ test('assistant and skill transport boundary stays async and typed', () => {
   >()
   expectTypeOf<CoreTransport['skills']>().returns.toEqualTypeOf<
     Promise<import('../src').CoreSkillCatalog>
+  >()
+})
+
+test('active-document proposal transport stays read-only and typed', () => {
+  expectTypeOf<ActiveDocument>().toMatchTypeOf<{
+    documentId: string
+    availability: import('../src').ActiveDocumentAvailability
+  }>()
+  expectTypeOf<DocumentProposal>().toMatchTypeOf<{
+    status: 'proposed'
+    freshness: import('../src').DocumentProposalFreshness
+  }>()
+  expectTypeOf<CoreTransport['documentProposals']>().returns.toEqualTypeOf<
+    Promise<import('../src').DocumentProposal[]>
   >()
 })
 

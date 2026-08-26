@@ -144,6 +144,38 @@ export interface ToolDefinition {
   readonly enabled: boolean
 }
 
+export type ActiveDocumentAvailability = 'available' | 'unavailable'
+export type DocumentProposalFreshness = 'fresh' | 'stale' | 'unavailable'
+
+export interface ActiveDocument {
+  readonly documentId: string
+  readonly documentType: string
+  readonly authority: string
+  readonly version: number
+  readonly capabilities: readonly string[]
+  readonly availability: ActiveDocumentAvailability
+}
+
+export interface DocumentProposalChange {
+  readonly type: string
+  readonly payload?: unknown
+}
+
+export interface DocumentProposal {
+  readonly proposalId: string
+  readonly changeSetId: string
+  readonly documentId: string
+  readonly authority: string
+  readonly baseVersion: number
+  readonly status: 'proposed'
+  readonly freshness: DocumentProposalFreshness
+  readonly availability: ActiveDocumentAvailability
+  readonly currentVersion: number | null
+  readonly createdAtMs: number
+  readonly summary?: string
+  readonly changes: readonly DocumentProposalChange[]
+}
+
 /** Discovery and resolution boundary for agent tools. MCP is not part of this contract. */
 export interface ToolProvider {
   listTools(): Promise<readonly ToolDefinition[]>
