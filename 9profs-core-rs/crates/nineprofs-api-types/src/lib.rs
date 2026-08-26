@@ -36,10 +36,12 @@ pub use research::{
     CreateResearchSourceRequest, ReferencePdfIngestionDto, ResearchArtifactDto,
     ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto, ResearchClaimDto,
     ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
-    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchHashAlgorithmDto,
-    ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
-    ResearchPdfPageListDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
-    ResearchSourceSnapshotDto,
+    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchExtractionRetrievalIndexDto,
+    ResearchHashAlgorithmDto, ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto,
+    ResearchPdfPageDto, ResearchPdfPageListDto, ResearchRetrievalCandidateDto,
+    ResearchRetrievalIndexDto, ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto,
+    ResearchRetrievalReadinessDto, ResearchSourceDto, ResearchSourceKindDto,
+    ResearchSourceOriginDto, ResearchSourceSnapshotDto, RetrieveResearchRequest,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

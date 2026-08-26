@@ -45,6 +45,11 @@ import type {
   ResearchPdfPage,
   ResearchPdfPageList,
   ResearchPdfPageListOptions,
+  ResearchRetrievalCandidate,
+  ResearchExtractionRetrievalIndex,
+  ResearchRetrievalIndex,
+  ResearchRetrievalIndexState,
+  RetrieveResearchInput,
   ResearchSource,
   ResearchSourceSnapshot,
   ReferencePdfIngestion,
@@ -162,6 +167,16 @@ export interface CoreTransport {
     options?: ResearchPdfPageListOptions,
   ): Promise<ResearchPdfPageList>
   researchPdfPage(extractionId: ResearchPdfExtractionId, page: number): Promise<ResearchPdfPage>
+  researchRetrievalIndex(researchCaseId: ResearchCaseId): Promise<ResearchRetrievalIndexState>
+  ensureResearchRetrievalIndex(researchCaseId: ResearchCaseId): Promise<ResearchRetrievalIndex>
+  syncResearchRetrievalIndex(
+    indexId: string,
+    extractionId: ResearchPdfExtractionId,
+  ): Promise<ResearchExtractionRetrievalIndex>
+  retrieveResearchCase(
+    researchCaseId: ResearchCaseId,
+    input: RetrieveResearchInput,
+  ): Promise<ResearchRetrievalCandidate[]>
   captureResearchPdfEvidence(input: CaptureResearchPdfEvidenceInput): Promise<ResearchEvidence>
   researchEvidence(researchCaseId?: string, sourceSnapshotId?: string): Promise<ResearchEvidence[]>
   researchEvidenceById(id: string): Promise<ResearchEvidence>
@@ -401,6 +416,26 @@ export function createCoreTransport(
     researchPdfPage: (extractionId, page) =>
       get<ResearchPdfPage>(
         `/api/research/pdf-extractions/${encodeURIComponent(extractionId)}/pages/${page}`,
+      ),
+    researchRetrievalIndex: (researchCaseId) =>
+      get<ResearchRetrievalIndexState>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/retrieval-index`,
+      ),
+    ensureResearchRetrievalIndex: (researchCaseId) =>
+      trustedRequest<ResearchRetrievalIndex>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/retrieval-index/dify`,
+        'POST',
+      ),
+    syncResearchRetrievalIndex: (indexId, extractionId) =>
+      trustedRequest<ResearchExtractionRetrievalIndex>(
+        `/api/research/retrieval-indexes/${encodeURIComponent(indexId)}/extractions/${encodeURIComponent(extractionId)}/sync`,
+        'POST',
+      ),
+    retrieveResearchCase: (researchCaseId, input) =>
+      trustedRequest<ResearchRetrievalCandidate[]>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/retrieve`,
+        'POST',
+        { query: input.query, topK: input.topK },
       ),
     captureResearchPdfEvidence: (input) =>
       trustedRequest<ResearchEvidence>('/api/research/pdf-evidence', 'POST', input),

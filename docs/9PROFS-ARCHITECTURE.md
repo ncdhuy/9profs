@@ -904,10 +904,10 @@ loopback-only by deployment convention.
   and safe metadata only, never excerpts, claims, or source contents.
 - Research code has no dependency on Office mutation or document persistence.
 
-Still future: Dify, OCR, chunking, embeddings,
-vector/RAG, citation verification, manuscript claim extraction, Sheets/data
-verification, research UI, field methodology bundles, and research ToolProvider
-exposure. Future adapters consume this domain; they do not replace it.
+Still future: OCR, layout/image understanding, citation verification,
+manuscript claim extraction, Sheets/data verification, research UI, field
+methodology bundles, and research ToolProvider exposure. Future adapters
+consume this domain; they do not replace it.
 
 #### Phase 5B1 — canonical reference-PDF ingestion (IMPLEMENTED)
 
@@ -943,10 +943,19 @@ exposure. Future adapters consume this domain; they do not replace it.
   metadata, and bounded page reads without exposing filesystem paths or source
   contents in lifecycle events.
 
-Phase 5B2 remains future: OCR, layout/image understanding, chunking, embeddings,
-vector/RAG, citation verification, Dify integration, research UI, and agent
-research tools. Phase 5C remains future: manuscript claim extraction and
-cross-source verification.
+Phase 5B2 is implemented as `nineprofs-research-dify`. It provisions one
+rebuildable Dify dataset per `ResearchCase`, indexes deterministic
+`pdf-page-v1` chunks pinned to one exact `ExtractionId`, persists remote
+segment IDs locally, and resolves retrieval hits back to immutable local page
+ranges. Dify text is never canonical evidence; retrieval returns candidates and
+does not create `ResearchEvidence`. Dify credentials are launch-scoped and are
+configured with `NINEPROFS_DIFY_BASE_URL`, `NINEPROFS_DIFY_API_KEY`, and the
+optional `NINEPROFS_DIFY_TIMEOUT_MS`; the key is never persisted, serialized,
+logged, or emitted in events.
+
+Still future: OCR, layout/image understanding, citation verification, research
+UI, and agent research tools. Phase 5C remains future: manuscript claim
+extraction and cross-source verification.
 
 ### Phase 6 — product/SaaS layer
 

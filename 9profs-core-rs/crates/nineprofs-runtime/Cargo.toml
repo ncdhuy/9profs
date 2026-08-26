@@ -18,6 +18,7 @@ nineprofs-mcp = { path = "../nineprofs-mcp" }
 nineprofs-officecli = { path = "../nineprofs-officecli" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
 nineprofs-research = { path = "../nineprofs-research" }
+nineprofs-research-dify = { path = "../nineprofs-research-dify" }
 nineprofs-skills = { path = "../nineprofs-skills" }
 nineprofs-tools = { path = "../nineprofs-tools" }
 serde.workspace = true

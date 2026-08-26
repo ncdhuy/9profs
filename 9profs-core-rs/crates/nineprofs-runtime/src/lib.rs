@@ -23,6 +23,7 @@ use nineprofs_officecli::{
 };
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
+use nineprofs_research_dify::{DifyConfig, DifyResearchService};
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
@@ -50,6 +51,8 @@ pub struct RuntimeConfig {
     pub custom_skill_roots: Vec<PathBuf>,
     /// Reserved launch-scoped secret. Authentication is intentionally not enabled in Phase 1A.
     pub session_secret: Option<Arc<str>>,
+    /// Launch-scoped Dify credentials. Never persisted or exposed through DTOs.
+    pub dify: Option<DifyConfig>,
 }
 
 impl Default for RuntimeConfig {
@@ -62,6 +65,7 @@ impl Default for RuntimeConfig {
             event_capacity: 256,
             custom_skill_roots: Vec::new(),
             session_secret: None,
+            dify: None,
         }
     }
 }
@@ -84,6 +88,7 @@ impl RuntimeConfig {
                 config.session_secret = Some(Arc::from(value));
             }
         }
+        config.dify = DifyConfig::from_env();
         if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
             config.custom_skill_roots = value
                 .split(';')
@@ -113,6 +118,8 @@ pub enum RuntimeError {
     AgentRegistry(#[from] AgentRegistryError),
     #[error(transparent)]
     Mcp(#[from] McpError),
+    #[error(transparent)]
+    Dify(#[from] nineprofs_research_dify::DifyError),
     #[error("tool registry initialization failed: {0}")]
     ToolRegistry(String),
 }
@@ -134,6 +141,7 @@ pub struct CoreRuntime {
     mcp_service: Arc<McpService>,
     officecli_runner: Arc<OfficeCliRunner>,
     research_service: Arc<ResearchService>,
+    dify_service: Arc<DifyResearchService>,
 }
 
 impl CoreRuntime {
@@ -164,6 +172,12 @@ impl CoreRuntime {
             )
             .with_artifact_store(artifact_store),
         );
+        let dify_service = Arc::new(DifyResearchService::new(
+            database.pool().clone(),
+            Arc::clone(&research_service),
+            Arc::clone(&event_bus),
+            config.dify.clone(),
+        )?);
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),
@@ -254,6 +268,7 @@ impl CoreRuntime {
             mcp_service,
             officecli_runner,
             research_service,
+            dify_service,
         })
     }
 
@@ -341,6 +356,10 @@ impl CoreRuntime {
 
     pub fn research_service(&self) -> Arc<ResearchService> {
         Arc::clone(&self.research_service)
+    }
+
+    pub fn dify_service(&self) -> Arc<DifyResearchService> {
+        Arc::clone(&self.dify_service)
     }
 
     pub async fn resolve_assistant_backend(

@@ -23,11 +23,13 @@ use nineprofs_api_types::{
     McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
     ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto, ResearchClaimDto,
     ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
-    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchHashAlgorithmDto,
-    ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
-    ResearchPdfPageListDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
-    ResearchSourceSnapshotDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
-    UpdateAssistantRequest, UpdateMcpServerRequest,
+    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchExtractionRetrievalIndexDto,
+    ResearchHashAlgorithmDto, ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto,
+    ResearchPdfPageDto, ResearchPdfPageListDto, ResearchRetrievalCandidateDto,
+    ResearchRetrievalIndexDto, ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto,
+    ResearchRetrievalReadinessDto, ResearchSourceDto, ResearchSourceKindDto,
+    ResearchSourceOriginDto, ResearchSourceSnapshotDto, RetrieveResearchRequest, RuntimeInfo,
+    SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -47,6 +49,10 @@ use nineprofs_research::{
     EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim, ResearchError, ResearchEvidence,
     ResearchPdfExtraction, ResearchPdfPage, ResearchPdfPageBatch, ResearchSource,
     ResearchSourceSnapshot, SourceKind, SourceOrigin,
+};
+use nineprofs_research_dify::{
+    DifyCaseIndex, DifyError, DifyExtractionIndex, DifyIndexStatus, DifyReadiness,
+    RetrievalCandidate, RetrievalIndexState,
 };
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
@@ -1091,6 +1097,22 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             "/api/research/claim-evidence/{id}",
             get(get_claim_evidence_link),
         )
+        .route(
+            "/api/research/cases/{id}/retrieval-index",
+            get(get_research_retrieval_index),
+        )
+        .route(
+            "/api/research/cases/{id}/retrieval-index/dify",
+            post(ensure_research_retrieval_index),
+        )
+        .route(
+            "/api/research/retrieval-indexes/{index_id}/extractions/{extraction_id}/sync",
+            post(sync_research_retrieval_index),
+        )
+        .route(
+            "/api/research/cases/{id}/retrieve",
+            post(retrieve_research_case),
+        )
         .route("/ws", get(websocket))
         .route("/ws/documents", get(document_websocket))
         .with_state(state)
@@ -1365,6 +1387,7 @@ enum ApiError {
     ConversationNotFound(String),
     ProposalWorkflow(ProposalWorkflowError),
     Research(ResearchError),
+    Dify(DifyError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -1402,6 +1425,12 @@ impl From<ProposalWorkflowError> for ApiError {
 impl From<ResearchError> for ApiError {
     fn from(error: ResearchError) -> Self {
         Self::Research(error)
+    }
+}
+
+impl From<DifyError> for ApiError {
+    fn from(error: DifyError) -> Self {
+        Self::Dify(error)
     }
 }
 
@@ -1493,6 +1522,25 @@ impl IntoResponse for ApiError {
                     error.to_string(),
                 ),
             },
+            Self::Dify(error) => {
+                let status = match error {
+                    DifyError::Invalid(_) => StatusCode::BAD_REQUEST,
+                    DifyError::NotConfigured => StatusCode::SERVICE_UNAVAILABLE,
+                    DifyError::Unauthorized => StatusCode::BAD_GATEWAY,
+                    DifyError::RemoteNotFound => StatusCode::NOT_FOUND,
+                    DifyError::IndexDrift | DifyError::Integrity | DifyError::IndexingFailed => {
+                        StatusCode::CONFLICT
+                    }
+                    DifyError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+                    DifyError::Unreachable
+                    | DifyError::ProviderNotInitialized
+                    | DifyError::Timeout
+                    | DifyError::MalformedResponse
+                    | DifyError::Database(_)
+                    | DifyError::Research(_) => StatusCode::BAD_GATEWAY,
+                };
+                (status, "dify_error", error.to_string())
+            }
             Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
@@ -2504,6 +2552,62 @@ async fn create_claim_evidence_link(
     Ok(axum::Json(ApiResponse::ok(claim_evidence_link_dto(link))))
 }
 
+async fn get_research_retrieval_index(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchRetrievalIndexStateDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        research_retrieval_index_state_dto(state.runtime.dify_service().state(&id).await?),
+    )))
+}
+
+async fn ensure_research_retrieval_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchRetrievalIndexDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    Ok(axum::Json(ApiResponse::ok(research_retrieval_index_dto(
+        state.runtime.dify_service().ensure_case_index(&id).await?,
+    ))))
+}
+
+async fn sync_research_retrieval_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((index_id, extraction_id)): Path<(String, String)>,
+) -> Result<axum::Json<ApiResponse<ResearchExtractionRetrievalIndexDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    Ok(axum::Json(ApiResponse::ok(
+        research_extraction_retrieval_index_dto(
+            state
+                .runtime
+                .dify_service()
+                .sync_extraction(&index_id, &extraction_id)
+                .await?,
+        ),
+    )))
+}
+
+async fn retrieve_research_case(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    axum::Json(request): axum::Json<RetrieveResearchRequest>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchRetrievalCandidateDto>>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .dify_service()
+            .retrieve(&id, &request.query, request.top_k.unwrap_or(10))
+            .await?
+            .into_iter()
+            .map(research_retrieval_candidate_dto)
+            .collect(),
+    )))
+}
+
 fn header_text(headers: &HeaderMap, name: &str) -> Result<Option<String>, ApiError> {
     headers
         .get(name)
@@ -2580,6 +2684,85 @@ fn research_pdf_page_list_dto(value: ResearchPdfPageBatch) -> ResearchPdfPageLis
         limit,
         has_more,
         next_start_page,
+    }
+}
+
+fn research_retrieval_index_state_dto(
+    value: RetrievalIndexState,
+) -> ResearchRetrievalIndexStateDto {
+    ResearchRetrievalIndexStateDto {
+        readiness: research_retrieval_readiness_dto(value.readiness),
+        case_index: value.case_index.map(research_retrieval_index_dto),
+        extraction_indexes: value
+            .extraction_indexes
+            .into_iter()
+            .map(research_extraction_retrieval_index_dto)
+            .collect(),
+    }
+}
+
+fn research_retrieval_readiness_dto(value: DifyReadiness) -> ResearchRetrievalReadinessDto {
+    ResearchRetrievalReadinessDto {
+        provider: value.provider.to_owned(),
+        qualification_target: value.qualification_target.to_owned(),
+        configured: value.configured,
+    }
+}
+
+fn research_retrieval_index_dto(value: DifyCaseIndex) -> ResearchRetrievalIndexDto {
+    ResearchRetrievalIndexDto {
+        index_id: value.index_id,
+        research_case_id: value.research_case_id,
+        dataset_id: value.dataset_id,
+        status: dify_index_status_dto(value.status),
+        failure_code: value.failure_code,
+        created_at_ms: value.created_at_ms,
+        updated_at_ms: value.updated_at_ms,
+    }
+}
+
+fn research_extraction_retrieval_index_dto(
+    value: DifyExtractionIndex,
+) -> ResearchExtractionRetrievalIndexDto {
+    ResearchExtractionRetrievalIndexDto {
+        index_id: value.index_id,
+        case_index_id: value.case_index_id,
+        research_case_id: value.research_case_id,
+        extraction_id: value.extraction_id,
+        source_snapshot_id: value.source_snapshot_id,
+        document_id: value.document_id,
+        chunker_version: value.chunker_version,
+        status: dify_index_status_dto(value.status),
+        failure_code: value.failure_code,
+        created_at_ms: value.created_at_ms,
+        updated_at_ms: value.updated_at_ms,
+    }
+}
+
+fn research_retrieval_candidate_dto(value: RetrievalCandidate) -> ResearchRetrievalCandidateDto {
+    ResearchRetrievalCandidateDto {
+        retrieval_chunk_id: value.retrieval_chunk_id,
+        research_source_id: value.research_source_id,
+        source_snapshot_id: value.source_snapshot_id,
+        extraction_id: value.extraction_id,
+        page: value.page,
+        start: value.start,
+        end: value.end,
+        verbatim_excerpt: value.verbatim_excerpt,
+        retrieval_score: value.retrieval_score,
+        provider: value.provider.to_owned(),
+        rank: value.rank,
+    }
+}
+
+fn dify_index_status_dto(value: DifyIndexStatus) -> ResearchRetrievalIndexStatusDto {
+    match value {
+        DifyIndexStatus::NotConfigured => ResearchRetrievalIndexStatusDto::NotConfigured,
+        DifyIndexStatus::Provisioning => ResearchRetrievalIndexStatusDto::Provisioning,
+        DifyIndexStatus::Ready => ResearchRetrievalIndexStatusDto::Ready,
+        DifyIndexStatus::Syncing => ResearchRetrievalIndexStatusDto::Syncing,
+        DifyIndexStatus::Failed => ResearchRetrievalIndexStatusDto::Failed,
+        DifyIndexStatus::Degraded => ResearchRetrievalIndexStatusDto::Degraded,
     }
 }
 

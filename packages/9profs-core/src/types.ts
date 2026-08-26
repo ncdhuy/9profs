@@ -447,6 +447,69 @@ export interface ResearchPdfPageListOptions {
   readonly limit?: number
 }
 
+export type ResearchRetrievalIndexStatus =
+  | 'not_configured'
+  | 'provisioning'
+  | 'ready'
+  | 'syncing'
+  | 'failed'
+  | 'degraded'
+
+export interface ResearchRetrievalReadiness {
+  readonly provider: string
+  readonly qualificationTarget: string
+  readonly configured: boolean
+}
+
+export interface ResearchRetrievalIndex {
+  readonly indexId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly datasetId: string
+  readonly status: ResearchRetrievalIndexStatus
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly updatedAtMs: number
+}
+
+export interface ResearchExtractionRetrievalIndex {
+  readonly indexId: string
+  readonly caseIndexId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly extractionId: ResearchPdfExtractionId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly documentId: string | null
+  readonly chunkerVersion: string
+  readonly status: ResearchRetrievalIndexStatus
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly updatedAtMs: number
+}
+
+export interface ResearchRetrievalIndexState {
+  readonly readiness: ResearchRetrievalReadiness
+  readonly caseIndex: ResearchRetrievalIndex | null
+  readonly extractionIndexes: readonly ResearchExtractionRetrievalIndex[]
+}
+
+export interface ResearchRetrievalCandidate {
+  readonly retrievalChunkId: string
+  readonly researchSourceId: ResearchSourceId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly extractionId: ResearchPdfExtractionId
+  readonly page: number
+  readonly start: number
+  readonly end: number
+  readonly verbatimExcerpt: string
+  readonly retrievalScore: number
+  readonly provider: string
+  readonly rank: number
+}
+
+export interface RetrieveResearchInput {
+  readonly query: string
+  readonly topK?: number
+}
+
 export interface ReferencePdfIngestion {
   readonly artifact: ResearchArtifact
   readonly source: ResearchSource

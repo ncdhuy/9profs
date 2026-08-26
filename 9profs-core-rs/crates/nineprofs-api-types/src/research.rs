@@ -346,3 +346,81 @@ pub struct CreateClaimEvidenceLinkRequest {
     #[serde(default)]
     pub assessment_metadata: BTreeMap<String, String>,
 }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchRetrievalIndexStatusDto {
+    NotConfigured,
+    Provisioning,
+    Ready,
+    Syncing,
+    Failed,
+    Degraded,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchRetrievalReadinessDto {
+    pub provider: String,
+    pub qualification_target: String,
+    pub configured: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchRetrievalIndexDto {
+    pub index_id: String,
+    pub research_case_id: String,
+    pub dataset_id: String,
+    pub status: ResearchRetrievalIndexStatusDto,
+    pub failure_code: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchExtractionRetrievalIndexDto {
+    pub index_id: String,
+    pub case_index_id: String,
+    pub research_case_id: String,
+    pub extraction_id: String,
+    pub source_snapshot_id: String,
+    pub document_id: Option<String>,
+    pub chunker_version: String,
+    pub status: ResearchRetrievalIndexStatusDto,
+    pub failure_code: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchRetrievalIndexStateDto {
+    pub readiness: ResearchRetrievalReadinessDto,
+    pub case_index: Option<ResearchRetrievalIndexDto>,
+    pub extraction_indexes: Vec<ResearchExtractionRetrievalIndexDto>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetrieveResearchRequest {
+    pub query: String,
+    pub top_k: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchRetrievalCandidateDto {
+    pub retrieval_chunk_id: String,
+    pub research_source_id: String,
+    pub source_snapshot_id: String,
+    pub extraction_id: String,
+    pub page: u32,
+    pub start: u64,
+    pub end: u64,
+    pub verbatim_excerpt: String,
+    pub retrieval_score: f64,
+    pub provider: String,
+    pub rank: u32,
+}
