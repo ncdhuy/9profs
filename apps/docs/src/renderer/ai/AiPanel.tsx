@@ -30,6 +30,8 @@ import fileVoiceIcon from '../assets/file-voice.png'
 import fileDocumentIcon from '../assets/file-document.png'
 import fileGeneralIcon from '../assets/file-general.png'
 import { IconNewChat, IconSidebarCollapse } from '../components/icons'
+import { ProposalReview } from './ProposalReview'
+import type { CoreTransport } from '@genoffice/9profs-core'
 
 interface ToolActivity {
   name: string
@@ -262,6 +264,9 @@ interface AiPanelProps {
   onCollapse?: () => void
   /** Absolute path of the currently open file (used for chat-history persistence) */
   filePath?: string | null
+  /** Core-owned proposal review transport for the active document only. */
+  documentId?: string
+  coreTransport?: CoreTransport | null
 }
 
 export function AiPanel({
@@ -275,6 +280,8 @@ export function AiPanel({
   onExpand,
   onCollapse,
   filePath,
+  documentId,
+  coreTransport,
 }: AiPanelProps) {
   const { t } = useI18n()
   const [input, setInput] = useState('')
@@ -975,6 +982,8 @@ export function AiPanel({
           )}
         </div>
       </div>
+
+      <ProposalReview documentId={documentId} transport={coreTransport} />
 
       <div ref={logRef} className="ai-chat" onScroll={onLogScroll}>
         {/* past conversation (read-only transcript, not fed to the model), shown continuously with the current turn */}

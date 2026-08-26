@@ -146,6 +146,13 @@ export interface ToolDefinition {
 
 export type ActiveDocumentAvailability = 'available' | 'unavailable'
 export type DocumentProposalFreshness = 'fresh' | 'stale' | 'unavailable'
+export type DocumentProposalStatus =
+  | 'proposed'
+  | 'applying'
+  | 'applied'
+  | 'conflict'
+  | 'failed'
+  | 'rejected'
 
 export interface ActiveDocument {
   readonly documentId: string
@@ -167,13 +174,17 @@ export interface DocumentProposal {
   readonly documentId: string
   readonly authority: string
   readonly baseVersion: number
-  readonly status: 'proposed'
+  readonly status: DocumentProposalStatus
   readonly freshness: DocumentProposalFreshness
   readonly availability: ActiveDocumentAvailability
   readonly currentVersion: number | null
   readonly createdAtMs: number
   readonly summary?: string
   readonly changes: readonly DocumentProposalChange[]
+  readonly decision?: unknown
+  readonly outcome?: unknown
+  readonly failure?: string
+  readonly retryable: boolean
 }
 
 /** Discovery and resolution boundary for agent tools. MCP is not part of this contract. */

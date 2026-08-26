@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::{Path, Query, State, WebSocketUpgrade},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -17,7 +17,10 @@ use nineprofs_api_types::{
     UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
-use nineprofs_document_tools::{DocumentProposalView, ProposalAvailability, ProposalFreshness};
+use nineprofs_document_tools::{
+    DocumentProposalView, ProposalAvailability, ProposalFreshness, ProposalStoreError,
+    ProposalWorkflowError,
+};
 use nineprofs_documents::ActiveDocumentDescriptor;
 use nineprofs_mcp::{
     CreateMcpServer, McpError, McpServerSnapshot, McpTransportConfig, McpTransportSummary,
@@ -317,6 +320,54 @@ mod document_proposal_api_tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    #[tokio::test]
+    async fn trusted_decision_endpoints_require_session_secret_without_echoing_it() {
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.session_secret = Some(Arc::from("approval-test-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let router = build_router(runtime);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/document-proposals/missing/reject")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/document-proposals/missing/reject")
+                    .header(TRUSTED_DECISION_HEADER, "wrong-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .oneshot(
+                Request::post("/api/document-proposals/missing/reject")
+                    .header(TRUSTED_DECISION_HEADER, "approval-test-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            !String::from_utf8(body.to_vec())
+                .unwrap()
+                .contains("approval-test-secret")
+        );
+    }
 }
 
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
@@ -328,6 +379,18 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/documents/{id}", get(get_document))
         .route("/api/document-proposals", get(list_document_proposals))
         .route("/api/document-proposals/{id}", get(get_document_proposal))
+        .route(
+            "/api/document-proposals/{id}/approve",
+            post(approve_document_proposal),
+        )
+        .route(
+            "/api/document-proposals/{id}/reject",
+            post(reject_document_proposal),
+        )
+        .route(
+            "/api/document-proposals/{id}/retry",
+            post(retry_document_proposal),
+        )
         .route("/api/officecli/status", get(officecli_status))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
@@ -516,7 +579,107 @@ fn document_proposal_dto(proposal: DocumentProposalView) -> DocumentProposalDto 
                 payload: change.payload,
             })
             .collect(),
+        decision: proposal.decision,
+        outcome: proposal
+            .outcome
+            .and_then(|outcome| serde_json::to_value(outcome).ok()),
+        failure: proposal.failure,
+        retryable: proposal.retryable,
     }
+}
+
+const TRUSTED_DECISION_HEADER: &str = "x-nineprofs-session-secret";
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrustedDecisionRequest {
+    #[serde(default)]
+    note: Option<String>,
+}
+
+fn authorize_trusted_decision(
+    headers: &HeaderMap,
+    config: &nineprofs_runtime::RuntimeConfig,
+) -> Result<(), ApiError> {
+    match config.session_secret.as_deref() {
+        Some(expected) => {
+            let provided = headers
+                .get(TRUSTED_DECISION_HEADER)
+                .and_then(|value| value.to_str().ok());
+            if !constant_time_secret_eq(expected, provided) {
+                return Err(ApiError::Unauthorized);
+            }
+        }
+        None if !config.bind_addr.ip().is_loopback() => return Err(ApiError::Unauthorized),
+        None => {}
+    }
+    Ok(())
+}
+
+fn constant_time_secret_eq(expected: &str, provided: Option<&str>) -> bool {
+    let Some(provided) = provided else {
+        return false;
+    };
+    let left = expected.as_bytes();
+    let right = provided.as_bytes();
+    let mut difference = left.len() ^ right.len();
+    for index in 0..left.len().max(right.len()) {
+        difference |= usize::from(left.get(index).copied().unwrap_or_default())
+            ^ usize::from(right.get(index).copied().unwrap_or_default());
+    }
+    difference == 0
+}
+
+fn decision_note(
+    body: Option<axum::Json<TrustedDecisionRequest>>,
+) -> Result<Option<String>, ApiError> {
+    let note = body.map(|payload| payload.0.note).flatten();
+    if note.as_ref().is_some_and(|value| value.len() > 4096) {
+        return Err(ApiError::InvalidRequest(
+            "decision note exceeds 4096 bytes".to_owned(),
+        ));
+    }
+    Ok(note)
+}
+
+async fn approve_document_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Option<axum::Json<TrustedDecisionRequest>>,
+) -> Result<axum::Json<ApiResponse<DocumentProposalDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let proposal = state
+        .runtime
+        .document_workflow()
+        .approve(&id, decision_note(body)?)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(document_proposal_dto(proposal))))
+}
+
+async fn reject_document_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Option<axum::Json<TrustedDecisionRequest>>,
+) -> Result<axum::Json<ApiResponse<DocumentProposalDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let proposal = state
+        .runtime
+        .document_workflow()
+        .reject(&id, decision_note(body)?)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(document_proposal_dto(proposal))))
+}
+
+async fn retry_document_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<axum::Json<ApiResponse<DocumentProposalDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let proposal = state.runtime.document_workflow().retry(&id).await?;
+    Ok(axum::Json(ApiResponse::ok(document_proposal_dto(proposal))))
 }
 
 #[derive(Debug)]
@@ -530,6 +693,9 @@ enum ApiError {
     RunNotFound(String),
     DocumentNotFound(String),
     DocumentProposalNotFound(String),
+    ProposalWorkflow(ProposalWorkflowError),
+    InvalidRequest(String),
+    Unauthorized,
 }
 
 impl From<AssistantError> for ApiError {
@@ -553,6 +719,12 @@ impl From<McpError> for ApiError {
 impl From<nineprofs_agent::AgentTaskManagerError> for ApiError {
     fn from(error: nineprofs_agent::AgentTaskManagerError) -> Self {
         Self::Task(error)
+    }
+}
+
+impl From<ProposalWorkflowError> for ApiError {
+    fn from(error: ProposalWorkflowError) -> Self {
+        Self::ProposalWorkflow(error)
     }
 }
 
@@ -583,6 +755,50 @@ impl IntoResponse for ApiError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 format!("document proposal not found: {id}"),
+            ),
+            Self::ProposalWorkflow(error) => match error {
+                ProposalWorkflowError::Store(ProposalStoreError::NotFound(id)) => (
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    format!("document proposal not found: {id}"),
+                ),
+                ProposalWorkflowError::Store(ProposalStoreError::InvalidState {
+                    proposal_id,
+                    action,
+                    status,
+                }) => (
+                    StatusCode::CONFLICT,
+                    "proposal_state_conflict",
+                    format!(
+                        "document proposal {proposal_id} cannot be {action} from status {status}"
+                    ),
+                ),
+                ProposalWorkflowError::Stale { requested, current } => (
+                    StatusCode::CONFLICT,
+                    "proposal_stale",
+                    format!(
+                        "active document version is stale: requested {requested}, current {current}"
+                    ),
+                ),
+                ProposalWorkflowError::Unavailable(id) => (
+                    StatusCode::CONFLICT,
+                    "proposal_unavailable",
+                    format!("active document is unavailable: {id}"),
+                ),
+                ProposalWorkflowError::UnsupportedDocument(message) => {
+                    (StatusCode::CONFLICT, "proposal_unsupported", message)
+                }
+                ProposalWorkflowError::Store(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    error.to_string(),
+                ),
+            },
+            Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "trusted document decision authentication required".to_owned(),
             ),
             Self::Task(error) => (
                 if matches!(error, nineprofs_agent::AgentTaskManagerError::NotFound(_)) {

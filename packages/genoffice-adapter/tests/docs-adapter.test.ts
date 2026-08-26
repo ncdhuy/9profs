@@ -16,9 +16,10 @@ function approved(
       payload: { commands: [{ replaceAllText: { containsText: 'old', replaceText: 'new' } }] },
     },
   ],
+  id = 'change-set-1',
 ) {
   return {
-    id: 'change-set-1',
+    id,
     status: 'approved' as const,
     target: { kind: 'genoffice-active' as const, documentId, writeAuthority: 'genoffice' as const },
     baseVersion,
@@ -109,6 +110,36 @@ describe('GenOffice active Docs adapter', () => {
     expect(h.calls).toHaveLength(1)
     expect(h.calls[0].commands).toEqual([{ first: {} }, { second: {} }])
     expect(h.calls[0].context).toEqual({ track: { author: '9Profs AI' } })
+    h.adapter.dispose()
+  })
+
+  it('replays an applied change set without dispatching it twice', async () => {
+    const h = harness()
+    const changeSet = approved('doc-1', 0)
+    const first = await h.adapter.mutationGateway.commit(changeSet)
+    const second = await h.adapter.mutationGateway.commit(changeSet)
+
+    expect(second).toEqual(first)
+    expect(h.calls).toHaveLength(1)
+    await expect(
+      h.adapter.mutationGateway.commit({ ...changeSet, baseVersion: 1 }),
+    ).rejects.toMatchObject({ code: 'change-set-reuse' })
+    h.adapter.dispose()
+  })
+
+  it('bounds the successful result cache while keeping independent IDs executable', async () => {
+    const h = harness()
+    h.setOutcome({ ok: true, results: [{ changed: 0 }], summary: 'no changes' })
+    for (let index = 0; index < 65; index += 1) {
+      await h.adapter.mutationGateway.commit(
+        approved('doc-1', 0, [], `change-set-${index}`),
+      )
+    }
+
+    expect(h.calls).toHaveLength(65)
+    await h.adapter.mutationGateway.commit(approved('doc-1', 0, [], 'change-set-0'))
+    expect(h.calls).toHaveLength(66)
+    expect((await h.adapter.inspector.inspect({ documentId: 'doc-1' })).version).toBe(0)
     h.adapter.dispose()
   })
 

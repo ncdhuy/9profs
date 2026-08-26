@@ -48,6 +48,10 @@ export interface CoreRequestInit {
   body?: string
 }
 
+export interface CoreTransportOptions {
+  readonly sessionSecret?: string
+}
+
 export type CoreFetch = (
   input: string,
   init?: CoreRequestInit,
@@ -69,6 +73,9 @@ export interface CoreTransport {
   activeDocument(id: string): Promise<ActiveDocument>
   documentProposals(documentId?: string): Promise<DocumentProposal[]>
   documentProposal(id: string): Promise<DocumentProposal>
+  approveDocumentProposal(id: string, note?: string): Promise<DocumentProposal>
+  rejectDocumentProposal(id: string, note?: string): Promise<DocumentProposal>
+  retryDocumentProposal(id: string): Promise<DocumentProposal>
   assistants(): Promise<CoreAssistant[]>
   assistant(id: AssistantId): Promise<CoreAssistant>
   createAssistant(input: CreateAssistantInput): Promise<CoreAssistant>
@@ -89,7 +96,11 @@ export interface CoreTransport {
   websocketUrl(): string
 }
 
-export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTransport {
+export function createCoreTransport(
+  baseUrl: string,
+  fetcher: CoreFetch,
+  options: CoreTransportOptions = {},
+): CoreTransport {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
 
   async function get<T>(path: string): Promise<T> {
@@ -106,6 +117,25 @@ export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTr
     const response = await fetcher(`${normalizedBaseUrl}${path}`, {
       method,
       headers: value === undefined ? undefined : { 'content-type': 'application/json' },
+      body: value === undefined ? undefined : JSON.stringify(value),
+    })
+    if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
+
+    const body = (await response.json()) as CoreResponse<T>
+    if (!body.success || body.data === undefined)
+      throw new Error(`9Profs Core response failed: ${path}`)
+    return body.data
+  }
+
+  async function trustedRequest<T>(path: string, method: string, value?: unknown): Promise<T> {
+    const headers: Record<string, string> = {}
+    if (value !== undefined) headers['content-type'] = 'application/json'
+    if (options.sessionSecret !== undefined) {
+      headers['x-nineprofs-session-secret'] = options.sessionSecret
+    }
+    const response = await fetcher(`${normalizedBaseUrl}${path}`, {
+      method,
+      headers: Object.keys(headers).length === 0 ? undefined : headers,
       body: value === undefined ? undefined : JSON.stringify(value),
     })
     if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
@@ -136,6 +166,23 @@ export function createCoreTransport(baseUrl: string, fetcher: CoreFetch): CoreTr
       ),
     documentProposal: (id) =>
       get<DocumentProposal>(`/api/document-proposals/${encodeURIComponent(id)}`),
+    approveDocumentProposal: (id, note) =>
+      trustedRequest<DocumentProposal>(
+        `/api/document-proposals/${encodeURIComponent(id)}/approve`,
+        'POST',
+        note === undefined ? undefined : { note },
+      ),
+    rejectDocumentProposal: (id, note) =>
+      trustedRequest<DocumentProposal>(
+        `/api/document-proposals/${encodeURIComponent(id)}/reject`,
+        'POST',
+        note === undefined ? undefined : { note },
+      ),
+    retryDocumentProposal: (id) =>
+      trustedRequest<DocumentProposal>(
+        `/api/document-proposals/${encodeURIComponent(id)}/retry`,
+        'POST',
+      ),
     assistants: () => get<CoreAssistant[]>('/api/assistants'),
     assistant: (id) => get<CoreAssistant>(`/api/assistants/${encodeURIComponent(id)}`),
     createAssistant: (input) => request<CoreAssistant>('/api/assistants', 'POST', input),

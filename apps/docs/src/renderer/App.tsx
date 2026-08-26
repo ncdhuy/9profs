@@ -18,6 +18,7 @@ import {
   GenOfficeDocsBridgeClient,
   type GenOfficeDocsAdapter,
 } from '@genoffice/genoffice-adapter'
+import { createCoreTransport, type CoreTransport } from '@genoffice/9profs-core'
 import { markdownPasteHtml } from './editor/markdown-paste'
 import {
   BLANK_BULLET_NUM_ID,
@@ -395,6 +396,7 @@ export function App() {
   const presentationTransactionCountRef = useRef(0)
   const [settings, setSettings] = useState<AiSettings>(DEFAULT_SETTINGS)
   const [showAi, setShowAi] = useState(() => localStorage.getItem('aidocs.showAi') !== '0')
+  const [coreTransport, setCoreTransport] = useState<CoreTransport | null>(null)
   /** Increments on every open/new document: AiPanel remounts by key to reset the conversation and history (save path changes don't bump it, so the session continues) */
   const [aiPanelKey, setAiPanelKey] = useState(0)
   const [ribbonTabRequest, setRibbonTabRequest] = useState<{ tab: string; nonce: number } | null>(
@@ -792,8 +794,10 @@ export function App() {
   useEffect(() => {
     if (!editor || !doc?.documentId) {
       activeDocsAdapterRef.current = null
+      setCoreTransport(null)
       return
     }
+    setCoreTransport(null)
     const adapter = createGenOfficeDocsAdapter({
       documentId: doc.documentId,
       runtime: {
@@ -824,22 +828,45 @@ export function App() {
     activeDocsAdapterRef.current = adapter
     let disposed = false
     let bridge: GenOfficeDocsBridgeClient | null = null
-    void window.desktop.getCoreBridgeConfig().then((config) => {
-      if (disposed || !config.websocketUrl) return
-      bridge = new GenOfficeDocsBridgeClient({
-        adapter,
-        websocketUrl: config.websocketUrl,
-        sessionSecret: config.sessionSecret,
+    void window.desktop
+      .getCoreBridgeConfig()
+      .then((config) => {
+        if (disposed) return
+        if (config.httpBaseUrl) {
+          setCoreTransport(
+            createCoreTransport(
+              config.httpBaseUrl,
+              async (input, init) => {
+                const response = await fetch(input, {
+                  method: init?.method,
+                  headers: init?.headers,
+                  body: init?.body,
+                })
+                return { ok: response.ok, json: () => response.json() }
+              },
+              { sessionSecret: config.sessionSecret },
+            ),
+          )
+        }
+        if (!config.websocketUrl) return
+        bridge = new GenOfficeDocsBridgeClient({
+          adapter,
+          websocketUrl: config.websocketUrl,
+          sessionSecret: config.sessionSecret,
+        })
+        activeDocsBridgeRef.current = bridge
+        bridge.connect()
       })
-      activeDocsBridgeRef.current = bridge
-      bridge.connect()
-    })
+      .catch(() => {
+        if (!disposed) setCoreTransport(null)
+      })
     return () => {
       disposed = true
       bridge?.dispose()
       if (activeDocsBridgeRef.current === bridge) activeDocsBridgeRef.current = null
       adapter.dispose()
       if (activeDocsAdapterRef.current === adapter) activeDocsAdapterRef.current = null
+      setCoreTransport(null)
     }
   }, [doc?.documentId, editor])
 
@@ -3801,6 +3828,8 @@ export function App() {
               onExpand={() => setShowAi(true)}
               onCollapse={() => setShowAi(false)}
               filePath={doc?.filePath ?? null}
+              documentId={doc.documentId}
+              coreTransport={coreTransport}
             />
           </div>
         )}

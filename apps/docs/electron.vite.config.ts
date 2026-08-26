@@ -6,6 +6,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 // node_modules is a symlink into the main checkout, so bare specifiers would
 // silently bundle the other checkout's (possibly stale) code.
 const localAlias = {
+  '@genoffice/9profs-core': resolve(__dirname, '../../packages/9profs-core/src/index.ts'),
   '@genoffice/docx-engine': resolve(__dirname, '../../packages/docx-engine/src/index.ts'),
   '@genoffice/document-gateway': resolve(__dirname, '../../packages/document-gateway/src/index.ts'),
   '@genoffice/genoffice-adapter': resolve(

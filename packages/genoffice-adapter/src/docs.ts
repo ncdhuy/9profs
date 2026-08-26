@@ -55,6 +55,7 @@ export type GenOfficeDocsMutationErrorCode =
   | 'unsupported-change'
   | 'invalid-change-payload'
   | 'invalid-command-envelope'
+  | 'change-set-reuse'
 
 export class GenOfficeDocsMutationError extends Error {
   readonly code: GenOfficeDocsMutationErrorCode
@@ -106,6 +107,17 @@ export class GenOfficeDocsInspector implements DocumentInspector {
 }
 
 export class GenOfficeDocsMutationGateway implements DocumentMutationGateway {
+  private readonly appliedChangeSets = new Map<
+    string,
+    {
+      readonly documentId: DocumentId
+      readonly baseVersion: DocumentVersion
+      readonly result: Extract<DocumentMutationResult, { status: 'applied' }>
+    }
+  >()
+
+  private static readonly MAX_APPLIED_CHANGE_SETS = 64
+
   constructor(
     private readonly documentId: DocumentId,
     private readonly runtime: GenOfficeDocsRuntime,
@@ -138,13 +150,30 @@ export class GenOfficeDocsMutationGateway implements DocumentMutationGateway {
       )
     }
 
-    const currentVersion = this.versions.version
     if (!Number.isInteger(candidate.baseVersion) || candidate.baseVersion < 0) {
       throw new GenOfficeDocsMutationError(
         'invalid-base-version',
         'approved active change set requires a non-negative integer baseVersion',
       )
     }
+
+    const cached = this.appliedChangeSets.get(candidate.id)
+    if (cached) {
+      if (
+        cached.documentId !== target.documentId ||
+        cached.baseVersion !== candidate.baseVersion
+      ) {
+        throw new GenOfficeDocsMutationError(
+          'change-set-reuse',
+          'approved change set id was already applied to a different document version',
+        )
+      }
+      this.appliedChangeSets.delete(candidate.id)
+      this.appliedChangeSets.set(candidate.id, cached)
+      return cached.result
+    }
+
+    const currentVersion = this.versions.version
     if (candidate.baseVersion !== currentVersion) {
       return {
         changeSetId: candidate.id,
@@ -195,7 +224,7 @@ export class GenOfficeDocsMutationGateway implements DocumentMutationGateway {
       (count, result) => count + (Number.isFinite(result.changed) ? Number(result.changed) : 0),
       0,
     )
-    return {
+    const applied: Extract<DocumentMutationResult, { status: 'applied' }> = {
       changeSetId: candidate.id,
       documentId: this.documentId,
       status: 'applied',
@@ -204,6 +233,17 @@ export class GenOfficeDocsMutationGateway implements DocumentMutationGateway {
       commandCount: commands.length,
       changedCount,
     }
+    this.appliedChangeSets.set(candidate.id, {
+      documentId: target.documentId,
+      baseVersion: candidate.baseVersion,
+      result: applied,
+    })
+    while (this.appliedChangeSets.size > GenOfficeDocsMutationGateway.MAX_APPLIED_CHANGE_SETS) {
+      const oldest = this.appliedChangeSets.keys().next().value
+      if (oldest === undefined) break
+      this.appliedChangeSets.delete(oldest)
+    }
+    return applied
   }
 }
 

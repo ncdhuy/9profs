@@ -8854,3 +8854,96 @@ tr > .page-gap-cut {
 .doc-page span[data-doc-style]:has(.doc-ws-run) span {
   line-height: 0;
 }
+/* Core-owned proposal review stays compact and inside the existing AI panel. */
+.ai-proposal-review {
+  margin: 0 10px 8px;
+  border: 1px solid var(--border-color, #d9dde5);
+  border-radius: 8px;
+  background: var(--surface-color, #fff);
+  overflow: hidden;
+}
+
+.ai-proposal-review-header,
+.ai-proposal-card-topline,
+.ai-proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-proposal-review-header {
+  justify-content: space-between;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.ai-proposal-refresh,
+.ai-proposal-actions button {
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.ai-proposal-refresh {
+  background: transparent;
+  color: var(--text-secondary, #68707d);
+}
+
+.ai-proposal-card {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border-color, #d9dde5);
+}
+
+.ai-proposal-status {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ai-proposal-version,
+.ai-proposal-meta,
+.ai-proposal-working,
+.ai-proposal-error {
+  color: var(--text-secondary, #68707d);
+  font-size: 11px;
+}
+
+.ai-proposal-meta {
+  margin-top: 3px;
+}
+
+.ai-proposal-version {
+  margin-left: auto;
+}
+
+.ai-proposal-summary {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+  color: var(--text-primary, #252a33);
+  font-size: 12px;
+}
+
+.ai-proposal-approve {
+  background: #2563eb;
+  color: #fff;
+}
+
+.ai-proposal-reject {
+  background: var(--surface-muted, #eef0f3);
+  color: var(--text-primary, #252a33);
+}
+
+.ai-proposal-retry {
+  background: #b45309;
+  color: #fff;
+}
+
+.ai-proposal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ai-proposal-error {
+  padding: 0 10px 8px;
+}

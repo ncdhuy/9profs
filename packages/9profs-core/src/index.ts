@@ -29,6 +29,7 @@ export type {
   DocumentProposal,
   DocumentProposalChange,
   DocumentProposalFreshness,
+  DocumentProposalStatus,
   CreateMcpServerInput,
   CreateAssistantInput,
   SkillDefinition,
@@ -60,4 +61,5 @@ export type {
   CoreResponse,
   CoreRuntimeInfo,
   CoreTransport,
+  CoreTransportOptions,
 } from './transport'

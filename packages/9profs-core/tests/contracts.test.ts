@@ -10,6 +10,7 @@ import type {
   CreateMcpServerInput,
   McpServer,
   DocumentProposal,
+  DocumentProposalStatus,
   SkillProvider,
   ToolProvider,
 } from '../src'
@@ -46,7 +47,7 @@ test('active-document proposal transport stays read-only and typed', () => {
     availability: import('../src').ActiveDocumentAvailability
   }>()
   expectTypeOf<DocumentProposal>().toMatchTypeOf<{
-    status: 'proposed'
+    status: DocumentProposalStatus
     freshness: import('../src').DocumentProposalFreshness
   }>()
   expectTypeOf<CoreTransport['documentProposals']>().returns.toEqualTypeOf<

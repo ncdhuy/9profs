@@ -214,6 +214,57 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('keeps trusted proposal decisions on a dedicated authenticated boundary', async () => {
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }> = []
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: { proposalId: 'proposal-1', status: 'applied' },
+          }),
+        }
+      },
+      { sessionSecret: 'test-only-secret' },
+    )
+
+    await transport.approveDocumentProposal('proposal/1', 'looks good')
+    await transport.rejectDocumentProposal('proposal/2')
+    await transport.retryDocumentProposal('proposal/3')
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/document-proposals/proposal%2F1/approve',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-nineprofs-session-secret': 'test-only-secret',
+        },
+        body: '{"note":"looks good"}',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/document-proposals/proposal%2F2/reject',
+        method: 'POST',
+        headers: { 'x-nineprofs-session-secret': 'test-only-secret' },
+        body: undefined,
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/document-proposals/proposal%2F3/retry',
+        method: 'POST',
+        headers: { 'x-nineprofs-session-secret': 'test-only-secret' },
+        body: undefined,
+      },
+    ])
+  })
+
   it('maps MCP configuration, diagnostics, and tool APIs without exposing secrets', async () => {
     const requests: Array<{ input: string; method?: string; body?: string }> = []
     const server = {

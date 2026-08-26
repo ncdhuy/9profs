@@ -12,7 +12,7 @@ use nineprofs_assistant::{
     AssistantError, AssistantService, BuiltinAssistantCatalog, SqliteAssistantRepository,
 };
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
-use nineprofs_document_tools::DocumentToolProvider;
+use nineprofs_document_tools::{DocumentProposalWorkflowService, DocumentToolProvider};
 use nineprofs_documents::{
     DocumentBridgeError, DocumentBridgeService, DocumentChangeSet, DocumentInspection,
     DocumentMutationResult,
@@ -115,6 +115,7 @@ pub struct CoreRuntime {
     event_bus: Arc<BroadcastEventBus>,
     document_bridge: Arc<DocumentBridgeService>,
     document_tools: Arc<DocumentToolProvider>,
+    document_workflow: Arc<DocumentProposalWorkflowService>,
     skill_catalog: Arc<SkillCatalog>,
     assistant_service: Arc<AssistantService>,
     agent_registry: Arc<AgentRegistry>,
@@ -151,6 +152,11 @@ impl CoreRuntime {
         ));
         let document_tools = Arc::new(DocumentToolProvider::new(
             Arc::clone(&document_bridge),
+            Arc::clone(&event_bus),
+        ));
+        let document_workflow = Arc::new(DocumentProposalWorkflowService::new(
+            Arc::clone(&document_bridge),
+            document_tools.proposal_store(),
             Arc::clone(&event_bus),
         ));
         let agent_registry = Arc::new(AgentRegistry::new(
@@ -215,6 +221,7 @@ impl CoreRuntime {
             event_bus,
             document_bridge,
             document_tools,
+            document_workflow,
             skill_catalog,
             assistant_service,
             agent_registry,
@@ -248,6 +255,10 @@ impl CoreRuntime {
 
     pub fn document_tools(&self) -> Arc<DocumentToolProvider> {
         Arc::clone(&self.document_tools)
+    }
+
+    pub fn document_workflow(&self) -> Arc<DocumentProposalWorkflowService> {
+        Arc::clone(&self.document_workflow)
     }
 
     pub async fn inspect_active_document(

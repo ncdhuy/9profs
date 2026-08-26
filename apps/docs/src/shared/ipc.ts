@@ -158,7 +158,11 @@ export type UiTheme = 'light' | 'dark' | 'system'
 
 export interface DesktopApi {
   /** Optional host-provided active Docs bridge configuration; absent means bridge disabled. */
-  getCoreBridgeConfig(): Promise<{ websocketUrl?: string; sessionSecret?: string }>
+  getCoreBridgeConfig(): Promise<{
+    websocketUrl?: string
+    httpBaseUrl?: string
+    sessionSecret?: string
+  }>
   /** current UI language (persisted by the shell in app-settings.json) */
   getLanguage(): Promise<'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar'>
   /** language switched from the shell home page */

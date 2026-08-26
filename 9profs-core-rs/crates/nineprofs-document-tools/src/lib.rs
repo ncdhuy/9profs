@@ -11,7 +11,7 @@ use nineprofs_common::{new_id, now_ms};
 use nineprofs_documents::{
     ActiveDocumentDescriptor, ActiveDocumentRegistry, DOCUMENT_BRIDGE_CAPABILITY_COMMIT,
     DOCUMENT_BRIDGE_CAPABILITY_INSPECT, DOCX_DOCUMENT_TYPE, DocumentBridgeError, DocumentChange,
-    DocumentChangeSet, DocumentChangeTarget, GENOFFICE_ACTIVE_AUTHORITY,
+    DocumentChangeSet, DocumentChangeTarget, DocumentMutationResult, GENOFFICE_ACTIVE_AUTHORITY,
 };
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_tools::{
@@ -27,6 +27,16 @@ pub const DOCUMENT_LIST_ACTIVE: &str = "document.list_active";
 pub const DOCUMENT_INSPECT_ACTIVE: &str = "document.inspect_active";
 pub const DOCUMENT_PROPOSE_ACTIVE_CHANGES: &str = "document.propose_active_changes";
 pub const PROPOSAL_CREATED_EVENT: &str = "document.proposalCreated";
+pub const PROPOSAL_APPROVED_EVENT: &str = "document.proposalApproved";
+pub const PROPOSAL_REJECTED_EVENT: &str = "document.proposalRejected";
+pub const PROPOSAL_APPLIED_EVENT: &str = "document.proposalApplied";
+pub const PROPOSAL_CONFLICT_EVENT: &str = "document.proposalConflict";
+pub const PROPOSAL_FAILED_EVENT: &str = "document.proposalFailed";
+pub const TRUSTED_APPROVER: &str = "trusted-user";
+
+fn default_proposal_status() -> String {
+    "proposed".to_owned()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentProposalStoreLimits {
@@ -59,6 +69,14 @@ pub enum ProposalStoreError {
     SummaryTooLong { actual: usize, limit: usize },
     #[error("proposal payload could not be serialized: {0}")]
     Serialization(String),
+    #[error("document proposal not found: {0}")]
+    NotFound(String),
+    #[error("document proposal {proposal_id} cannot be {action} from status {status}")]
+    InvalidState {
+        proposal_id: String,
+        action: &'static str,
+        status: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -69,6 +87,16 @@ pub struct StoredDocumentProposal {
     pub document_id: String,
     pub base_version: u64,
     pub created_at_ms: u64,
+    #[serde(default = "default_proposal_status")]
+    pub workflow_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<DocumentMutationResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
 }
@@ -100,6 +128,12 @@ pub struct DocumentProposalView {
     pub availability: ProposalAvailability,
     pub current_version: Option<u64>,
     pub created_at_ms: u64,
+    pub outcome: Option<DocumentMutationResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
 }
@@ -177,6 +211,11 @@ impl DocumentProposalStore {
             document_id,
             base_version,
             created_at_ms: now_ms() as u64,
+            workflow_status: "proposed".to_owned(),
+            decision: None,
+            outcome: None,
+            failure: None,
+            retryable: false,
             summary,
         };
         entries.insert(proposal_id, proposal.clone());
@@ -225,6 +264,131 @@ impl DocumentProposalStore {
         let active = registry.get(&proposal.document_id).await;
         Some(proposal.view(active.as_ref()))
     }
+
+    pub async fn claim_approval(
+        &self,
+        proposal_id: &str,
+        approval: Value,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        let mut entries = self.entries.write().await;
+        let proposal = entries
+            .get_mut(proposal_id)
+            .ok_or_else(|| ProposalStoreError::NotFound(proposal_id.to_owned()))?;
+        if proposal.workflow_status != "proposed" {
+            return Err(ProposalStoreError::InvalidState {
+                proposal_id: proposal_id.to_owned(),
+                action: "approve",
+                status: proposal.workflow_status.clone(),
+            });
+        }
+        let mut approved = proposal.change_set.clone();
+        approved.status = "approved".to_owned();
+        approved.approval = Some(approval.clone());
+        proposal.change_set = approved;
+        proposal.workflow_status = "applying".to_owned();
+        proposal.decision = Some(approval);
+        proposal.outcome = None;
+        proposal.failure = None;
+        proposal.retryable = false;
+        Ok(proposal.clone())
+    }
+
+    pub async fn claim_retry(
+        &self,
+        proposal_id: &str,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        let mut entries = self.entries.write().await;
+        let proposal = entries
+            .get_mut(proposal_id)
+            .ok_or_else(|| ProposalStoreError::NotFound(proposal_id.to_owned()))?;
+        if proposal.workflow_status != "failed" || !proposal.retryable {
+            return Err(ProposalStoreError::InvalidState {
+                proposal_id: proposal_id.to_owned(),
+                action: "retry",
+                status: proposal.workflow_status.clone(),
+            });
+        }
+        proposal.workflow_status = "applying".to_owned();
+        proposal.failure = None;
+        proposal.retryable = false;
+        Ok(proposal.clone())
+    }
+
+    pub async fn reject(
+        &self,
+        proposal_id: &str,
+        rejection: Value,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        let mut entries = self.entries.write().await;
+        let proposal = entries
+            .get_mut(proposal_id)
+            .ok_or_else(|| ProposalStoreError::NotFound(proposal_id.to_owned()))?;
+        if proposal.workflow_status != "proposed" {
+            return Err(ProposalStoreError::InvalidState {
+                proposal_id: proposal_id.to_owned(),
+                action: "reject",
+                status: proposal.workflow_status.clone(),
+            });
+        }
+        proposal.workflow_status = "rejected".to_owned();
+        proposal.change_set.status = "rejected".to_owned();
+        proposal.decision = Some(rejection);
+        Ok(proposal.clone())
+    }
+
+    pub async fn mark_applied(
+        &self,
+        proposal_id: &str,
+        result: DocumentMutationResult,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        self.finish(proposal_id, "applied", Some(result), None, false)
+            .await
+    }
+
+    pub async fn mark_conflict(
+        &self,
+        proposal_id: &str,
+        result: DocumentMutationResult,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        self.finish(proposal_id, "conflict", Some(result), None, false)
+            .await
+    }
+
+    pub async fn mark_failed(
+        &self,
+        proposal_id: &str,
+        failure: String,
+        retryable: bool,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        self.finish(proposal_id, "failed", None, Some(failure), retryable)
+            .await
+    }
+
+    async fn finish(
+        &self,
+        proposal_id: &str,
+        status: &str,
+        outcome: Option<DocumentMutationResult>,
+        failure: Option<String>,
+        retryable: bool,
+    ) -> Result<StoredDocumentProposal, ProposalStoreError> {
+        let mut entries = self.entries.write().await;
+        let proposal = entries
+            .get_mut(proposal_id)
+            .ok_or_else(|| ProposalStoreError::NotFound(proposal_id.to_owned()))?;
+        if proposal.workflow_status != "applying" {
+            return Err(ProposalStoreError::InvalidState {
+                proposal_id: proposal_id.to_owned(),
+                action: "finish",
+                status: proposal.workflow_status.clone(),
+            });
+        }
+        proposal.workflow_status = status.to_owned();
+        proposal.outcome = outcome;
+        proposal.failure = failure;
+        proposal.retryable = retryable;
+        Ok(proposal.clone())
+    }
 }
 
 impl StoredDocumentProposal {
@@ -251,14 +415,205 @@ impl StoredDocumentProposal {
             change_set: self.change_set.clone(),
             document_id: self.document_id.clone(),
             base_version: self.base_version,
-            status: self.change_set.status.clone(),
+            status: self.workflow_status.clone(),
             freshness,
             availability,
             current_version,
             created_at_ms: self.created_at_ms,
+            outcome: self.outcome.clone(),
+            decision: self.decision.clone(),
+            failure: self.failure.clone(),
+            retryable: self.retryable,
             summary: self.summary.clone(),
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ProposalWorkflowError {
+    #[error(transparent)]
+    Store(#[from] ProposalStoreError),
+    #[error("active document is unavailable: {0}")]
+    Unavailable(String),
+    #[error("active document version is stale: requested {requested}, current {current}")]
+    Stale { requested: u64, current: u64 },
+    #[error("active document is unsupported: {0}")]
+    UnsupportedDocument(String),
+}
+
+#[derive(Clone)]
+pub struct DocumentProposalWorkflowService {
+    bridge: Arc<nineprofs_documents::DocumentBridgeService>,
+    proposals: DocumentProposalStore,
+    events: Arc<BroadcastEventBus>,
+}
+
+impl DocumentProposalWorkflowService {
+    pub fn new(
+        bridge: Arc<nineprofs_documents::DocumentBridgeService>,
+        proposals: DocumentProposalStore,
+        events: Arc<BroadcastEventBus>,
+    ) -> Self {
+        Self {
+            bridge,
+            proposals,
+            events,
+        }
+    }
+
+    pub async fn approve(
+        &self,
+        proposal_id: &str,
+        note: Option<String>,
+    ) -> Result<DocumentProposalView, ProposalWorkflowError> {
+        let proposal = self
+            .proposals
+            .get(proposal_id)
+            .await
+            .ok_or_else(|| ProposalStoreError::NotFound(proposal_id.to_owned()))?;
+        let active = self
+            .bridge
+            .get(&proposal.document_id)
+            .await
+            .ok_or_else(|| ProposalWorkflowError::Unavailable(proposal.document_id.clone()))?;
+        ensure_document_capability(&active, DOCUMENT_BRIDGE_CAPABILITY_COMMIT)
+            .map_err(|error| ProposalWorkflowError::UnsupportedDocument(error.to_string()))?;
+        if active.version != proposal.base_version {
+            return Err(ProposalWorkflowError::Stale {
+                requested: proposal.base_version,
+                current: active.version,
+            });
+        }
+
+        let now = now_ms() as u64;
+        let approval = decision_metadata("approvedBy", TRUSTED_APPROVER, "approvedAtMs", now, note);
+        let claimed = self.proposals.claim_approval(proposal_id, approval).await?;
+        self.publish(
+            PROPOSAL_APPROVED_EVENT,
+            serde_json::json!({
+                "proposalId": proposal_id,
+                "documentId": claimed.document_id,
+                "baseVersion": claimed.base_version,
+                "status": claimed.workflow_status,
+            }),
+        );
+        self.apply_claimed(proposal_id, claimed).await
+    }
+
+    pub async fn reject(
+        &self,
+        proposal_id: &str,
+        note: Option<String>,
+    ) -> Result<DocumentProposalView, ProposalWorkflowError> {
+        let now = now_ms() as u64;
+        let rejection =
+            decision_metadata("rejectedBy", TRUSTED_APPROVER, "rejectedAtMs", now, note);
+        let rejected = self.proposals.reject(proposal_id, rejection).await?;
+        self.publish(
+            PROPOSAL_REJECTED_EVENT,
+            serde_json::json!({
+                "proposalId": proposal_id,
+                "documentId": rejected.document_id,
+                "status": rejected.workflow_status,
+            }),
+        );
+        self.view(proposal_id).await
+    }
+
+    pub async fn retry(
+        &self,
+        proposal_id: &str,
+    ) -> Result<DocumentProposalView, ProposalWorkflowError> {
+        let claimed = self.proposals.claim_retry(proposal_id).await?;
+        self.apply_claimed(proposal_id, claimed).await
+    }
+
+    async fn apply_claimed(
+        &self,
+        proposal_id: &str,
+        claimed: StoredDocumentProposal,
+    ) -> Result<DocumentProposalView, ProposalWorkflowError> {
+        let result = self
+            .bridge
+            .commit_approved_change_set(claimed.change_set.clone())
+            .await;
+        match result {
+            Ok(result @ DocumentMutationResult::Applied { .. }) => {
+                let applied = self.proposals.mark_applied(proposal_id, result).await?;
+                self.publish(
+                    PROPOSAL_APPLIED_EVENT,
+                    serde_json::json!({
+                        "proposalId": proposal_id,
+                        "documentId": applied.document_id,
+                        "status": applied.workflow_status,
+                        "outcome": applied.outcome,
+                    }),
+                );
+            }
+            Ok(result @ DocumentMutationResult::Conflict { .. }) => {
+                let conflict = self.proposals.mark_conflict(proposal_id, result).await?;
+                self.publish(
+                    PROPOSAL_CONFLICT_EVENT,
+                    serde_json::json!({
+                        "proposalId": proposal_id,
+                        "documentId": conflict.document_id,
+                        "status": conflict.workflow_status,
+                        "outcome": conflict.outcome,
+                    }),
+                );
+            }
+            Err(error) => {
+                let retryable = matches!(
+                    error,
+                    DocumentBridgeError::Timeout(_) | DocumentBridgeError::Disconnected(_)
+                );
+                let failed = self
+                    .proposals
+                    .mark_failed(proposal_id, error.to_string(), retryable)
+                    .await?;
+                self.publish(
+                    PROPOSAL_FAILED_EVENT,
+                    serde_json::json!({
+                        "proposalId": proposal_id,
+                        "documentId": failed.document_id,
+                        "status": failed.workflow_status,
+                        "retryable": failed.retryable,
+                    }),
+                );
+            }
+        }
+        self.view(proposal_id).await
+    }
+
+    async fn view(&self, proposal_id: &str) -> Result<DocumentProposalView, ProposalWorkflowError> {
+        self.proposals
+            .get_view(&self.bridge.registry(), proposal_id)
+            .await
+            .ok_or_else(|| ProposalStoreError::NotFound(proposal_id.to_owned()).into())
+    }
+
+    fn publish(&self, name: &str, payload: Value) {
+        let _ = self
+            .events
+            .publish(nineprofs_api_types::EventEnvelope::new(name, payload));
+    }
+}
+
+fn decision_metadata(
+    actor_key: &str,
+    actor: &str,
+    timestamp_key: &str,
+    timestamp_ms: u64,
+    note: Option<String>,
+) -> Value {
+    let mut metadata = serde_json::Map::from_iter([
+        (actor_key.to_owned(), Value::String(actor.to_owned())),
+        (timestamp_key.to_owned(), Value::from(timestamp_ms)),
+    ]);
+    if let Some(note) = note {
+        metadata.insert("note".to_owned(), Value::String(note));
+    }
+    Value::Object(metadata)
 }
 
 #[derive(Clone)]
@@ -617,8 +972,9 @@ mod tests {
     use std::time::Duration;
 
     use nineprofs_documents::{
-        CoreMessage, DOCUMENT_BRIDGE_PROTOCOL_VERSION, DocumentBridgeConfig, DocumentRegistration,
-        RegisteredSession,
+        CoreMessage, DOCUMENT_BRIDGE_PROTOCOL_VERSION, DocumentBridgeConfig,
+        DocumentBridgeResponse, DocumentMutationResult, DocumentRegistration, RegisteredSession,
+        RendererResponse,
     };
     use serde_json::json;
     use tokio::sync::mpsc;
@@ -1107,5 +1463,182 @@ mod tests {
                 .freshness,
             ProposalFreshness::Fresh
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_claims_approval_once_and_applies_renderer_outcome() {
+        let bridge = bridge();
+        let (session, mut receiver) = register(&bridge, "doc-1", 5).await;
+        let events = Arc::new(BroadcastEventBus::new(8));
+        let store = DocumentProposalStore::default();
+        let proposal = store
+            .create(
+                "doc-1",
+                5,
+                vec![DocumentChange {
+                    change_type: "docs.commandEnvelope".to_owned(),
+                    payload: Some(json!({ "commands": [{ "replaceAllText": {} }] })),
+                }],
+                None,
+            )
+            .await
+            .unwrap();
+        let workflow = DocumentProposalWorkflowService::new(bridge.clone(), store, events);
+        let proposal_id = proposal.proposal_id.clone();
+        let session_id = session.session_id.clone();
+        let first_workflow = workflow.clone();
+        let first = tokio::spawn(async move { first_workflow.approve(&proposal_id, None).await });
+
+        let CoreMessage::CommitApprovedChangeSet {
+            request_id,
+            document_id,
+            change_set,
+        } = receiver.recv().await.unwrap()
+        else {
+            panic!("expected approved commit request");
+        };
+        assert_eq!(change_set.status, "approved");
+        assert_eq!(change_set.target.document_id, "doc-1");
+        assert!(matches!(
+            workflow.approve(&proposal.proposal_id, None).await,
+            Err(ProposalWorkflowError::Store(
+                ProposalStoreError::InvalidState { .. }
+            ))
+        ));
+
+        bridge
+            .handle_response(
+                &session_id,
+                DocumentBridgeResponse {
+                    request_id,
+                    document_id,
+                    response: RendererResponse::Mutation {
+                        result: DocumentMutationResult::Applied {
+                            change_set_id: proposal.change_set.id.clone(),
+                            document_id: "doc-1".to_owned(),
+                            previous_version: 5,
+                            new_version: 6,
+                            command_count: 1,
+                            changed_count: 1,
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let applied = first.await.unwrap().unwrap();
+        assert_eq!(applied.status, "applied");
+        assert!(matches!(
+            applied.outcome,
+            Some(DocumentMutationResult::Applied { .. })
+        ));
+        assert_eq!(applied.decision.unwrap()["approvedBy"], TRUSTED_APPROVER);
+    }
+
+    #[tokio::test]
+    async fn workflow_reject_is_terminal_and_never_bridges() {
+        let bridge = bridge();
+        let (_session, mut receiver) = register(&bridge, "doc-1", 5).await;
+        let store = DocumentProposalStore::default();
+        let proposal = store
+            .create(
+                "doc-1",
+                5,
+                vec![DocumentChange {
+                    change_type: "docs.commandEnvelope".to_owned(),
+                    payload: Some(json!({ "commands": [] })),
+                }],
+                None,
+            )
+            .await
+            .unwrap();
+        let workflow = DocumentProposalWorkflowService::new(
+            bridge,
+            store,
+            Arc::new(BroadcastEventBus::new(8)),
+        );
+
+        let rejected = workflow
+            .reject(&proposal.proposal_id, Some("not now".to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(rejected.status, "rejected");
+        assert_eq!(rejected.decision.unwrap()["rejectedBy"], TRUSTED_APPROVER);
+        assert!(receiver.try_recv().is_err());
+        assert!(matches!(
+            workflow.approve(&proposal.proposal_id, None).await,
+            Err(ProposalWorkflowError::Store(
+                ProposalStoreError::InvalidState { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn uncertain_bridge_failure_is_retryable_with_the_same_change_set_id() {
+        let bridge = bridge();
+        let (session, mut receiver) = register(&bridge, "doc-1", 5).await;
+        let store = DocumentProposalStore::default();
+        let proposal = store
+            .create(
+                "doc-1",
+                5,
+                vec![DocumentChange {
+                    change_type: "docs.commandEnvelope".to_owned(),
+                    payload: Some(json!({ "commands": [] })),
+                }],
+                None,
+            )
+            .await
+            .unwrap();
+        let workflow = DocumentProposalWorkflowService::new(
+            bridge.clone(),
+            store,
+            Arc::new(BroadcastEventBus::new(8)),
+        );
+        let proposal_id = proposal.proposal_id.clone();
+        let first_workflow = workflow.clone();
+        let first = tokio::spawn(async move { first_workflow.approve(&proposal_id, None).await });
+        let CoreMessage::CommitApprovedChangeSet { change_set, .. } =
+            receiver.recv().await.unwrap()
+        else {
+            panic!("expected initial commit request");
+        };
+        let failed = first.await.unwrap().unwrap();
+        assert_eq!(failed.status, "failed");
+        assert!(failed.retryable);
+
+        let retry_workflow = workflow.clone();
+        let proposal_id = proposal.proposal_id.clone();
+        let retry = tokio::spawn(async move { retry_workflow.retry(&proposal_id).await });
+        let CoreMessage::CommitApprovedChangeSet {
+            request_id,
+            document_id,
+            change_set: retry_change_set,
+        } = receiver.recv().await.unwrap()
+        else {
+            panic!("expected retry commit request");
+        };
+        assert_eq!(retry_change_set.id, change_set.id);
+        bridge
+            .handle_response(
+                &session.session_id,
+                DocumentBridgeResponse {
+                    request_id,
+                    document_id,
+                    response: RendererResponse::Mutation {
+                        result: DocumentMutationResult::Applied {
+                            change_set_id: change_set.id,
+                            document_id: "doc-1".to_owned(),
+                            previous_version: 5,
+                            new_version: 6,
+                            command_count: 0,
+                            changed_count: 0,
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(retry.await.unwrap().unwrap().status, "applied");
     }
 }

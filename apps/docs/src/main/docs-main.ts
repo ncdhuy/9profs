@@ -2934,6 +2934,9 @@ export function registerDocsIpc(): void {
   ipcMain.removeHandler('docs:core-bridge-config')
   ipcMain.handle('docs:core-bridge-config', () => ({
     websocketUrl: process.env.NINEPROFS_DOCUMENT_BRIDGE_URL || undefined,
+    httpBaseUrl:
+      process.env.NINEPROFS_CORE_URL ||
+      `http://${process.env.NINEPROFS_CORE_ADDR || '127.0.0.1:39761'}`,
     sessionSecret: process.env.NINEPROFS_SESSION_SECRET || undefined,
   }))
 

@@ -36,4 +36,11 @@ pub struct DocumentProposalDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     pub changes: Vec<DocumentProposalChangeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    pub retryable: bool,
 }

@@ -134,7 +134,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4A active DOCX GenOffice adapter | IMPLEMENTED     | Active inspection, DocumentVersion/preconditions, stale-change protection, approved mutation gateway, existing Docs command engine reuse |
 | Phase 4B Rust Core ↔ renderer bridge   | IMPLEMENTED     | Active document registry, dedicated bidirectional `/ws/documents`, DOCX inspection proxy, approved mutation proxy, and version synchronization |
 | Phase 4C1 active-document proposals   | IMPLEMENTED     | `nineprofs-document-tools`, explicit list/inspect/propose tools, ephemeral proposal store, freshness, read-only proposal APIs/events    |
-| Phase 4C2 proposal review/live commit | NOT IMPLEMENTED | No review/diff UI, approval/rejection workflow, confirmation enforcement, or active-document commit tool                            |
+| Phase 4C2 proposal review/live commit | IMPLEMENTED     | Core-owned review workflow, trusted approve/reject/retry endpoints, bounded renderer idempotency, and existing Docs AI-panel command summaries |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
 ### Phase 1A Rust Core foundation
@@ -727,12 +727,20 @@ transition `proposed` to `approved`. Tool authorization is not document
 mutation approval: the proposal tool has `Write` policy because it writes
 Core-owned runtime proposal state, but it does not write the user document.
 
-### Phase 4C2 — proposal review and live commit (NOT IMPLEMENTED)
+### Phase 4C2 — proposal review and live commit (IMPLEMENTED)
 
-- Add proposal panel, diff viewer, Accept/Reject actions, and confirmation UI.
-- Add trusted approval transitions and the existing approved mutation gateway
-  call; never expose active-document commit/apply/approve/reject to the Agent.
-- Keep Sheets and Slides active-document tools deferred.
+- `DocumentProposalWorkflowService` owns atomic decision claims, freshness
+  preflight, Core-generated approval metadata, terminal rejection, trusted
+  retry, and distinct applied/conflict/failed outcomes through the existing
+  bridge.
+- Trusted approve/reject/retry endpoints use the launch-scoped session secret
+  when configured. The Agent still has exactly the Phase 4C1 list/inspect/
+  propose tools and no commit or approval path.
+- The Docs AI panel shows current-document proposals with safe command
+  summaries, freshness/version state, and review actions. Existing
+  `executeCommands`, Track Changes, dirty/save, undo, and renderer version
+  authority remain unchanged; successful ChangeSet results are bounded and
+  idempotent within the active adapter session.
 
 Sheets and Slides adapters remain future work.
 Final Core desktop process lifecycle and mandatory bridge authentication remain

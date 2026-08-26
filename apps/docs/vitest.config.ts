@@ -17,6 +17,7 @@ export default defineConfig({
       '@genoffice/ui': local('../../packages/ui/src/index.ts'),
       '@genoffice/document-gateway': local('../../packages/document-gateway/src/index.ts'),
       '@genoffice/genoffice-adapter': local('../../packages/genoffice-adapter/src/index.ts'),
+      '@genoffice/9profs-core': local('../../packages/9profs-core/src/index.ts'),
     },
   },
   test: {

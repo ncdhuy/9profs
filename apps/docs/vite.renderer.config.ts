@@ -8,6 +8,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      '@genoffice/9profs-core': resolve(__dirname, '../../packages/9profs-core/src/index.ts'),
       '@genoffice/document-gateway': resolve(
         __dirname,
         '../../packages/document-gateway/src/index.ts',
