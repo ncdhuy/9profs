@@ -11,6 +11,7 @@ nineprofs-agent = { path = "../nineprofs-agent" }
 nineprofs-api-types = { path = "../nineprofs-api-types" }
 nineprofs-assistant = { path = "../nineprofs-assistant" }
 nineprofs-db = { path = "../nineprofs-db" }
+nineprofs-documents = { path = "../nineprofs-documents" }
 nineprofs-mcp = { path = "../nineprofs-mcp" }
 nineprofs-officecli = { path = "../nineprofs-officecli" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }

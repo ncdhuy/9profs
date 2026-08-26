@@ -215,11 +215,13 @@ export interface GenOfficeDocsAdapterOptions {
 }
 
 export class GenOfficeDocsAdapter implements GenOfficeAdapter {
+  readonly documentId: DocumentId
   readonly versionTracker: GenOfficeDocumentVersionTracker
   readonly inspector: GenOfficeDocsInspector
   readonly mutationGateway: GenOfficeDocsMutationGateway
 
   constructor(options: GenOfficeDocsAdapterOptions) {
+    this.documentId = options.documentId
     this.versionTracker = new GenOfficeDocumentVersionTracker(
       options.runtime.subscribeToTransactions,
       options.initialVersion,

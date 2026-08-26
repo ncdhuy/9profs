@@ -13,7 +13,11 @@ import type { Editor } from '@tiptap/core'
 import { DOMParser as PmDOMParser, type Mark as PmMark } from '@tiptap/pm/model'
 import { NodeSelection } from '@tiptap/pm/state'
 import { Dropdown } from '@genoffice/ui'
-import { createGenOfficeDocsAdapter, type GenOfficeDocsAdapter } from '@genoffice/genoffice-adapter'
+import {
+  createGenOfficeDocsAdapter,
+  GenOfficeDocsBridgeClient,
+  type GenOfficeDocsAdapter,
+} from '@genoffice/genoffice-adapter'
 import { markdownPasteHtml } from './editor/markdown-paste'
 import {
   BLANK_BULLET_NUM_ID,
@@ -676,6 +680,7 @@ export function App() {
 
   const editorRef = useRef<Editor | null>(null)
   const activeDocsAdapterRef = useRef<GenOfficeDocsAdapter | null>(null)
+  const activeDocsBridgeRef = useRef<GenOfficeDocsBridgeClient | null>(null)
   const presentationGeometryRef = useRef<PresentationGeometry | null>(null)
   const presentationGeometrySourceRef = useRef<(() => PresentationGeometrySource) | null>(null)
   const editor = useEditor({
@@ -817,7 +822,22 @@ export function App() {
       },
     })
     activeDocsAdapterRef.current = adapter
+    let disposed = false
+    let bridge: GenOfficeDocsBridgeClient | null = null
+    void window.desktop.getCoreBridgeConfig().then((config) => {
+      if (disposed || !config.websocketUrl) return
+      bridge = new GenOfficeDocsBridgeClient({
+        adapter,
+        websocketUrl: config.websocketUrl,
+        sessionSecret: config.sessionSecret,
+      })
+      activeDocsBridgeRef.current = bridge
+      bridge.connect()
+    })
     return () => {
+      disposed = true
+      bridge?.dispose()
+      if (activeDocsBridgeRef.current === bridge) activeDocsBridgeRef.current = null
       adapter.dispose()
       if (activeDocsAdapterRef.current === adapter) activeDocsAdapterRef.current = null
     }

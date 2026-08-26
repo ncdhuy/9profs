@@ -2931,6 +2931,11 @@ export function registerDocsIpc(): void {
   // shared with the other editor modules — last (identical) registration wins
   ipcMain.removeHandler('app:get-language')
   ipcMain.handle('app:get-language', () => getUiLang())
+  ipcMain.removeHandler('docs:core-bridge-config')
+  ipcMain.handle('docs:core-bridge-config', () => ({
+    websocketUrl: process.env.NINEPROFS_DOCUMENT_BRIDGE_URL || undefined,
+    sessionSecret: process.env.NINEPROFS_SESSION_SECRET || undefined,
+  }))
 
   configureMetricsCache(userDataPath('font-metrics'))
   ipcMain.handle('docs:font-metrics', (_event, family: string) =>

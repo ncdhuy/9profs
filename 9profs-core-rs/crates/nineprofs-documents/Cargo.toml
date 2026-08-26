@@ -1,0 +1,20 @@
+[package]
+name = "nineprofs-documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+futures-util.workspace = true
+nineprofs-api-types = { path = "../nineprofs-api-types" }
+nineprofs-realtime = { path = "../nineprofs-realtime" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"

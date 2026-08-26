@@ -1,6 +1,8 @@
 import type { DocumentInspector, DocumentMutationGateway } from '@genoffice/document-gateway'
 
 export * from './docs'
+export { GenOfficeDocsBridgeClient } from './bridge'
+export type { GenOfficeDocsBridgeOptions } from './bridge'
 export { GenOfficeDocumentVersionTracker } from './version'
 export type { GenOfficeDocumentTransaction, SubscribeToGenOfficeTransactions } from './version'
 

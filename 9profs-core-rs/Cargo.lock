@@ -2188,6 +2188,7 @@ dependencies = [
  "nineprofs-agent",
  "nineprofs-api-types",
  "nineprofs-assistant",
+ "nineprofs-documents",
  "nineprofs-mcp",
  "nineprofs-officecli",
  "nineprofs-realtime",
@@ -2209,6 +2210,22 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "nineprofs-documents"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "nineprofs-api-types",
+ "nineprofs-realtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "uuid",
 ]
 
 [[package]]
@@ -2262,6 +2279,7 @@ dependencies = [
  "nineprofs-api-types",
  "nineprofs-assistant",
  "nineprofs-db",
+ "nineprofs-documents",
  "nineprofs-mcp",
  "nineprofs-officecli",
  "nineprofs-realtime",

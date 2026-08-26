@@ -16,6 +16,7 @@ use nineprofs_api_types::{
     UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
+use nineprofs_documents::ActiveDocumentDescriptor;
 use nineprofs_mcp::{
     CreateMcpServer, McpError, McpServerSnapshot, McpTransportConfig, McpTransportSummary,
     UpdateMcpServer,
@@ -226,6 +227,8 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/runtime", get(runtime_info))
+        .route("/api/documents", get(list_documents))
+        .route("/api/documents/{id}", get(get_document))
         .route("/api/officecli/status", get(officecli_status))
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent))
@@ -264,6 +267,7 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         .route("/api/mcp/servers/{id}/test", post(test_mcp_server))
         .route("/api/mcp/servers/{id}/tools", get(list_mcp_tools))
         .route("/ws", get(websocket))
+        .route("/ws/documents", get(document_websocket))
         .with_state(state)
 }
 
@@ -304,6 +308,31 @@ async fn websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> 
     nineprofs_realtime::websocket_upgrade(upgrade, state.runtime.event_bus())
 }
 
+async fn document_websocket(State(state): State<AppState>, upgrade: WebSocketUpgrade) -> Response {
+    nineprofs_documents::websocket_upgrade(upgrade, state.runtime.document_bridge())
+}
+
+async fn list_documents(
+    State(state): State<AppState>,
+) -> axum::Json<ApiResponse<Vec<ActiveDocumentDescriptor>>> {
+    axum::Json(ApiResponse::ok(
+        state.runtime.document_bridge().list().await,
+    ))
+}
+
+async fn get_document(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ActiveDocumentDescriptor>>, ApiError> {
+    let document = state
+        .runtime
+        .document_bridge()
+        .get(&id)
+        .await
+        .ok_or_else(|| ApiError::DocumentNotFound(id.clone()))?;
+    Ok(axum::Json(ApiResponse::ok(document)))
+}
+
 #[derive(Debug)]
 enum ApiError {
     Assistant(AssistantError),
@@ -313,6 +342,7 @@ enum ApiError {
     NotFound(String),
     AgentNotFound(String),
     RunNotFound(String),
+    DocumentNotFound(String),
 }
 
 impl From<AssistantError> for ApiError {
@@ -356,6 +386,11 @@ impl IntoResponse for ApiError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 format!("agent run not found: {id}"),
+            ),
+            Self::DocumentNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                format!("active document not found: {id}"),
             ),
             Self::Task(error) => (
                 if matches!(error, nineprofs_agent::AgentTaskManagerError::NotFound(_)) {

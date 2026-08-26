@@ -12,6 +12,10 @@ use nineprofs_assistant::{
     AssistantError, AssistantService, BuiltinAssistantCatalog, SqliteAssistantRepository,
 };
 use nineprofs_db::{Database, DbError, SqliteMetadataRepository};
+use nineprofs_documents::{
+    DocumentBridgeError, DocumentBridgeService, DocumentChangeSet, DocumentInspection,
+    DocumentMutationResult,
+};
 use nineprofs_mcp::{McpError, McpService, SqliteMcpServerRepository};
 use nineprofs_officecli::{
     ArtifactResolver, OfficeCliConfig, OfficeCliRunner, OfficeCliStatus, OfficeCliToolProvider,
@@ -106,6 +110,7 @@ pub struct CoreRuntime {
     database: Database,
     metadata_repository: SqliteMetadataRepository,
     event_bus: Arc<BroadcastEventBus>,
+    document_bridge: Arc<DocumentBridgeService>,
     skill_catalog: Arc<SkillCatalog>,
     assistant_service: Arc<AssistantService>,
     agent_registry: Arc<AgentRegistry>,
@@ -133,6 +138,13 @@ impl CoreRuntime {
     ) -> Result<Self, RuntimeError> {
         let metadata_repository = database.metadata_repository();
         let event_bus = Arc::new(BroadcastEventBus::new(config.event_capacity));
+        let document_bridge = Arc::new(DocumentBridgeService::new(
+            nineprofs_documents::DocumentBridgeConfig {
+                session_secret: config.session_secret.clone(),
+                ..Default::default()
+            },
+            Arc::clone(&event_bus),
+        ));
         let agent_registry = Arc::new(AgentRegistry::new(
             Arc::new(SqliteAgentMetadataRepository::new(database.pool().clone())),
             BuiltinAgentCatalog::load(),
@@ -189,6 +201,7 @@ impl CoreRuntime {
             database,
             metadata_repository,
             event_bus,
+            document_bridge,
             skill_catalog,
             assistant_service,
             agent_registry,
@@ -214,6 +227,28 @@ impl CoreRuntime {
 
     pub fn event_bus(&self) -> Arc<BroadcastEventBus> {
         Arc::clone(&self.event_bus)
+    }
+
+    pub fn document_bridge(&self) -> Arc<DocumentBridgeService> {
+        Arc::clone(&self.document_bridge)
+    }
+
+    pub async fn inspect_active_document(
+        &self,
+        document_id: &str,
+    ) -> Result<DocumentInspection, DocumentBridgeError> {
+        self.document_bridge
+            .inspect_active_document(document_id)
+            .await
+    }
+
+    pub async fn commit_approved_change_set(
+        &self,
+        change_set: DocumentChangeSet,
+    ) -> Result<DocumentMutationResult, DocumentBridgeError> {
+        self.document_bridge
+            .commit_approved_change_set(change_set)
+            .await
     }
 
     pub fn skill_catalog(&self) -> Arc<SkillCatalog> {
@@ -276,6 +311,7 @@ impl CoreRuntime {
                 "health".to_owned(),
                 "runtime".to_owned(),
                 "realtime".to_owned(),
+                "documents".to_owned(),
                 "agents".to_owned(),
                 "assistants".to_owned(),
                 "skills".to_owned(),

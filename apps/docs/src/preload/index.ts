@@ -12,6 +12,7 @@ import type {
 import type { ProjectApi } from '@genoffice/project-store'
 
 const api: DesktopApi = {
+  getCoreBridgeConfig: () => ipcRenderer.invoke('docs:core-bridge-config'),
   getLanguage: () => ipcRenderer.invoke('app:get-language'),
   onLanguageChanged: (handler) => {
     const listener = (

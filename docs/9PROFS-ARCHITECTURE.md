@@ -132,7 +132,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 3A OfficeCLI read-only provider  | IMPLEMENTED     | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API        |
 | Phase 3B OfficeCLI detached mutation   | IMPLEMENTED     | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion    |
 | Phase 4A active DOCX GenOffice adapter | IMPLEMENTED     | Active inspection, DocumentVersion/preconditions, stale-change protection, approved mutation gateway, existing Docs command engine reuse |
-| Phase 4B Rust Core ↔ renderer bridge   | NOT IMPLEMENTED | No active-document transport or renderer bridge                                                                                          |
+| Phase 4B Rust Core ↔ renderer bridge   | IMPLEMENTED     | Active document registry, dedicated bidirectional `/ws/documents`, DOCX inspection proxy, approved mutation proxy, and version synchronization |
 | Phase 4C proposal/approval/live commit | NOT IMPLEMENTED | No active-document proposal, review, or approval UI                                                                                      |
 | Research domain                        | NOT IMPLEMENTED | No research/review/citation/regulation package exists                                                                                    |
 
@@ -142,7 +142,8 @@ The Phase 1A Rust Core foundation is intentionally limited to:
 
 - `nineprofs-core-rs/` with common, API DTO, SQLite, realtime, runtime, and
   composition-root crates;
-- `/api/health`, `/api/runtime`, and `/ws` transport endpoints;
+- `/api/health`, `/api/runtime`, safe `/api/documents` metadata endpoints,
+  generic `/ws` events, and dedicated `/ws/documents` active-session transport;
 - loopback-only default binding at `127.0.0.1:39761` with no wildcard CORS;
 - a reserved launch-scoped session-secret field, with authentication deferred;
 - `packages/9profs-core/src/transport.ts` as an optional TypeScript mapping.
@@ -600,11 +601,13 @@ behavior stays intact until a compatible replacement exists and is validated.
 - Rust workspace lives in `9profs-core-rs/`; root scripts expose
   `core:build`, `core:test`, and `core:run` without changing normal `dev`.
 - Dependency direction is `nineprofs-core` app → `nineprofs-runtime` →
-  `nineprofs-realtime`/`nineprofs-db` → `nineprofs-api-types`/`nineprofs-common`.
-- HTTP exposes `/api/health` and `/api/runtime`; WebSocket exposes `/ws`.
+  `nineprofs-documents`/`nineprofs-realtime`/`nineprofs-db` →
+  `nineprofs-api-types`/`nineprofs-common`.
+- HTTP exposes `/api/health`, `/api/runtime`, and safe active-document metadata;
+  generic events use `/ws`, active DOCX sessions use `/ws/documents`.
 - Default bind is loopback (`127.0.0.1:39761`). No wildcard CORS policy is
-  installed. A launch-scoped session secret is reserved in runtime config but
-  authentication is not enabled yet.
+  installed. The launch-scoped session secret is required by the document
+  bridge handshake when configured; no broad auth subsystem exists yet.
 - TypeScript keeps `@genoffice/9profs-core` as the application contract layer;
   `src/transport.ts` maps stable DTOs and does not depend on Rust details.
 - Existing Electron IPC, GenOffice Office behavior, and Sheets sidecar remain
@@ -671,17 +674,44 @@ OfficeCLI writes detached artifacts. GenOffice writes active documents. The
 adapter never writes DOCX bytes, calls `saveDocx`, edits presentation DOM, or
 owns a second mutation engine.
 
-### Phase 4B — Rust Core ↔ renderer live-document bridge (NOT IMPLEMENTED)
+### Phase 4B — Rust Core ↔ renderer live-document bridge (IMPLEMENTED)
 
-- Connect `nineprofs-core-rs`/`AgentExecutionService` to the renderer.
-- Add an active-document transport and ToolProvider only after Phase 4A.
+`nineprofs-documents` owns ephemeral active-session routing. Each DOCX renderer
+registers one stable `DocumentId` and current `DocumentVersion` over the
+dedicated bidirectional `/ws/documents` bridge. Core correlates concurrent
+inspection and already-approved mutation requests, enforces request timeouts,
+and fails pending work on disconnect. `GET /api/documents` and
+`GET /api/documents/:id` expose safe descriptor metadata only.
+
+Authority remains split deliberately:
+
+```text
+Rust Core       = registry, router, orchestration, transport
+GenOffice Docs  = active document authority, inspection, version checks, mutation
+DocumentId      = routing/session key
+DocumentVersion = optimistic concurrency token
+```
+
+The renderer continues to interpret `docs.commandEnvelope` through its
+existing `executeCommands()` path. Rust carries generic change payload JSON and
+never receives file paths, editor instances, ProseMirror/Tiptap types, or DOCX
+engine objects. Save, autosave, Save As, and same-document reparse keep the
+bridge session; only true document replacement rotates `DocumentId`.
+
+Phase 4B status: active document registry — IMPLEMENTED; dedicated
+bidirectional document bridge — IMPLEMENTED; active DOCX inspection proxy —
+IMPLEMENTED; approved mutation proxy — IMPLEMENTED; version synchronization —
+IMPLEMENTED.
 
 ### Phase 4C — proposal/approval/live commit (NOT IMPLEMENTED)
 
 - Add proposal, diff, Accept/Reject, and confirmation UI.
-- Consume already-approved change sets through the Phase 4A gateway.
+- Add the active-document Agent ToolProvider and automatic AI commit workflow.
 
 Sheets and Slides adapters remain future work.
+Final Core desktop process lifecycle and mandatory bridge authentication remain
+future work; local development without a configured session secret is
+loopback-only by deployment convention.
 
 ### Phase 5 — research/review domain
 
