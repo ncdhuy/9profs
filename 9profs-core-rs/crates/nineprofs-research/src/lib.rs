@@ -21,8 +21,9 @@ pub use model::{
     MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES, PdfExtractionStatus, ResearchArtifact,
     ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
     ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
-    ResearchSource, ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId,
-    SafeMetadata, SourceKind, SourceOrigin, VerifiedArtifact, validate_metadata,
+    ResearchPdfPageBatch, ResearchSource, ResearchSourceId, ResearchSourceSnapshot,
+    ResearchSourceSnapshotId, SafeMetadata, SourceKind, SourceOrigin, VerifiedArtifact,
+    validate_metadata,
 };
 pub use repository::{ResearchRepository, SqliteResearchRepository};
 pub use service::ResearchService;

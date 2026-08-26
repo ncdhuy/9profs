@@ -923,6 +923,18 @@ exposure. Future adapters consume this domain; they do not replace it.
   extraction. Core persists immutable extraction revisions and one-based page
   text with per-page and extraction hashes. Empty-text, failed, and
   password-required outcomes remain explicit statuses.
+- A `SourceSnapshot` may have multiple immutable PDF extraction revisions.
+  `ExtractionId` is the identity of exactly one derived text representation;
+  snapshot ID alone is insufficient to select derived text. Future retrieval
+  indexes, evidence capture, and citation verification MUST pin an exact
+  `ExtractionId`. The legacy snapshot-level read is an explicit latest-
+  extraction compatibility selector ordered by `extracted_at_ms DESC, id DESC`.
+- Exact extraction reads use `GET /api/research/pdf-extractions/:extractionId`.
+  Bounded page reads use `startPage` (a one-based PDF page number) and `limit`
+  (maximum 50), return pages in `page ASC` order, and include `hasMore` plus
+  `nextStartPage` continuation metadata. Trusted internal consumers may repeat
+  these bounded reads to enumerate a ready extraction completely; no unbounded
+  page HTTP response is exposed.
 - `pdf_text_range` evidence is created only from stored extraction pages. The
   server slices the stored page text and persists the exact excerpt; offsets
   are Unicode scalar/code-point offsets, not UTF-8 byte or UTF-16 indexes.

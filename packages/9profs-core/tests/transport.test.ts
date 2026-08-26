@@ -603,8 +603,10 @@ describe('Core transport boundary', () => {
       status: 'ready',
       pages: [{ page: 1, text: 'Evidence' }],
     })
-    await transport.researchPdfExtraction('snapshot/1')
-    await transport.researchPdfPages('extraction/1', 25)
+    await transport.researchPdfExtraction('extraction/1')
+    await transport.researchPdfExtractions('snapshot/1')
+    await transport.latestPdfExtraction('snapshot/1')
+    await transport.researchPdfPages('extraction/1', { startPage: 51, limit: 25 })
     await transport.researchPdfPage('extraction/1', 1)
     await transport.captureResearchPdfEvidence({
       researchCaseId: 'case-1',
@@ -637,8 +639,13 @@ describe('Core transport boundary', () => {
         pages: [{ page: 1, text: 'Evidence' }],
       }),
     )
-    expect(requests[5].init?.body).not.toContain('Evidence')
-    expect(requests[5].init?.body).toContain('"start":0')
+    expect(requests[2].input).toContain('/api/research/pdf-extractions/extraction%2F1')
+    expect(requests[3].input).toContain('/api/research/source-snapshots/snapshot%2F1')
+    expect(requests[4].input).toContain('/api/research/snapshots/snapshot%2F1/pdf-extraction')
+    expect(requests[5].input).toContain('startPage=51')
+    expect(requests[5].input).toContain('limit=25')
+    expect(requests[7].init?.body).not.toContain('Evidence')
+    expect(requests[7].init?.body).toContain('"start":0')
     await expect(extractResearchPdfPages(new Uint8Array([1, 2, 3]))).resolves.toMatchObject({
       status: 'failed',
       pages: [],

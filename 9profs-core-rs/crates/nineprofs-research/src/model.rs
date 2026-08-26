@@ -221,6 +221,15 @@ pub struct ResearchPdfPage {
     pub text_hash: ContentHash,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResearchPdfPageBatch {
+    pub pages: Vec<ResearchPdfPage>,
+    pub start_page: u32,
+    pub limit: u32,
+    pub has_more: bool,
+    pub next_start_page: Option<u32>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EvidenceLocator {

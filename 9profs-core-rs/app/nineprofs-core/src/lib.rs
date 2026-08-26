@@ -25,9 +25,9 @@ use nineprofs_api_types::{
     ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
     ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchHashAlgorithmDto,
     ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
-    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
-    RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto, UpdateAssistantRequest,
-    UpdateMcpServerRequest,
+    ResearchPdfPageListDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
+    ResearchSourceSnapshotDto, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
+    UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -45,8 +45,8 @@ use nineprofs_research::{
     CaptureSourceSnapshot, ClaimEvidenceRelation, ClaimOrigin, CreateClaimEvidenceLink,
     CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
     EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim, ResearchError, ResearchEvidence,
-    ResearchPdfExtraction, ResearchPdfPage, ResearchSource, ResearchSourceSnapshot, SourceKind,
-    SourceOrigin,
+    ResearchPdfExtraction, ResearchPdfPage, ResearchPdfPageBatch, ResearchSource,
+    ResearchSourceSnapshot, SourceKind, SourceOrigin,
 };
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
@@ -751,6 +751,208 @@ mod research_pdf_api_tests {
 
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[tokio::test]
+    async fn pdf_page_api_paginates_one_extraction_without_gaps() {
+        let root = std::env::temp_dir().join(format!(
+            "9profs-core-pdf-pagination-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.data_dir = root.clone();
+        config.database_path = root.join("core.db");
+        config.session_secret = Some(Arc::from("api-test-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let case = runtime
+            .research_service()
+            .create_case(CreateResearchCase {
+                title: "PDF pagination API".to_owned(),
+            })
+            .await
+            .unwrap();
+        let router = build_router(runtime);
+        let upload_path = format!("/api/research/cases/{}/reference-pdfs", case.id.as_str());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&upload_path)
+                    .header("content-type", "application/pdf")
+                    .header(TRUSTED_DECISION_HEADER, "api-test-secret")
+                    .body(Body::from(b"%PDF-1.7\npagination fixture".to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let upload: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        let snapshot_id = upload["data"]["snapshot"]["snapshotId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let pages: Vec<_> = (1..=120)
+            .map(|page| serde_json::json!({ "page": page, "text": format!("page {page}") }))
+            .collect();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/api/research/snapshots/{snapshot_id}/pdf-extraction"
+                ))
+                .header("content-type", "application/json")
+                .header(TRUSTED_DECISION_HEADER, "api-test-secret")
+                .body(Body::from(
+                    serde_json::json!({
+                        "extractor": "pdfjs",
+                        "extractorVersion": "pagination-test",
+                        "pageCount": 120,
+                        "status": "ready",
+                        "pages": pages
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let extraction: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        let extraction_id = extraction["data"]["extractionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/api/research/snapshots/{snapshot_id}/pdf-extraction"
+                ))
+                .header("content-type", "application/json")
+                .header(TRUSTED_DECISION_HEADER, "api-test-secret")
+                .body(Body::from(
+                    serde_json::json!({
+                        "extractor": "pdfjs",
+                        "extractorVersion": "pagination-test-newer",
+                        "pageCount": 1,
+                        "status": "ready",
+                        "pages": [{ "page": 1, "text": "newer revision" }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let newer_extraction: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        let newer_extraction_id = newer_extraction["data"]["extractionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(newer_extraction_id, extraction_id);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/research/pdf-extractions/{extraction_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let exact: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(exact["data"]["extractionId"], extraction_id);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/source-snapshots/{snapshot_id}/pdf-extractions"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let listed: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(listed["data"].as_array().unwrap().len(), 2);
+        assert_eq!(listed["data"][0]["extractionId"], extraction_id);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/snapshots/{snapshot_id}/pdf-extraction"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let latest: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(latest["data"]["extractionId"], newer_extraction_id);
+
+        let mut all_pages = Vec::new();
+        for (start_page, expected_end, has_more, next_start_page) in [
+            (1, 50, true, Some(51)),
+            (51, 100, true, Some(101)),
+            (101, 120, false, None),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::get(format!(
+                        "/api/research/pdf-extractions/{extraction_id}/pages?startPage={start_page}&limit=50"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert_eq!(payload["data"]["startPage"], start_page);
+            assert_eq!(payload["data"]["limit"], 50);
+            assert_eq!(payload["data"]["hasMore"], has_more);
+            if let Some(next_start_page) = next_start_page {
+                assert_eq!(payload["data"]["nextStartPage"], next_start_page);
+            } else {
+                assert!(payload["data"]["nextStartPage"].is_null());
+            }
+            let response_pages = payload["data"]["data"].as_array().unwrap();
+            assert_eq!(response_pages.first().unwrap()["page"], start_page);
+            assert_eq!(response_pages.last().unwrap()["page"], expected_end);
+            all_pages.extend(
+                response_pages
+                    .iter()
+                    .map(|page| page["page"].as_u64().unwrap() as u32),
+            );
+        }
+        assert_eq!(all_pages, (1..=120).collect::<Vec<_>>());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
@@ -849,7 +1051,15 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
         )
         .route(
             "/api/research/snapshots/{id}/pdf-extraction",
-            get(get_research_pdf_extraction).post(capture_research_pdf_extraction),
+            get(get_latest_research_pdf_extraction).post(capture_research_pdf_extraction),
+        )
+        .route(
+            "/api/research/source-snapshots/{id}/pdf-extractions",
+            get(list_research_pdf_extractions),
+        )
+        .route(
+            "/api/research/pdf-extractions/{id}",
+            get(get_research_pdf_extraction_by_id),
         )
         .route(
             "/api/research/pdf-extractions/{id}/pages",
@@ -1822,6 +2032,8 @@ struct ResearchLinksQuery {
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct ResearchPdfPagesQuery {
+    #[serde(rename = "startPage")]
+    start_page: Option<u32>,
     limit: Option<u32>,
 }
 
@@ -2028,7 +2240,7 @@ async fn capture_research_pdf_extraction(
     ))))
 }
 
-async fn get_research_pdf_extraction(
+async fn get_latest_research_pdf_extraction(
     State(state): State<AppState>,
     Path(snapshot_id): Path<String>,
 ) -> Result<axum::Json<ApiResponse<ResearchPdfExtractionDto>>, ApiError> {
@@ -2036,26 +2248,57 @@ async fn get_research_pdf_extraction(
         state
             .runtime
             .research_service()
-            .get_pdf_extraction(&snapshot_id)
+            .latest_pdf_extraction(&snapshot_id)
             .await?,
     ))))
+}
+
+async fn get_research_pdf_extraction_by_id(
+    State(state): State<AppState>,
+    Path(extraction_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ResearchPdfExtractionDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(research_pdf_extraction_dto(
+        state
+            .runtime
+            .research_service()
+            .get_pdf_extraction_by_id(&extraction_id)
+            .await?,
+    ))))
+}
+
+async fn list_research_pdf_extractions(
+    State(state): State<AppState>,
+    Path(snapshot_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ResearchPdfExtractionDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_pdf_extractions(&snapshot_id)
+            .await?
+            .into_iter()
+            .map(research_pdf_extraction_dto)
+            .collect(),
+    )))
 }
 
 async fn list_research_pdf_pages(
     State(state): State<AppState>,
     Path(extraction_id): Path<String>,
     Query(query): Query<ResearchPdfPagesQuery>,
-) -> Result<axum::Json<ApiResponse<Vec<ResearchPdfPageDto>>>, ApiError> {
-    Ok(axum::Json(ApiResponse::ok(
-        state
-            .runtime
-            .research_service()
-            .list_pdf_pages(&extraction_id, query.limit.unwrap_or(25))
-            .await?
-            .into_iter()
-            .map(research_pdf_page_dto)
-            .collect(),
-    )))
+) -> Result<axum::Json<ApiResponse<ResearchPdfPageListDto>>, ApiError> {
+    let batch = state
+        .runtime
+        .research_service()
+        .list_pdf_pages(
+            &extraction_id,
+            query.start_page.unwrap_or(1),
+            query.limit.unwrap_or(50),
+        )
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(research_pdf_page_list_dto(
+        batch,
+    ))))
 }
 
 async fn get_research_pdf_page(
@@ -2320,6 +2563,23 @@ fn research_pdf_page_dto(value: ResearchPdfPage) -> ResearchPdfPageDto {
         page: value.page,
         text: value.text,
         text_hash: research_content_hash_dto(value.text_hash),
+    }
+}
+
+fn research_pdf_page_list_dto(value: ResearchPdfPageBatch) -> ResearchPdfPageListDto {
+    let ResearchPdfPageBatch {
+        pages,
+        start_page,
+        limit,
+        has_more,
+        next_start_page,
+    } = value;
+    ResearchPdfPageListDto {
+        data: pages.into_iter().map(research_pdf_page_dto).collect(),
+        start_page,
+        limit,
+        has_more,
+        next_start_page,
     }
 }
 

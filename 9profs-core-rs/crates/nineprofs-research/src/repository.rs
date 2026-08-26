@@ -45,6 +45,12 @@ pub trait ResearchRepository: Send + Sync {
         &self,
         id: &ResearchPdfExtractionId,
     ) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
+    /// Returns the deterministic latest revision by `(extracted_at_ms DESC, id DESC)`.
+    async fn latest_pdf_extraction(
+        &self,
+        source_snapshot_id: &ResearchSourceSnapshotId,
+    ) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
+    /// Returns all revisions in stable `(extracted_at_ms ASC, id ASC)` order.
     async fn list_pdf_extractions(
         &self,
         source_snapshot_id: &ResearchSourceSnapshotId,
@@ -65,9 +71,11 @@ pub trait ResearchRepository: Send + Sync {
         extraction: &ResearchPdfExtraction,
         pages: &[ResearchPdfPage],
     ) -> Result<bool, ResearchError>;
+    /// Lists pages at or after the one-based `start_page` in stable page order.
     async fn list_pdf_pages(
         &self,
         extraction_id: &ResearchPdfExtractionId,
+        start_page: u32,
         limit: u32,
     ) -> Result<Vec<ResearchPdfPage>, ResearchError>;
     async fn get_pdf_page(
@@ -277,10 +285,27 @@ impl ResearchRepository for SqliteResearchRepository {
         &self,
         id: &ResearchPdfExtractionId,
     ) -> Result<Option<ResearchPdfExtraction>, ResearchError> {
-        let row = sqlx::query(&pdf_extraction_select("WHERE id = ?"))
-            .bind(id.as_str())
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(&pdf_extraction_select(
+            "WHERE id = ?",
+            "extracted_at_ms ASC, id ASC",
+        ))
+        .bind(id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(map_pdf_extraction).transpose()
+    }
+
+    async fn latest_pdf_extraction(
+        &self,
+        source_snapshot_id: &ResearchSourceSnapshotId,
+    ) -> Result<Option<ResearchPdfExtraction>, ResearchError> {
+        let row = sqlx::query(&pdf_extraction_select(
+            "WHERE source_snapshot_id = ?",
+            "extracted_at_ms DESC, id DESC",
+        ))
+        .bind(source_snapshot_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(map_pdf_extraction).transpose()
     }
 
@@ -288,10 +313,13 @@ impl ResearchRepository for SqliteResearchRepository {
         &self,
         source_snapshot_id: &ResearchSourceSnapshotId,
     ) -> Result<Vec<ResearchPdfExtraction>, ResearchError> {
-        let rows = sqlx::query(&pdf_extraction_select("WHERE source_snapshot_id = ?"))
-            .bind(source_snapshot_id.as_str())
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(&pdf_extraction_select(
+            "WHERE source_snapshot_id = ?",
+            "extracted_at_ms ASC, id ASC",
+        ))
+        .bind(source_snapshot_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(map_pdf_extraction).collect()
     }
 
@@ -305,6 +333,7 @@ impl ResearchRepository for SqliteResearchRepository {
         let row = sqlx::query(&pdf_extraction_select(
             "WHERE source_snapshot_id = ? AND extractor = ? AND extractor_version = ? \
              AND hash_algorithm = ? AND extraction_hash = ?",
+            "extracted_at_ms ASC, id ASC",
         ))
         .bind(source_snapshot_id.as_str())
         .bind(extractor)
@@ -389,13 +418,16 @@ impl ResearchRepository for SqliteResearchRepository {
     async fn list_pdf_pages(
         &self,
         extraction_id: &ResearchPdfExtractionId,
+        start_page: u32,
         limit: u32,
     ) -> Result<Vec<ResearchPdfPage>, ResearchError> {
         let rows = sqlx::query(
             "SELECT extraction_id, page, text, hash_algorithm, text_hash \
-             FROM research_pdf_pages WHERE extraction_id = ? ORDER BY page ASC LIMIT ?",
+             FROM research_pdf_pages WHERE extraction_id = ? AND page >= ? \
+             ORDER BY page ASC LIMIT ?",
         )
         .bind(extraction_id.as_str())
+        .bind(start_page as i64)
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -741,11 +773,11 @@ fn map_evidence(row: sqlx::sqlite::SqliteRow) -> Result<ResearchEvidence, Resear
     })
 }
 
-fn pdf_extraction_select(where_clause: &str) -> String {
+fn pdf_extraction_select(where_clause: &str, order_by: &str) -> String {
     format!(
         "SELECT id, source_snapshot_id, artifact_id, extractor, extractor_version, page_count, \
          hash_algorithm, extraction_hash, extracted_at_ms, status \
-         FROM research_pdf_extractions {where_clause} ORDER BY extracted_at_ms DESC, id ASC"
+         FROM research_pdf_extractions {where_clause} ORDER BY {order_by}"
     )
 }
 

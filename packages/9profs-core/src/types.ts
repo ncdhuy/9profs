@@ -6,6 +6,7 @@ export type ToolId = string
 export type ResearchCaseId = string
 export type ResearchSourceId = string
 export type ResearchSourceSnapshotId = string
+export type ResearchPdfExtractionId = string
 export type ResearchEvidenceId = string
 export type ResearchClaimId = string
 export type ClaimEvidenceLinkId = string
@@ -415,7 +416,7 @@ export interface CaptureResearchPdfExtractionInput {
 }
 
 export interface ResearchPdfExtraction {
-  readonly extractionId: string
+  readonly extractionId: ResearchPdfExtractionId
   readonly sourceSnapshotId: ResearchSourceSnapshotId
   readonly artifactId: string
   readonly extractor: string
@@ -427,10 +428,23 @@ export interface ResearchPdfExtraction {
 }
 
 export interface ResearchPdfPage {
-  readonly extractionId: string
+  readonly extractionId: ResearchPdfExtractionId
   readonly page: number
   readonly text: string
   readonly textHash: ResearchContentHash
+}
+
+export interface ResearchPdfPageList {
+  readonly data: readonly ResearchPdfPage[]
+  readonly startPage: number
+  readonly limit: number
+  readonly hasMore: boolean
+  readonly nextStartPage: number | null
+}
+
+export interface ResearchPdfPageListOptions {
+  readonly startPage?: number
+  readonly limit?: number
 }
 
 export interface ReferencePdfIngestion {
@@ -442,7 +456,7 @@ export interface ReferencePdfIngestion {
 export interface CaptureResearchPdfEvidenceInput {
   readonly researchCaseId: ResearchCaseId
   readonly sourceSnapshotId: ResearchSourceSnapshotId
-  readonly extractionId: string
+  readonly extractionId: ResearchPdfExtractionId
   readonly page: number
   readonly start: number
   readonly end: number

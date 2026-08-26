@@ -38,7 +38,8 @@ pub use research::{
     ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
     ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchHashAlgorithmDto,
     ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
-    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
+    ResearchPdfPageListDto, ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto,
+    ResearchSourceSnapshotDto,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

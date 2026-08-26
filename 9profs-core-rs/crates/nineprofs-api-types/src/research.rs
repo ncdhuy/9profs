@@ -207,6 +207,16 @@ pub struct ResearchPdfPageDto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResearchPdfPageListDto {
+    pub data: Vec<ResearchPdfPageDto>,
+    pub start_page: u32,
+    pub limit: u32,
+    pub has_more: bool,
+    pub next_start_page: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReferencePdfIngestionDto {
     pub artifact: ResearchArtifactDto,
     pub source: ResearchSourceDto,

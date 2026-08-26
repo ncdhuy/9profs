@@ -40,8 +40,11 @@ import type {
   ResearchCaseId,
   ResearchClaim,
   ResearchEvidence,
+  ResearchPdfExtractionId,
   ResearchPdfExtraction,
   ResearchPdfPage,
+  ResearchPdfPageList,
+  ResearchPdfPageListOptions,
   ResearchSource,
   ResearchSourceSnapshot,
   ReferencePdfIngestion,
@@ -149,9 +152,16 @@ export interface CoreTransport {
     snapshotId: ResearchSourceSnapshotId,
     input: CaptureResearchPdfExtractionInput,
   ): Promise<ResearchPdfExtraction>
-  researchPdfExtraction(snapshotId: ResearchSourceSnapshotId): Promise<ResearchPdfExtraction>
-  researchPdfPages(extractionId: string, limit?: number): Promise<ResearchPdfPage[]>
-  researchPdfPage(extractionId: string, page: number): Promise<ResearchPdfPage>
+  /** Fetch one immutable extraction revision by its exact extraction ID. */
+  researchPdfExtraction(extractionId: ResearchPdfExtractionId): Promise<ResearchPdfExtraction>
+  researchPdfExtractions(snapshotId: ResearchSourceSnapshotId): Promise<ResearchPdfExtraction[]>
+  /** Compatibility selector: latest by extractedAtMs DESC, extractionId DESC. */
+  latestPdfExtraction(snapshotId: ResearchSourceSnapshotId): Promise<ResearchPdfExtraction>
+  researchPdfPages(
+    extractionId: ResearchPdfExtractionId,
+    options?: ResearchPdfPageListOptions,
+  ): Promise<ResearchPdfPageList>
+  researchPdfPage(extractionId: ResearchPdfExtractionId, page: number): Promise<ResearchPdfPage>
   captureResearchPdfEvidence(input: CaptureResearchPdfEvidenceInput): Promise<ResearchEvidence>
   researchEvidence(researchCaseId?: string, sourceSnapshotId?: string): Promise<ResearchEvidence[]>
   researchEvidenceById(id: string): Promise<ResearchEvidence>
@@ -369,14 +379,23 @@ export function createCoreTransport(
         'POST',
         input,
       ),
-    researchPdfExtraction: (snapshotId) =>
+    researchPdfExtraction: (extractionId) =>
+      get<ResearchPdfExtraction>(
+        `/api/research/pdf-extractions/${encodeURIComponent(extractionId)}`,
+      ),
+    researchPdfExtractions: (snapshotId) =>
+      get<ResearchPdfExtraction[]>(
+        `/api/research/source-snapshots/${encodeURIComponent(snapshotId)}/pdf-extractions`,
+      ),
+    latestPdfExtraction: (snapshotId) =>
       get<ResearchPdfExtraction>(
         `/api/research/snapshots/${encodeURIComponent(snapshotId)}/pdf-extraction`,
       ),
-    researchPdfPages: (extractionId, limit) =>
-      get<ResearchPdfPage[]>(
+    researchPdfPages: (extractionId, options) =>
+      get<ResearchPdfPageList>(
         queryPath(`/api/research/pdf-extractions/${encodeURIComponent(extractionId)}/pages`, [
-          ['limit', limit === undefined ? undefined : String(limit)],
+          ['startPage', options?.startPage === undefined ? undefined : String(options.startPage)],
+          ['limit', options?.limit === undefined ? undefined : String(options.limit)],
         ]),
       ),
     researchPdfPage: (extractionId, page) =>

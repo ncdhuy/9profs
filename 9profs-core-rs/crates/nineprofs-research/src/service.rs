@@ -15,9 +15,9 @@ use crate::{
     MAX_RATIONALE_BYTES, MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES, PdfExtractionStatus,
     ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
     ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
-    ResearchRepository, ResearchSource, ResearchSourceId, ResearchSourceSnapshot,
-    ResearchSourceSnapshotId, SafeMetadata, SourceOrigin, VerifiedArtifact, bounded_text,
-    validate_metadata,
+    ResearchPdfPageBatch, ResearchRepository, ResearchSource, ResearchSourceId,
+    ResearchSourceSnapshot, ResearchSourceSnapshotId, SafeMetadata, SourceOrigin, VerifiedArtifact,
+    bounded_text, validate_metadata,
 };
 
 #[derive(Clone)]
@@ -436,35 +436,153 @@ impl ResearchService {
         Ok(extraction)
     }
 
-    pub async fn get_pdf_extraction(
+    async fn get_pdf_extraction_value(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+    ) -> Result<ResearchPdfExtraction, ResearchError> {
+        self.repository
+            .get_pdf_extraction(extraction_id)
+            .await?
+            .ok_or_else(|| not_found("PDF extraction", extraction_id.as_str()))
+    }
+
+    pub async fn get_pdf_extraction_by_id(
+        &self,
+        extraction_id: &str,
+    ) -> Result<ResearchPdfExtraction, ResearchError> {
+        let extraction_id = ResearchPdfExtractionId::parse(extraction_id.to_owned())?;
+        self.get_pdf_extraction_value(&extraction_id).await
+    }
+
+    pub async fn list_pdf_extractions(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Vec<ResearchPdfExtraction>, ResearchError> {
+        let snapshot_id = ResearchSourceSnapshotId::parse(snapshot_id.to_owned())?;
+        self.repository.list_pdf_extractions(&snapshot_id).await
+    }
+
+    /// Compatibility selector for the legacy snapshot-level read route.
+    /// Deterministically returns the extraction with the greatest
+    /// `(extracted_at_ms, id)` tuple. New workflows must use an exact ID.
+    pub async fn latest_pdf_extraction(
         &self,
         snapshot_id: &str,
     ) -> Result<ResearchPdfExtraction, ResearchError> {
         let snapshot_id = ResearchSourceSnapshotId::parse(snapshot_id.to_owned())?;
         self.repository
-            .list_pdf_extractions(&snapshot_id)
+            .latest_pdf_extraction(&snapshot_id)
             .await?
-            .into_iter()
-            .next()
             .ok_or_else(|| not_found("PDF extraction", snapshot_id.as_str()))
+    }
+
+    pub async fn get_pdf_extraction_for_snapshot(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+        expected_snapshot_id: &ResearchSourceSnapshotId,
+    ) -> Result<ResearchPdfExtraction, ResearchError> {
+        let extraction = self.get_pdf_extraction_value(extraction_id).await?;
+        if extraction.source_snapshot_id != *expected_snapshot_id {
+            return Err(ResearchError::Invalid(
+                "PDF extraction does not belong to source snapshot".to_owned(),
+            ));
+        }
+        Ok(extraction)
+    }
+
+    pub async fn require_ready_pdf_extraction(
+        &self,
+        extraction_id: &str,
+    ) -> Result<ResearchPdfExtraction, ResearchError> {
+        let extraction = self.get_pdf_extraction_by_id(extraction_id).await?;
+        if !matches!(extraction.status, PdfExtractionStatus::Ready) {
+            return Err(ResearchError::Invalid(format!(
+                "PDF extraction {} is not ready: {:?}",
+                extraction.id.as_str(),
+                extraction.status
+            )));
+        }
+        Ok(extraction)
     }
 
     pub async fn list_pdf_pages(
         &self,
         extraction_id: &str,
+        start_page: u32,
         limit: u32,
-    ) -> Result<Vec<ResearchPdfPage>, ResearchError> {
-        let extraction_id = ResearchPdfExtractionId::parse(extraction_id.to_owned())?;
-        let limit = limit.clamp(1, 50);
-        if self
-            .repository
-            .get_pdf_extraction(&extraction_id)
-            .await?
-            .is_none()
-        {
-            return Err(not_found("PDF extraction", extraction_id.as_str()));
+    ) -> Result<ResearchPdfPageBatch, ResearchError> {
+        if start_page == 0 {
+            return Err(ResearchError::Invalid(
+                "PDF start page must be positive".to_owned(),
+            ));
         }
-        self.repository.list_pdf_pages(&extraction_id, limit).await
+        let extraction_id = ResearchPdfExtractionId::parse(extraction_id.to_owned())?;
+        self.get_pdf_extraction_value(&extraction_id).await?;
+        self.list_pdf_pages_value(&extraction_id, start_page, limit)
+            .await
+    }
+
+    async fn list_pdf_pages_value(
+        &self,
+        extraction_id: &ResearchPdfExtractionId,
+        start_page: u32,
+        limit: u32,
+    ) -> Result<ResearchPdfPageBatch, ResearchError> {
+        let limit = limit.clamp(1, 50);
+        let mut pages = self
+            .repository
+            .list_pdf_pages(extraction_id, start_page, limit + 1)
+            .await?;
+        let has_more = pages.len() > limit as usize;
+        if has_more {
+            pages.truncate(limit as usize);
+        }
+        let next_start_page = if has_more {
+            let last_page = pages
+                .last()
+                .ok_or_else(|| ResearchError::Invalid("PDF page batch is empty".to_owned()))?
+                .page;
+            Some(last_page.checked_add(1).ok_or_else(|| {
+                ResearchError::Invalid("PDF next start page exceeds the supported range".to_owned())
+            })?)
+        } else {
+            None
+        };
+        Ok(ResearchPdfPageBatch {
+            pages,
+            start_page,
+            limit,
+            has_more,
+            next_start_page,
+        })
+    }
+
+    pub async fn list_all_pdf_pages_for_indexing(
+        &self,
+        extraction_id: &str,
+    ) -> Result<Vec<ResearchPdfPage>, ResearchError> {
+        let extraction = self.require_ready_pdf_extraction(extraction_id).await?;
+        let extraction_id = ResearchPdfExtractionId::parse(extraction_id.to_owned())?;
+        let mut pages = Vec::with_capacity(extraction.page_count as usize);
+        let mut start_page = 1;
+        loop {
+            let batch = self
+                .list_pdf_pages_value(&extraction_id, start_page, 50)
+                .await?;
+            pages.extend(batch.pages);
+            if !batch.has_more {
+                break;
+            }
+            start_page = batch.next_start_page.ok_or_else(|| {
+                ResearchError::Invalid("PDF page batch is missing its continuation".to_owned())
+            })?;
+        }
+        if pages.len() != extraction.page_count as usize {
+            return Err(ResearchError::Invalid(
+                "PDF extraction page enumeration is incomplete".to_owned(),
+            ));
+        }
+        Ok(pages)
     }
 
     pub async fn get_pdf_page(
@@ -488,16 +606,9 @@ impl ResearchService {
         &self,
         input: CapturePdfEvidence,
     ) -> Result<ResearchEvidence, ResearchError> {
-        let extraction = self
-            .repository
-            .get_pdf_extraction(&input.extraction_id)
-            .await?
-            .ok_or_else(|| not_found("PDF extraction", input.extraction_id.as_str()))?;
-        if extraction.source_snapshot_id != input.source_snapshot_id {
-            return Err(ResearchError::Invalid(
-                "PDF extraction does not belong to source snapshot".to_owned(),
-            ));
-        }
+        let _extraction = self
+            .get_pdf_extraction_for_snapshot(&input.extraction_id, &input.source_snapshot_id)
+            .await?;
         let page = self
             .repository
             .get_pdf_page(&input.extraction_id, input.page)
@@ -1448,6 +1559,220 @@ mod tests {
             store.get(artifact.artifact_id()).await,
             Err(ResearchError::Artifact(message)) if message.contains("do not match metadata")
         ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn pdf_extraction_access_is_exact_ordered_paginated_and_ready_only() {
+        let database = Database::in_memory().await.unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "9profs-research-pdf-access-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let store = Arc::new(crate::ResearchArtifactStore::new(
+            root.clone(),
+            database.pool().clone(),
+        ));
+        let service = ResearchService::new(
+            crate::SqliteResearchRepository::new(database.pool().clone()),
+            Arc::new(BroadcastEventBus::new(64)),
+        )
+        .with_artifact_store(Arc::clone(&store));
+        let mut upload = store.begin_upload("access.pdf").unwrap();
+        upload.append(b"%PDF-1.7\naccess fixture").unwrap();
+        let artifact = upload.finish().await.unwrap();
+        let case = service
+            .create_case(CreateResearchCase {
+                title: "PDF access".to_owned(),
+            })
+            .await
+            .unwrap();
+        let source = service
+            .create_source(CreateResearchSource {
+                research_case_id: case.id,
+                kind: SourceKind::ReferencePdf,
+                label: "Access fixture".to_owned(),
+            })
+            .await
+            .unwrap();
+        let snapshot = service
+            .capture_verified_artifact_snapshot(source.id, &artifact, BTreeMap::new())
+            .await
+            .unwrap();
+
+        let no_text = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("no-text".to_owned()),
+                page_count: 1,
+                status: PdfExtractionStatus::NoExtractableText,
+                pages: vec![crate::CapturePdfPage {
+                    page: 1,
+                    text: String::new(),
+                }],
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            service
+                .require_ready_pdf_extraction(no_text.id.as_str())
+                .await,
+            Err(ResearchError::Invalid(message)) if message.contains("not ready")
+        ));
+
+        let pages = |prefix: &str| {
+            (1..=120)
+                .map(|page| crate::CapturePdfPage {
+                    page,
+                    text: format!("{prefix} page {page}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        let extraction_one = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("1".to_owned()),
+                page_count: 120,
+                status: PdfExtractionStatus::Ready,
+                pages: pages("revision-one"),
+            })
+            .await
+            .unwrap();
+        while now_ms() <= extraction_one.extracted_at_ms {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        let extraction_two = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("2".to_owned()),
+                page_count: 120,
+                status: PdfExtractionStatus::Ready,
+                pages: pages("revision-two"),
+            })
+            .await
+            .unwrap();
+        assert!(extraction_two.extracted_at_ms > extraction_one.extracted_at_ms);
+        assert_ne!(
+            extraction_one.extraction_hash,
+            extraction_two.extraction_hash
+        );
+
+        let listed = service
+            .list_pdf_extractions(snapshot.id.as_str())
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 3);
+        assert!(listed.windows(2).all(|pair| {
+            (pair[0].extracted_at_ms, &pair[0].id) <= (pair[1].extracted_at_ms, &pair[1].id)
+        }));
+        assert!(listed.iter().any(|value| value.id == no_text.id));
+        assert!(listed.iter().any(|value| value.id == extraction_one.id));
+        assert!(listed.iter().any(|value| value.id == extraction_two.id));
+        assert_eq!(
+            service
+                .get_pdf_extraction_by_id(extraction_one.id.as_str())
+                .await
+                .unwrap(),
+            extraction_one
+        );
+        assert_eq!(
+            service
+                .get_pdf_extraction_by_id(extraction_two.id.as_str())
+                .await
+                .unwrap(),
+            extraction_two
+        );
+        assert_eq!(
+            service
+                .latest_pdf_extraction(snapshot.id.as_str())
+                .await
+                .unwrap()
+                .id,
+            extraction_two.id
+        );
+        assert!(matches!(
+            service
+                .get_pdf_extraction_for_snapshot(
+                    &extraction_one.id,
+                    &ResearchSourceSnapshotId::new()
+                )
+                .await,
+            Err(ResearchError::Invalid(message))
+                if message.contains("does not belong to source snapshot")
+        ));
+
+        let first = service
+            .list_pdf_pages(extraction_one.id.as_str(), 1, 500)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.pages.iter().map(|page| page.page).collect::<Vec<_>>(),
+            (1..=50).collect::<Vec<_>>()
+        );
+        assert_eq!(first.start_page, 1);
+        assert_eq!(first.limit, 50);
+        assert!(first.has_more);
+        assert_eq!(first.next_start_page, Some(51));
+        assert!(
+            first
+                .pages
+                .iter()
+                .all(|page| page.extraction_id == extraction_one.id)
+        );
+
+        let middle = service
+            .list_pdf_pages(extraction_one.id.as_str(), 51, 50)
+            .await
+            .unwrap();
+        assert_eq!(
+            middle
+                .pages
+                .iter()
+                .map(|page| page.page)
+                .collect::<Vec<_>>(),
+            (51..=100).collect::<Vec<_>>()
+        );
+        assert_eq!(middle.next_start_page, Some(101));
+        assert!(
+            middle
+                .pages
+                .iter()
+                .all(|page| page.extraction_id == extraction_one.id)
+        );
+
+        let last = service
+            .list_pdf_pages(extraction_one.id.as_str(), 101, 50)
+            .await
+            .unwrap();
+        assert_eq!(
+            last.pages.iter().map(|page| page.page).collect::<Vec<_>>(),
+            (101..=120).collect::<Vec<_>>()
+        );
+        assert!(!last.has_more);
+        assert_eq!(last.next_start_page, None);
+        assert!(
+            last.pages
+                .iter()
+                .all(|page| page.extraction_id == extraction_one.id)
+        );
+
+        let all = service
+            .list_all_pdf_pages_for_indexing(extraction_two.id.as_str())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 120);
+        assert_eq!(
+            all.iter().map(|page| page.page).collect::<Vec<_>>(),
+            (1..=120).collect::<Vec<_>>()
+        );
+        assert!(all.iter().all(|page| {
+            page.extraction_id == extraction_two.id && page.text.starts_with("revision-two")
+        }));
+        assert_eq!(all[0].text_hash, sha256_hash(all[0].text.as_bytes()));
         std::fs::remove_dir_all(root).unwrap();
     }
 }
