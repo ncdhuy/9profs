@@ -7,8 +7,9 @@ and a read-only comparison with `baseline/genoffice`.
 This document describes what exists, what remains GenOffice-derived, and the
 target boundaries for 9Profs. The pinned OfficeCLI sidecar is implemented for
 read-only inspection plus transactional detached creation and mutation;
-the Phase 5B1 reference-PDF ingestion seam is implemented, while broader
-research workflows and SaaS services remain future work.
+the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, and
+Phase 5C1 citation binding domain are implemented, while verification and SaaS
+services remain future work.
 
 ## Non-negotiable rules
 
@@ -36,8 +37,8 @@ dependency order.
 Product Layer
 └─ apps/shell + packages/project-store + local settings/recent files
 
-Research Domain Layer (Phases 5A and 5B1 implemented)
-└─ nineprofs-research provenance, reference-PDF artifacts/extractions, evidence, claims
+Research Domain Layer (Phases 5A, 5B1, 5B2, and 5C1 implemented)
+└─ nineprofs-research provenance, evidence, claims, citation occurrences/targets/bindings
 
 AI / Agent Core
 ├─ packages/agent-core       current loop, skills, tools, IPC transport
@@ -140,7 +141,7 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 | Phase 4D1.1 Docs Core Agent readiness         | IMPLEMENTED | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API                                                                                  |
 | Phase 4D1.2 Docs Core conversation continuity | IMPLEMENTED | Core-owned conversation identity, bounded ephemeral state, transactional multi-turn AionRS context, and conversation-bound Docs scope                                                                          |
 | Phase 4D2 Docs AiPanel Core migration         | IMPLEMENTED | Core-default fresh text chat, streamed multi-turn UI, safe tool activity, proposal review integration, and Legacy attachment/history fallback                                                                  |
-| Research domain                               | IMPLEMENTED | `nineprofs-research`, migrations `0005_research_domain.sql` and `0006_research_pdf_provenance.sql`, content-addressed PDF artifacts, PDF.js page extraction, exact evidence API; review/adapters remain future |
+  | Research domain                               | IMPLEMENTED | `nineprofs-research`, migrations `0005`–`0009`, content-addressed PDF artifacts, scoped retrieval seam, evidence/claims, and 5C1 citation binding; verification/UI remain future |
 
 ### Phase 1A Rust Core foundation
 
@@ -286,8 +287,7 @@ Pinned dependency record:
   cancellation, prompt construction, and tool registration.
 
 Still future: ACP/external CLI backends, Extensions runtime, the GenOffice AI
-bridge, OfficeCLI, Document Gateway implementation, Research Domain, and
-Product Layer.
+bridge, OfficeCLI, Document Gateway implementation, and Product Layer.
 
 ### Phase 2C0 — 9Profs Tool Runtime Foundation
 
@@ -476,8 +476,8 @@ rules, and ordered skill assignments are persisted.
 No repository package currently establishes:
 
 - an extension host or skill filesystem loader;
-- research PDF ingestion, Dify/RAG, citation verification, manuscript extraction,
-  Sheets verification, or research UI;
+- citation verification, manuscript/bibliography extraction, Sheets verification,
+  or research UI;
 - OfficeCLI resident mode;
 - Sheets or Slides adapters;
 - account, subscription, credits, remote workspace, or SaaS billing services.
@@ -549,7 +549,7 @@ after contracts stabilize. Proposed names are compatible with `packages/*`.
 | `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                                    | Product-specific editor internals                                       |
 | `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                            | Unmediated active-document writes                                       |
 | `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                            | Loading arbitrary code into the Docs persistence boundary               |
-| `9profs-core-rs/crates/nineprofs-research/`    | Phase 5A cases, sources, immutable snapshots, evidence/locators, claims, categorical assessments, provenance persistence | Canonical Office editing, adapters, provider SDKs, or research UI       |
+| `9profs-core-rs/crates/nineprofs-research/`    | Phases 5A–5C1 cases, sources, immutable snapshots, evidence/locators, claims, categorical assessments, citation occurrences/targets/bindings, claim links, and provenance persistence | Canonical Office editing, adapters, provider SDKs, or research UI       |
 | `packages/research-domain/`                    | Future UI/workflow adapters over Core research transport                                                                 | Canonical Office editing or provider SDK details                        |
 | `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                                   | Format-specific OOXML/XLSX/PPTX/PDF implementation                      |
 | `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                           | Competing writer or presentation DOM mutation                           |
@@ -587,7 +587,7 @@ behavior stays intact until a compatible replacement exists and is validated.
 | `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                   | 0, 4, 5         |
 | `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                      | 0, 4, 5         |
 | `nineprofs-officecli`                    | Pinned read-only OfficeCLI sidecar                  | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer    | 3A, 3B, 4       |
-| `nineprofs-research`                     | Evidence/provenance foundation                      | Core-owned Research Domain persistence and transport                  | Implemented; keep adapters above it    | 5A              |
+| `nineprofs-research`                     | Evidence/provenance and citation binding domain     | Core-owned Research Domain persistence and transport                  | Implemented; keep verification/adapters above it | 5A–5C1         |
 | No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof  | 6               |
 
 ## Ordered implementation sequence
@@ -879,7 +879,7 @@ tracking, Track Changes, undo, and project JSONL persistence remain intact.
 
 Still future: Core attachment/file tools, durable or cross-restart Core
 conversation restore, provider-settings synchronization, final Legacy removal,
-Sheets/Slides adapters, and Research Domain.
+Sheets/Slides adapters, and the next Research Domain verification layers.
 Final Core desktop process lifecycle and mandatory bridge authentication remain
 future work; local development without a configured session secret is
 loopback-only by deployment convention.
@@ -904,8 +904,8 @@ loopback-only by deployment convention.
   and safe metadata only, never excerpts, claims, or source contents.
 - Research code has no dependency on Office mutation or document persistence.
 
-Still future: OCR, layout/image understanding, citation verification,
-manuscript claim extraction, Sheets/data verification, research UI, field
+Still future: OCR, layout/image understanding, citation verification engine,
+manuscript/bibliography extraction, Sheets/data verification, research UI, field
 methodology bundles, and research ToolProvider exposure. Future adapters
 consume this domain; they do not replace it.
 
@@ -985,9 +985,32 @@ logged, or emitted in events.
 Citation verification MUST use cited-source or exact-extraction-scoped
 retrieval. Case-wide support from another source does not validate a citation.
 
-Still future: OCR, layout/image understanding, citation verification, research
-UI, and agent research tools. Phase 5C remains future: manuscript claim
-extraction and cross-source verification.
+#### Phase 5C1 — citation occurrence and claim binding domain (IMPLEMENTED)
+
+- `CitationOccurrence` records one observed manuscript marker/group with a
+  transport-neutral origin. Active-document origins preserve `DocumentId`,
+  `DocumentVersion`, and manuscript locator; a future immutable manuscript
+  snapshot can be represented without changing occurrence identity.
+- `CitationTarget` stores one reference key and ordinal inside an occurrence.
+  Grouped citations keep deterministic target ordering; unresolved targets are
+  valid and need not have a binding.
+- `CitationTargetBinding` identifies the cited `ResearchSource` and optionally
+  pins an exact `SourceSnapshotId` and exact PDF `ExtractionId`. Binding is
+  append-oriented, so corrections retain historical bindings. Exact PDF
+  verification-ready state requires the complete source/snapshot/ready
+  extraction chain; no latest-extraction lookup is used.
+- `ClaimCitationLink` is many-to-many association only. It is not a
+  `ClaimEvidenceLink` and does not mean supports, contradicts, or creates
+  `ResearchEvidence`. `ClaimEvidenceLink` remains the later evidence
+  assessment boundary.
+- SQLite migration `0009_research_citations.sql`, Core routes, and
+  `@genoffice/9profs-core` transport expose narrow create/get/list APIs. Writes
+  use the trusted session-secret boundary and lifecycle events carry IDs only.
+
+Still future: citation verification engine, evidence promotion, manuscript
+and bibliography parsing, source auto-resolution, research UI, and Agent
+research tools. Dify retrieval remains an adapter and is not a citation
+identity owner.
 
 ### Phase 6 — product/SaaS layer
 

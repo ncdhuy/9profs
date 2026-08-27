@@ -17,6 +17,10 @@ pub const MAX_RATIONALE_BYTES: usize = 16 * 1024;
 pub const MAX_METADATA_BYTES: usize = 8 * 1024;
 pub const MAX_LOCATOR_BYTES: usize = 4 * 1024;
 pub const MAX_PROVENANCE_TEXT_BYTES: usize = 1_024;
+pub const MAX_CITATION_MARKER_BYTES: usize = 4 * 1024;
+pub const MAX_CITATION_REFERENCE_KEY_BYTES: usize = MAX_PROVENANCE_TEXT_BYTES;
+pub const MAX_CITED_LOCATOR_BYTES: usize = MAX_PROVENANCE_TEXT_BYTES;
+pub const MAX_CITATION_TARGETS_PER_OCCURRENCE: usize = 128;
 pub const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PDF_PAGES: u32 = 10_000;
 pub const MAX_PDF_PAGE_TEXT_BYTES: usize = 1024 * 1024;
@@ -73,6 +77,10 @@ id_type!(ResearchPdfExtractionId, "PDF extraction ID");
 id_type!(ResearchEvidenceId, "evidence ID");
 id_type!(ResearchClaimId, "claim ID");
 id_type!(ClaimEvidenceLinkId, "claim-evidence link ID");
+id_type!(CitationOccurrenceId, "citation occurrence ID");
+id_type!(CitationTargetId, "citation target ID");
+id_type!(CitationTargetBindingId, "citation target binding ID");
+id_type!(ClaimCitationLinkId, "claim-citation link ID");
 
 /// Provider-neutral retrieval boundary. Provider adapters translate these
 /// canonical identities into provider-specific filters.
@@ -355,6 +363,98 @@ pub struct ResearchClaim {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CitationOccurrenceOrigin {
+    Manuscript {
+        document_id: String,
+        document_version: String,
+        locator: Option<EvidenceLocator>,
+    },
+    /// Future immutable manuscript provenance seam. Phase 5C1 stores the
+    /// explicit snapshot identity but does not create manuscript snapshots.
+    ManuscriptSnapshot {
+        source_snapshot_id: ResearchSourceSnapshotId,
+        locator: Option<EvidenceLocator>,
+    },
+    Imported {
+        source: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CitationOccurrence {
+    pub id: CitationOccurrenceId,
+    pub research_case_id: ResearchCaseId,
+    pub origin: CitationOccurrenceOrigin,
+    pub rendered_text: String,
+    pub created_at_ms: TimestampMs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CitationTarget {
+    pub id: CitationTargetId,
+    pub citation_occurrence_id: CitationOccurrenceId,
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationBindingMethod {
+    Human,
+    Imported,
+    DeterministicResolver,
+    Agent,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CitationTargetBinding {
+    pub id: CitationTargetBindingId,
+    pub research_case_id: ResearchCaseId,
+    pub citation_target_id: CitationTargetId,
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: Option<ResearchSourceSnapshotId>,
+    pub extraction_id: Option<ResearchPdfExtractionId>,
+    pub method: CitationBindingMethod,
+    pub created_at_ms: TimestampMs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationTargetResolution {
+    Unresolved,
+    SourceBound,
+    PdfExtractionBound,
+}
+
+impl CitationTargetBinding {
+    pub fn resolution(&self) -> CitationTargetResolution {
+        if self.extraction_id.is_some() {
+            CitationTargetResolution::PdfExtractionBound
+        } else {
+            CitationTargetResolution::SourceBound
+        }
+    }
+
+    pub fn pdf_verification_ready(&self) -> bool {
+        matches!(
+            self.resolution(),
+            CitationTargetResolution::PdfExtractionBound
+        )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ClaimCitationLink {
+    pub id: ClaimCitationLinkId,
+    pub research_case_id: ResearchCaseId,
+    pub claim_id: ResearchClaimId,
+    pub citation_occurrence_id: CitationOccurrenceId,
+    pub created_at_ms: TimestampMs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimEvidenceRelation {
     Supports,
@@ -460,6 +560,38 @@ pub struct CreateClaimEvidenceLink {
     pub rationale: Option<String>,
     pub assessment_method: AssessmentMethod,
     pub assessment_metadata: SafeMetadata,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateCitationOccurrence {
+    pub research_case_id: ResearchCaseId,
+    pub origin: CitationOccurrenceOrigin,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateCitationTarget {
+    pub citation_occurrence_id: CitationOccurrenceId,
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateCitationTargetBinding {
+    pub research_case_id: ResearchCaseId,
+    pub citation_target_id: CitationTargetId,
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: Option<ResearchSourceSnapshotId>,
+    pub extraction_id: Option<ResearchPdfExtractionId>,
+    pub method: CitationBindingMethod,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateClaimCitationLink {
+    pub research_case_id: ResearchCaseId,
+    pub claim_id: ResearchClaimId,
+    pub citation_occurrence_id: CitationOccurrenceId,
 }
 
 impl SourceOrigin {
@@ -617,6 +749,35 @@ impl ClaimOrigin {
                 }
             }
             Self::User | Self::Agent => {}
+            Self::Imported { source } => safe_provenance_text("source", source)?,
+        }
+        Ok(())
+    }
+}
+
+impl CitationOccurrenceOrigin {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        match self {
+            Self::Manuscript {
+                document_id,
+                document_version,
+                locator,
+            } => {
+                safe_provenance_text("document_id", document_id)?;
+                safe_provenance_text("document_version", document_version)?;
+                if let Some(locator) = locator {
+                    locator.validate()?;
+                }
+            }
+            Self::ManuscriptSnapshot {
+                source_snapshot_id,
+                locator,
+            } => {
+                if let Some(locator) = locator {
+                    locator.validate()?;
+                }
+                let _ = source_snapshot_id;
+            }
             Self::Imported { source } => safe_provenance_text("source", source)?,
         }
         Ok(())

@@ -114,6 +114,23 @@ pub enum ResearchClaimOriginDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResearchCitationOccurrenceOriginDto {
+    Manuscript {
+        document_id: String,
+        document_version: String,
+        locator: Option<ResearchEvidenceLocatorDto>,
+    },
+    ManuscriptSnapshot {
+        source_snapshot_id: String,
+        locator: Option<ResearchEvidenceLocatorDto>,
+    },
+    Imported {
+        source: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchClaimEvidenceRelationDto {
     Supports,
@@ -129,6 +146,23 @@ pub enum ResearchAssessmentMethodDto {
     DeterministicChecker,
     Agent,
     ExternalService,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchCitationBindingMethodDto {
+    Human,
+    Imported,
+    DeterministicResolver,
+    Agent,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchCitationTargetResolutionDto {
+    Unresolved,
+    SourceBound,
+    PdfExtractionBound,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -262,6 +296,52 @@ pub struct ClaimEvidenceLinkDto {
     pub created_at_ms: i64,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationOccurrenceDto {
+    pub occurrence_id: String,
+    pub research_case_id: String,
+    pub origin: ResearchCitationOccurrenceOriginDto,
+    pub rendered_text: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationTargetDto {
+    pub target_id: String,
+    pub citation_occurrence_id: String,
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+    pub resolution: ResearchCitationTargetResolutionDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationTargetBindingDto {
+    pub binding_id: String,
+    pub research_case_id: String,
+    pub citation_target_id: String,
+    pub source_id: String,
+    pub source_snapshot_id: Option<String>,
+    pub extraction_id: Option<String>,
+    pub method: ResearchCitationBindingMethodDto,
+    pub resolution: ResearchCitationTargetResolutionDto,
+    pub pdf_verification_ready: bool,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimCitationLinkDto {
+    pub link_id: String,
+    pub research_case_id: String,
+    pub claim_id: String,
+    pub citation_occurrence_id: String,
+    pub created_at_ms: i64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateResearchCaseRequest {
@@ -345,6 +425,42 @@ pub struct CreateClaimEvidenceLinkRequest {
     pub assessment_method: ResearchAssessmentMethodDto,
     #[serde(default)]
     pub assessment_metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateCitationOccurrenceRequest {
+    pub research_case_id: String,
+    pub origin: ResearchCitationOccurrenceOriginDto,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateCitationTargetRequest {
+    pub citation_occurrence_id: String,
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateCitationTargetBindingRequest {
+    pub research_case_id: String,
+    pub citation_target_id: String,
+    pub source_id: String,
+    pub source_snapshot_id: Option<String>,
+    pub extraction_id: Option<String>,
+    pub method: ResearchCitationBindingMethodDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateClaimCitationLinkRequest {
+    pub research_case_id: String,
+    pub claim_id: String,
+    pub citation_occurrence_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

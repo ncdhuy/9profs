@@ -31,10 +31,14 @@ pub use mcp::{
 };
 pub use research::{
     CaptureResearchPdfEvidenceRequest, CaptureResearchPdfExtractionRequest,
-    CaptureResearchSourceSnapshotRequest, ClaimEvidenceLinkDto, CreateClaimEvidenceLinkRequest,
-    CreateResearchCaseRequest, CreateResearchClaimRequest, CreateResearchEvidenceRequest,
-    CreateResearchSourceRequest, ReferencePdfIngestionDto, ResearchArtifactDto,
-    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto, ResearchClaimDto,
+    CaptureResearchSourceSnapshotRequest, CitationOccurrenceDto, CitationTargetBindingDto,
+    CitationTargetDto, ClaimCitationLinkDto, ClaimEvidenceLinkDto, CreateCitationOccurrenceRequest,
+    CreateCitationTargetBindingRequest, CreateCitationTargetRequest,
+    CreateClaimCitationLinkRequest, CreateClaimEvidenceLinkRequest, CreateResearchCaseRequest,
+    CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
+    ReferencePdfIngestionDto, ResearchArtifactDto, ResearchAssessmentMethodDto,
+    ResearchCaptureMethodDto, ResearchCaseDto, ResearchCitationBindingMethodDto,
+    ResearchCitationOccurrenceOriginDto, ResearchCitationTargetResolutionDto, ResearchClaimDto,
     ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
     ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchExtractionRetrievalIndexDto,
     ResearchHashAlgorithmDto, ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto,

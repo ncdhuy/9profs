@@ -27,11 +27,19 @@ import type {
   UpdateAssistantInput,
   UpdateMcpServerInput,
   DocumentProposal,
+  ClaimCitationLink,
   ClaimEvidenceLink,
+  CitationOccurrence,
+  CitationTarget,
+  CitationTargetBinding,
   CaptureResearchPdfEvidenceInput,
   CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
   CreateClaimEvidenceLinkInput,
+  CreateCitationOccurrenceInput,
+  CreateCitationTargetBindingInput,
+  CreateCitationTargetInput,
+  CreateClaimCitationLinkInput,
   CreateResearchCaseInput,
   CreateResearchClaimInput,
   CreateResearchEvidenceInput,
@@ -191,6 +199,29 @@ export interface CoreTransport {
   ): Promise<ClaimEvidenceLink[]>
   claimEvidenceLink(id: string): Promise<ClaimEvidenceLink>
   createClaimEvidenceLink(input: CreateClaimEvidenceLinkInput): Promise<ClaimEvidenceLink>
+  citationOccurrences(researchCaseId?: ResearchCaseId): Promise<CitationOccurrence[]>
+  citationOccurrence(id: string): Promise<CitationOccurrence>
+  createCitationOccurrence(input: CreateCitationOccurrenceInput): Promise<CitationOccurrence>
+  citationTargets(citationOccurrenceId: string): Promise<CitationTarget[]>
+  citationTarget(id: string): Promise<CitationTarget>
+  createCitationTarget(
+    citationOccurrenceId: string,
+    input: CreateCitationTargetInput,
+  ): Promise<CitationTarget>
+  citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
+  citationTargetBinding(id: string): Promise<CitationTargetBinding>
+  latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
+  createCitationTargetBinding(
+    citationTargetId: string,
+    input: CreateCitationTargetBindingInput,
+  ): Promise<CitationTargetBinding>
+  claimCitationLinks(
+    researchCaseId?: string,
+    claimId?: string,
+    citationOccurrenceId?: string,
+  ): Promise<ClaimCitationLink[]>
+  claimCitationLink(id: string): Promise<ClaimCitationLink>
+  createClaimCitationLink(input: CreateClaimCitationLinkInput): Promise<ClaimCitationLink>
   websocketUrl(): string
 }
 
@@ -471,6 +502,56 @@ export function createCoreTransport(
       get<ClaimEvidenceLink>(`/api/research/claim-evidence/${encodeURIComponent(id)}`),
     createClaimEvidenceLink: (input) =>
       trustedRequest<ClaimEvidenceLink>('/api/research/claim-evidence', 'POST', input),
+    citationOccurrences: (researchCaseId) =>
+      get<CitationOccurrence[]>(
+        queryPath('/api/research/citation-occurrences', [['researchCaseId', researchCaseId]]),
+      ),
+    citationOccurrence: (id) =>
+      get<CitationOccurrence>(`/api/research/citation-occurrences/${encodeURIComponent(id)}`),
+    createCitationOccurrence: (input) =>
+      trustedRequest<CitationOccurrence>('/api/research/citation-occurrences', 'POST', input),
+    citationTargets: (citationOccurrenceId) =>
+      get<CitationTarget[]>(
+        `/api/research/citation-occurrences/${encodeURIComponent(citationOccurrenceId)}/targets`,
+      ),
+    citationTarget: (id) =>
+      get<CitationTarget>(`/api/research/citation-targets/${encodeURIComponent(id)}`),
+    createCitationTarget: (citationOccurrenceId, input) =>
+      trustedRequest<CitationTarget>(
+        `/api/research/citation-occurrences/${encodeURIComponent(citationOccurrenceId)}/targets`,
+        'POST',
+        { ...input, citationOccurrenceId },
+      ),
+    citationTargetBindings: (citationTargetId) =>
+      get<CitationTargetBinding[]>(
+        `/api/research/citation-targets/${encodeURIComponent(citationTargetId)}/bindings`,
+      ),
+    citationTargetBinding: (id) =>
+      get<CitationTargetBinding>(
+        `/api/research/citation-target-bindings/${encodeURIComponent(id)}`,
+      ),
+    latestCitationTargetBinding: (citationTargetId) =>
+      get<CitationTargetBinding>(
+        `/api/research/citation-targets/${encodeURIComponent(citationTargetId)}/latest-binding`,
+      ),
+    createCitationTargetBinding: (citationTargetId, input) =>
+      trustedRequest<CitationTargetBinding>(
+        `/api/research/citation-targets/${encodeURIComponent(citationTargetId)}/bindings`,
+        'POST',
+        { ...input, citationTargetId },
+      ),
+    claimCitationLinks: (researchCaseId, claimId, citationOccurrenceId) =>
+      get<ClaimCitationLink[]>(
+        queryPath('/api/research/claim-citations', [
+          ['researchCaseId', researchCaseId],
+          ['claimId', claimId],
+          ['citationOccurrenceId', citationOccurrenceId],
+        ]),
+      ),
+    claimCitationLink: (id) =>
+      get<ClaimCitationLink>(`/api/research/claim-citations/${encodeURIComponent(id)}`),
+    createClaimCitationLink: (input) =>
+      trustedRequest<ClaimCitationLink>('/api/research/claim-citations', 'POST', input),
     websocketUrl: () => normalizedBaseUrl.replace(/^http/, 'ws') + '/ws',
   }
 }

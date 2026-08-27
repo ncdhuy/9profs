@@ -1,6 +1,6 @@
 # 9Profs architecture re-baseline audit
 
-Audit date: 2026-08-26
+Audit date: 2026-08-27
 
 This audit records confirmed current-branch facts. Source code, package
 manifests, tests, and read-only Git comparisons are authoritative; older
@@ -21,12 +21,12 @@ Inspected:
   `e2e/docs-presentation-parity.spec.ts`;
 - existing architecture documents and a read-only
   `baseline/genoffice..develop` comparison.
-- Phase 5A Rust Core research domain, SQLite migration, API DTO/routes, and
+- Phase 5A–5C1 Rust Core research domain, SQLite migrations, API DTO/routes, and
   TypeScript Core transport boundary.
 
-This audit records repository facts after Phase 5A implementation. It does not
-claim PDF ingestion, Dify/RAG, citation verification, manuscript extraction,
-Sheets verification, or research UI.
+This audit records repository facts after Phase 5C1 implementation. It does not
+claim citation verification, manuscript/bibliography extraction, Sheets
+verification, research UI, or Agent research tools.
 
 ## Confirmed repository architecture
 
@@ -56,7 +56,7 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                       | Implemented                                                            |
 | Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                              | Implemented                                                            |
 | Phase 4C2 proposal review/live commit  | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                         | Implemented                                                            |
-| Phase 5A research foundation           | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/claim-evidence assessments; Core API/transport                                | Implemented; adapters, review, and product services remain future      |
+| Phase 5A–5C1 research domain           | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/claim-evidence assessments/citation occurrences/targets/bindings/claim links; Core API/transport | Implemented; verification, adapters, review, and product services remain future |
 | Research/product backend               | Account/billing backend or OfficeCLI resident mode                                                                                                                    | Future                                                                 |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
@@ -249,8 +249,8 @@ AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
-OfficeCLI resident mode, Sheets/Slides adapters, PDF/Dify/RAG ingestion,
-citation verification, manuscript extraction, research UI, conversation/session
+OfficeCLI resident mode, Sheets/Slides adapters, citation verification,
+manuscript/bibliography extraction, research UI, conversation/session
 persistence, and account/product services. Phase 4C2
 extends the Core-generated proposed ChangeSet with trusted user decision
 workflow and the existing approved bridge path; no Agent tool can create an
@@ -343,7 +343,7 @@ generic CLI passthrough are not exposed.
 ## Phase 5B2.1 retrieval boundary
 
 The scoped Dify retrieval qualification closes the retrieval boundary needed by
-Phase 5C. Case-wide retrieval remains available for literature search, while
+Phase 5C2. Case-wide retrieval remains available for literature search, while
 citation verification must pass exact cited `ExtractionId` values through the
 provider-neutral `ResearchRetrievalScope`. Core validates case ownership and
 qualified local index state before the remote request, then validates every
@@ -351,6 +351,23 @@ returned segment against local mappings and canonical page hashes. Dify document
 metadata carries only the 9Profs extraction, source, and snapshot IDs; it never
 carries paths, secrets, or evidence text. Existing unqualified Phase 5B2 indexes
 remain case-wide compatible but require explicit resync before scoped use.
+
+## Phase 5C1 citation binding boundary
+
+`nineprofs-research` now owns provider-neutral citation identity and binding.
+`CitationOccurrence` records an observed manuscript marker/group and preserves
+document identity, version, and locator metadata. `CitationTarget` records
+ordered reference keys, including unresolved and grouped targets. A separate
+`CitationTargetBinding` may bind a target to a source, or to the exact source
+snapshot and ready PDF extraction needed for future verification. Bindings are
+append-oriented; a correction creates a new binding and retains history.
+
+`ClaimCitationLink` is a many-to-many association only. It does not create
+`ResearchEvidence`, make a support/contradiction assessment, or replace
+`ClaimEvidenceLink`. Core writes use the trusted session-secret boundary and
+emit identifier-only citation lifecycle events. No parser, retrieval call,
+verification engine, UI, or Agent tool is part of 5C1; those remain 5C2/5C3
+work.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 

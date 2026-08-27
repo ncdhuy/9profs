@@ -358,10 +358,28 @@ export type ResearchClaimOrigin =
   | { readonly kind: 'agent' }
   | { readonly kind: 'imported'; readonly source: string }
 
+export type ResearchCitationOccurrenceOrigin =
+  | {
+      readonly kind: 'manuscript'
+      readonly document_id: string
+      readonly document_version: string
+      readonly locator: ResearchEvidenceLocator | null
+    }
+  | {
+      readonly kind: 'manuscript_snapshot'
+      readonly source_snapshot_id: ResearchSourceSnapshotId
+      readonly locator: ResearchEvidenceLocator | null
+    }
+  | { readonly kind: 'imported'; readonly source: string }
+
 export type ResearchClaimEvidenceRelation =
   'supports' | 'contradicts' | 'contextualizes' | 'insufficient'
 export type ResearchAssessmentMethod =
   'human' | 'deterministic_checker' | 'agent' | 'external_service'
+export type ResearchCitationBindingMethod =
+  'human' | 'imported' | 'deterministic_resolver' | 'agent'
+export type ResearchCitationTargetResolution =
+  'unresolved' | 'source_bound' | 'pdf_extraction_bound'
 
 export interface ResearchContentHash {
   readonly algorithm: ResearchHashAlgorithm
@@ -570,6 +588,44 @@ export interface ClaimEvidenceLink {
   readonly createdAtMs: number
 }
 
+export interface CitationOccurrence {
+  readonly occurrenceId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly origin: ResearchCitationOccurrenceOrigin
+  readonly renderedText: string
+  readonly createdAtMs: number
+}
+
+export interface CitationTarget {
+  readonly targetId: string
+  readonly citationOccurrenceId: string
+  readonly ordinal: number
+  readonly referenceKey: string
+  readonly citedLocator: string | null
+  readonly resolution: ResearchCitationTargetResolution
+}
+
+export interface CitationTargetBinding {
+  readonly bindingId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly citationTargetId: string
+  readonly sourceId: ResearchSourceId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId | null
+  readonly extractionId: ResearchPdfExtractionId | null
+  readonly method: ResearchCitationBindingMethod
+  readonly resolution: ResearchCitationTargetResolution
+  readonly pdfVerificationReady: boolean
+  readonly createdAtMs: number
+}
+
+export interface ClaimCitationLink {
+  readonly linkId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly claimId: ResearchClaimId
+  readonly citationOccurrenceId: string
+  readonly createdAtMs: number
+}
+
 export interface CreateResearchCaseInput {
   readonly title: string
 }
@@ -611,6 +667,34 @@ export interface CreateClaimEvidenceLinkInput {
   readonly rationale?: string | null
   readonly assessmentMethod: ResearchAssessmentMethod
   readonly assessmentMetadata?: Readonly<Record<string, string>>
+}
+
+export interface CreateCitationOccurrenceInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly origin: ResearchCitationOccurrenceOrigin
+  readonly renderedText: string
+}
+
+export interface CreateCitationTargetInput {
+  readonly citationOccurrenceId: string
+  readonly ordinal: number
+  readonly referenceKey: string
+  readonly citedLocator?: string | null
+}
+
+export interface CreateCitationTargetBindingInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly citationTargetId: string
+  readonly sourceId: ResearchSourceId
+  readonly sourceSnapshotId?: ResearchSourceSnapshotId | null
+  readonly extractionId?: ResearchPdfExtractionId | null
+  readonly method: ResearchCitationBindingMethod
+}
+
+export interface CreateClaimCitationLinkInput {
+  readonly researchCaseId: ResearchCaseId
+  readonly claimId: ResearchClaimId
+  readonly citationOccurrenceId: string
 }
 
 export interface SkillDefinition {

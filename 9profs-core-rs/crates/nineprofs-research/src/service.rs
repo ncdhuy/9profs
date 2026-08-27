@@ -7,9 +7,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    CapturePdfEvidence, CapturePdfExtraction, CaptureSourceSnapshot, ClaimEvidenceLink,
-    ContentHash, CreateClaimEvidenceLink, CreateResearchCase, CreateResearchClaim,
-    CreateResearchEvidence, CreateResearchSource, HashAlgorithm, MAX_CASE_TITLE_BYTES,
+    CapturePdfEvidence, CapturePdfExtraction, CaptureSourceSnapshot, CitationOccurrence,
+    CitationOccurrenceId, CitationOccurrenceOrigin, CitationTarget, CitationTargetBinding,
+    CitationTargetBindingId, CitationTargetId, CitationTargetResolution, ClaimCitationLink,
+    ClaimEvidenceLink, ContentHash, CreateCitationOccurrence, CreateCitationTarget,
+    CreateCitationTargetBinding, CreateClaimCitationLink, CreateClaimEvidenceLink,
+    CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
+    HashAlgorithm, MAX_CASE_TITLE_BYTES, MAX_CITATION_MARKER_BYTES,
+    MAX_CITATION_REFERENCE_KEY_BYTES, MAX_CITATION_TARGETS_PER_OCCURRENCE, MAX_CITED_LOCATOR_BYTES,
     MAX_CLAIM_TEXT_BYTES, MAX_EVIDENCE_EXCERPT_BYTES, MAX_NORMALIZED_TEXT_BYTES,
     MAX_PDF_EXTRACTION_BYTES, MAX_PDF_PAGE_TEXT_BYTES, MAX_PDF_PAGES, MAX_PROVENANCE_TEXT_BYTES,
     MAX_RATIONALE_BYTES, MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES, PdfExtractionStatus,
@@ -849,6 +854,395 @@ impl ResearchService {
                 "evidence_id": value.evidence_id,
                 "relation": value.relation,
                 "assessment_method": value.assessment_method,
+            }),
+        );
+        Ok(value)
+    }
+
+    pub async fn list_citation_occurrences(
+        &self,
+        research_case_id: Option<&str>,
+    ) -> Result<Vec<CitationOccurrence>, ResearchError> {
+        let case_id = research_case_id
+            .map(|id| ResearchCaseId::parse(id.to_owned()))
+            .transpose()?;
+        self.repository
+            .list_citation_occurrences(case_id.as_ref())
+            .await
+    }
+
+    pub async fn get_citation_occurrence(
+        &self,
+        id: &str,
+    ) -> Result<CitationOccurrence, ResearchError> {
+        let id = CitationOccurrenceId::parse(id.to_owned())?;
+        self.repository
+            .get_citation_occurrence(&id)
+            .await?
+            .ok_or_else(|| not_found("citation occurrence", id.as_str()))
+    }
+
+    pub async fn create_citation_occurrence(
+        &self,
+        input: CreateCitationOccurrence,
+    ) -> Result<CitationOccurrence, ResearchError> {
+        self.ensure_case(&input.research_case_id).await?;
+        bounded_text(
+            "citation marker",
+            &input.rendered_text,
+            MAX_CITATION_MARKER_BYTES,
+        )?;
+        input.origin.validate()?;
+        if let CitationOccurrenceOrigin::ManuscriptSnapshot {
+            source_snapshot_id, ..
+        } = &input.origin
+        {
+            let snapshot = self
+                .repository
+                .get_snapshot(source_snapshot_id)
+                .await?
+                .ok_or_else(|| not_found("source snapshot", source_snapshot_id.as_str()))?;
+            let source = self
+                .repository
+                .get_source(&snapshot.source_id)
+                .await?
+                .ok_or_else(|| not_found("source", snapshot.source_id.as_str()))?;
+            if source.research_case_id != input.research_case_id {
+                return Err(ResearchError::Invalid(
+                    "citation occurrence snapshot must belong to same research case".to_owned(),
+                ));
+            }
+            if !matches!(source.kind, crate::SourceKind::Manuscript) {
+                return Err(ResearchError::Invalid(
+                    "manuscript citation snapshot requires a Manuscript source".to_owned(),
+                ));
+            }
+        }
+        let value = CitationOccurrence {
+            id: CitationOccurrenceId::new(),
+            research_case_id: input.research_case_id,
+            origin: input.origin,
+            rendered_text: input.rendered_text,
+            created_at_ms: now_ms(),
+        };
+        self.repository.insert_citation_occurrence(&value).await?;
+        self.publish(
+            "research.citationOccurrenceCreated",
+            json!({
+                "citation_occurrence_id": value.id,
+                "research_case_id": value.research_case_id,
+            }),
+        );
+        Ok(value)
+    }
+
+    pub async fn list_citation_targets(
+        &self,
+        citation_occurrence_id: &str,
+    ) -> Result<Vec<CitationTarget>, ResearchError> {
+        let occurrence_id = CitationOccurrenceId::parse(citation_occurrence_id.to_owned())?;
+        self.get_citation_occurrence(occurrence_id.as_str()).await?;
+        self.repository.list_citation_targets(&occurrence_id).await
+    }
+
+    pub async fn get_citation_target(&self, id: &str) -> Result<CitationTarget, ResearchError> {
+        let id = CitationTargetId::parse(id.to_owned())?;
+        self.repository
+            .get_citation_target(&id)
+            .await?
+            .ok_or_else(|| not_found("citation target", id.as_str()))
+    }
+
+    pub async fn create_citation_target(
+        &self,
+        input: CreateCitationTarget,
+    ) -> Result<CitationTarget, ResearchError> {
+        self.get_citation_occurrence(input.citation_occurrence_id.as_str())
+            .await?;
+        let existing = self
+            .repository
+            .list_citation_targets(&input.citation_occurrence_id)
+            .await?;
+        if existing.len() >= MAX_CITATION_TARGETS_PER_OCCURRENCE {
+            return Err(ResearchError::Invalid(format!(
+                "citation occurrence cannot contain more than {MAX_CITATION_TARGETS_PER_OCCURRENCE} targets"
+            )));
+        }
+        if existing
+            .iter()
+            .any(|target| target.ordinal == input.ordinal)
+        {
+            return Err(ResearchError::Invalid(
+                "citation target ordinal already exists in occurrence".to_owned(),
+            ));
+        }
+        bounded_text(
+            "citation reference key",
+            &input.reference_key,
+            MAX_CITATION_REFERENCE_KEY_BYTES,
+        )?;
+        if let Some(cited_locator) = &input.cited_locator {
+            bounded_text("cited locator", cited_locator, MAX_CITED_LOCATOR_BYTES)?;
+        }
+        let value = CitationTarget {
+            id: CitationTargetId::new(),
+            citation_occurrence_id: input.citation_occurrence_id,
+            ordinal: input.ordinal,
+            reference_key: input.reference_key,
+            cited_locator: input.cited_locator,
+        };
+        self.repository.insert_citation_target(&value).await?;
+        Ok(value)
+    }
+
+    pub async fn citation_target_resolution(
+        &self,
+        target_id: &str,
+    ) -> Result<CitationTargetResolution, ResearchError> {
+        let target = self.get_citation_target(target_id).await?;
+        Ok(self
+            .repository
+            .latest_citation_target_binding(&target.id)
+            .await?
+            .map(|binding| binding.resolution())
+            .unwrap_or(CitationTargetResolution::Unresolved))
+    }
+
+    pub async fn list_citation_target_bindings(
+        &self,
+        citation_target_id: &str,
+    ) -> Result<Vec<CitationTargetBinding>, ResearchError> {
+        let target_id = CitationTargetId::parse(citation_target_id.to_owned())?;
+        self.get_citation_target(target_id.as_str()).await?;
+        self.repository
+            .list_citation_target_bindings(&target_id)
+            .await
+    }
+
+    pub async fn get_citation_target_binding(
+        &self,
+        id: &str,
+    ) -> Result<CitationTargetBinding, ResearchError> {
+        let id = CitationTargetBindingId::parse(id.to_owned())?;
+        self.repository
+            .get_citation_target_binding(&id)
+            .await?
+            .ok_or_else(|| not_found("citation target binding", id.as_str()))
+    }
+
+    pub async fn latest_citation_target_binding(
+        &self,
+        citation_target_id: &str,
+    ) -> Result<CitationTargetBinding, ResearchError> {
+        let target_id = CitationTargetId::parse(citation_target_id.to_owned())?;
+        self.get_citation_target(target_id.as_str()).await?;
+        self.repository
+            .latest_citation_target_binding(&target_id)
+            .await?
+            .ok_or_else(|| not_found("citation target binding", target_id.as_str()))
+    }
+
+    pub async fn create_citation_target_binding(
+        &self,
+        input: CreateCitationTargetBinding,
+    ) -> Result<CitationTargetBinding, ResearchError> {
+        self.ensure_case(&input.research_case_id).await?;
+        let target = self
+            .repository
+            .get_citation_target(&input.citation_target_id)
+            .await?
+            .ok_or_else(|| not_found("citation target", input.citation_target_id.as_str()))?;
+        let occurrence = self
+            .repository
+            .get_citation_occurrence(&target.citation_occurrence_id)
+            .await?
+            .ok_or_else(|| {
+                not_found(
+                    "citation occurrence",
+                    target.citation_occurrence_id.as_str(),
+                )
+            })?;
+        if occurrence.research_case_id != input.research_case_id {
+            return Err(ResearchError::Invalid(
+                "citation target must belong to same research case as binding".to_owned(),
+            ));
+        }
+
+        let source = self
+            .repository
+            .get_source(&input.source_id)
+            .await?
+            .ok_or_else(|| not_found("source", input.source_id.as_str()))?;
+        if source.research_case_id != input.research_case_id {
+            return Err(ResearchError::Invalid(
+                "citation binding source must belong to same research case".to_owned(),
+            ));
+        }
+
+        if input.extraction_id.is_some() && input.source_snapshot_id.is_none() {
+            return Err(ResearchError::Invalid(
+                "PDF citation binding requires its source snapshot".to_owned(),
+            ));
+        }
+        if let Some(snapshot_id) = &input.source_snapshot_id {
+            let snapshot = self
+                .repository
+                .get_snapshot(snapshot_id)
+                .await?
+                .ok_or_else(|| not_found("source snapshot", snapshot_id.as_str()))?;
+            if snapshot.source_id != input.source_id {
+                return Err(ResearchError::Invalid(
+                    "citation binding snapshot does not belong to source".to_owned(),
+                ));
+            }
+        }
+        if let Some(extraction_id) = &input.extraction_id {
+            let snapshot_id = input.source_snapshot_id.as_ref().ok_or_else(|| {
+                ResearchError::Invalid(
+                    "PDF citation binding requires its source snapshot".to_owned(),
+                )
+            })?;
+            let extraction = self
+                .repository
+                .get_pdf_extraction(extraction_id)
+                .await?
+                .ok_or_else(|| not_found("PDF extraction", extraction_id.as_str()))?;
+            if extraction.source_snapshot_id != *snapshot_id {
+                return Err(ResearchError::Invalid(
+                    "citation binding extraction does not belong to source snapshot".to_owned(),
+                ));
+            }
+            if !matches!(source.kind, crate::SourceKind::ReferencePdf) {
+                return Err(ResearchError::Invalid(
+                    "PDF citation binding requires a ReferencePdf source".to_owned(),
+                ));
+            }
+            if !matches!(extraction.status, PdfExtractionStatus::Ready) {
+                return Err(ResearchError::Invalid(
+                    "PDF citation binding requires a ready extraction".to_owned(),
+                ));
+            }
+        }
+
+        let existing = self
+            .repository
+            .list_citation_target_bindings(&input.citation_target_id)
+            .await?;
+        if let Some(existing) = existing.into_iter().find(|binding| {
+            binding.research_case_id == input.research_case_id
+                && binding.source_id == input.source_id
+                && binding.source_snapshot_id == input.source_snapshot_id
+                && binding.extraction_id == input.extraction_id
+                && binding.method == input.method
+        }) {
+            return Ok(existing);
+        }
+
+        let value = CitationTargetBinding {
+            id: CitationTargetBindingId::new(),
+            research_case_id: input.research_case_id,
+            citation_target_id: input.citation_target_id,
+            source_id: input.source_id,
+            source_snapshot_id: input.source_snapshot_id,
+            extraction_id: input.extraction_id,
+            method: input.method,
+            created_at_ms: now_ms(),
+        };
+        self.repository
+            .insert_citation_target_binding(&value)
+            .await?;
+        self.publish(
+            "research.citationTargetBound",
+            json!({
+                "binding_id": value.id,
+                "citation_target_id": value.citation_target_id,
+                "research_case_id": value.research_case_id,
+                "source_id": value.source_id,
+                "source_snapshot_id": value.source_snapshot_id,
+                "extraction_id": value.extraction_id,
+                "method": value.method,
+            }),
+        );
+        Ok(value)
+    }
+
+    pub async fn list_claim_citation_links(
+        &self,
+        research_case_id: Option<&str>,
+        claim_id: Option<&str>,
+        citation_occurrence_id: Option<&str>,
+    ) -> Result<Vec<ClaimCitationLink>, ResearchError> {
+        let case_id = research_case_id
+            .map(|id| ResearchCaseId::parse(id.to_owned()))
+            .transpose()?;
+        let claim_id = claim_id
+            .map(|id| ResearchClaimId::parse(id.to_owned()))
+            .transpose()?;
+        let occurrence_id = citation_occurrence_id
+            .map(|id| CitationOccurrenceId::parse(id.to_owned()))
+            .transpose()?;
+        self.repository
+            .list_claim_citation_links(case_id.as_ref(), claim_id.as_ref(), occurrence_id.as_ref())
+            .await
+    }
+
+    pub async fn get_claim_citation_link(
+        &self,
+        id: &str,
+    ) -> Result<ClaimCitationLink, ResearchError> {
+        let id = crate::ClaimCitationLinkId::parse(id.to_owned())?;
+        self.repository
+            .get_claim_citation_link(&id)
+            .await?
+            .ok_or_else(|| not_found("claim-citation link", id.as_str()))
+    }
+
+    pub async fn create_claim_citation_link(
+        &self,
+        input: CreateClaimCitationLink,
+    ) -> Result<ClaimCitationLink, ResearchError> {
+        self.ensure_case(&input.research_case_id).await?;
+        let claim = self
+            .repository
+            .get_claim(&input.claim_id)
+            .await?
+            .ok_or_else(|| not_found("claim", input.claim_id.as_str()))?;
+        let occurrence = self
+            .repository
+            .get_citation_occurrence(&input.citation_occurrence_id)
+            .await?
+            .ok_or_else(|| {
+                not_found("citation occurrence", input.citation_occurrence_id.as_str())
+            })?;
+        if claim.research_case_id != input.research_case_id
+            || occurrence.research_case_id != input.research_case_id
+        {
+            return Err(ResearchError::Invalid(
+                "claim and citation occurrence must belong to same research case".to_owned(),
+            ));
+        }
+        if let Some(existing) = self
+            .repository
+            .find_claim_citation_link(&input.claim_id, &input.citation_occurrence_id)
+            .await?
+        {
+            return Ok(existing);
+        }
+        let value = ClaimCitationLink {
+            id: crate::ClaimCitationLinkId::new(),
+            research_case_id: input.research_case_id,
+            claim_id: input.claim_id,
+            citation_occurrence_id: input.citation_occurrence_id,
+            created_at_ms: now_ms(),
+        };
+        self.repository.insert_claim_citation_link(&value).await?;
+        self.publish(
+            "research.claimCitationLinked",
+            json!({
+                "link_id": value.id,
+                "research_case_id": value.research_case_id,
+                "claim_id": value.claim_id,
+                "citation_occurrence_id": value.citation_occurrence_id,
             }),
         );
         Ok(value)
@@ -1773,6 +2167,435 @@ mod tests {
             page.extraction_id == extraction_two.id && page.text.starts_with("revision-two")
         }));
         assert_eq!(all[0].text_hash, sha256_hash(all[0].text.as_bytes()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn citations_support_grouped_targets_many_to_many_links_and_unresolved_targets() {
+        let (database, service) = service().await;
+        let case = service
+            .create_case(CreateResearchCase {
+                title: "Citation review".to_owned(),
+            })
+            .await
+            .unwrap();
+        let source = service
+            .create_source(CreateResearchSource {
+                research_case_id: case.id.clone(),
+                kind: SourceKind::Web,
+                label: "Reference".to_owned(),
+            })
+            .await
+            .unwrap();
+        let occurrence = service
+            .create_citation_occurrence(CreateCitationOccurrence {
+                research_case_id: case.id.clone(),
+                origin: CitationOccurrenceOrigin::Manuscript {
+                    document_id: "document-1".to_owned(),
+                    document_version: "version-1".to_owned(),
+                    locator: Some(EvidenceLocator::Manuscript {
+                        block_id: "paragraph-1".to_owned(),
+                        start: Some(2),
+                        end: Some(8),
+                    }),
+                },
+                rendered_text: "[12,13,14]".to_owned(),
+            })
+            .await
+            .unwrap();
+        let second_occurrence = service
+            .create_citation_occurrence(CreateCitationOccurrence {
+                research_case_id: case.id.clone(),
+                origin: CitationOccurrenceOrigin::Imported {
+                    source: "fixture".to_owned(),
+                },
+                rendered_text: "[15]".to_owned(),
+            })
+            .await
+            .unwrap();
+        let mut targets = Vec::new();
+        for (ordinal, reference_key) in ["12", "13", "14"].into_iter().enumerate() {
+            targets.push(
+                service
+                    .create_citation_target(CreateCitationTarget {
+                        citation_occurrence_id: occurrence.id.clone(),
+                        ordinal: ordinal as u32,
+                        reference_key: reference_key.to_owned(),
+                        cited_locator: (ordinal == 1).then(|| "p. 42".to_owned()),
+                    })
+                    .await
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.reference_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["12", "13", "14"]
+        );
+        assert!(matches!(
+            service
+                .create_citation_target(CreateCitationTarget {
+                    citation_occurrence_id: occurrence.id.clone(),
+                    ordinal: 1,
+                    reference_key: "duplicate".to_owned(),
+                    cited_locator: None,
+                })
+                .await,
+            Err(ResearchError::Invalid(message)) if message.contains("ordinal already exists")
+        ));
+        assert_eq!(
+            service
+                .citation_target_resolution(targets[1].id.as_str())
+                .await
+                .unwrap(),
+            crate::CitationTargetResolution::Unresolved
+        );
+
+        let binding = service
+            .create_citation_target_binding(CreateCitationTargetBinding {
+                research_case_id: case.id.clone(),
+                citation_target_id: targets[0].id.clone(),
+                source_id: source.id,
+                source_snapshot_id: None,
+                extraction_id: None,
+                method: crate::CitationBindingMethod::DeterministicResolver,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            binding.resolution(),
+            crate::CitationTargetResolution::SourceBound
+        );
+        assert!(!binding.pdf_verification_ready());
+        assert_eq!(
+            service
+                .citation_target_resolution(targets[0].id.as_str())
+                .await
+                .unwrap(),
+            crate::CitationTargetResolution::SourceBound
+        );
+        assert!(
+            service
+                .list_citation_target_bindings(targets[1].id.as_str())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            service
+                .create_citation_target_binding(CreateCitationTargetBinding {
+                    research_case_id: case.id.clone(),
+                    citation_target_id: targets[0].id.clone(),
+                    source_id: binding.source_id.clone(),
+                    source_snapshot_id: None,
+                    extraction_id: None,
+                    method: crate::CitationBindingMethod::DeterministicResolver,
+                })
+                .await
+                .unwrap()
+                .id,
+            binding.id
+        );
+
+        let claim_one = service
+            .create_claim(CreateResearchClaim {
+                research_case_id: case.id.clone(),
+                text: "Claim one".to_owned(),
+                origin: ClaimOrigin::User,
+            })
+            .await
+            .unwrap();
+        let claim_two = service
+            .create_claim(CreateResearchClaim {
+                research_case_id: case.id.clone(),
+                text: "Claim two".to_owned(),
+                origin: ClaimOrigin::User,
+            })
+            .await
+            .unwrap();
+        let link_one = service
+            .create_claim_citation_link(CreateClaimCitationLink {
+                research_case_id: case.id.clone(),
+                claim_id: claim_one.id.clone(),
+                citation_occurrence_id: occurrence.id.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .create_claim_citation_link(CreateClaimCitationLink {
+                    research_case_id: case.id.clone(),
+                    claim_id: claim_one.id.clone(),
+                    citation_occurrence_id: occurrence.id.clone(),
+                })
+                .await
+                .unwrap()
+                .id,
+            link_one.id
+        );
+        service
+            .create_claim_citation_link(CreateClaimCitationLink {
+                research_case_id: case.id.clone(),
+                claim_id: claim_one.id.clone(),
+                citation_occurrence_id: second_occurrence.id.clone(),
+            })
+            .await
+            .unwrap();
+        service
+            .create_claim_citation_link(CreateClaimCitationLink {
+                research_case_id: case.id.clone(),
+                claim_id: claim_two.id.clone(),
+                citation_occurrence_id: occurrence.id.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .list_claim_citation_links(Some(case.id.as_str()), None, None)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(
+            service
+                .list_evidence(Some(case.id.as_str()), None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let recreated = ResearchService::new(
+            crate::SqliteResearchRepository::new(database.pool().clone()),
+            Arc::new(BroadcastEventBus::new(64)),
+        );
+        let persisted_targets = recreated
+            .list_citation_targets(occurrence.id.as_str())
+            .await
+            .unwrap();
+        assert_eq!(
+            persisted_targets
+                .iter()
+                .map(|target| target.ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            recreated
+                .list_claim_citation_links(None, Some(claim_one.id.as_str()), None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_pdf_bindings_pin_history_and_reject_cross_case_or_broken_chains() {
+        let database = Database::in_memory().await.unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "9profs-research-citation-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let store = Arc::new(crate::ResearchArtifactStore::new(
+            root.clone(),
+            database.pool().clone(),
+        ));
+        let service = ResearchService::new(
+            crate::SqliteResearchRepository::new(database.pool().clone()),
+            Arc::new(BroadcastEventBus::new(64)),
+        )
+        .with_artifact_store(Arc::clone(&store));
+        let mut upload = store.begin_upload("reference.pdf").unwrap();
+        upload.append(b"%PDF-1.7\ncitation fixture").unwrap();
+        let artifact = upload.finish().await.unwrap();
+        let case = service
+            .create_case(CreateResearchCase {
+                title: "PDF citation review".to_owned(),
+            })
+            .await
+            .unwrap();
+        let source = service
+            .create_source(CreateResearchSource {
+                research_case_id: case.id.clone(),
+                kind: SourceKind::ReferencePdf,
+                label: "Reference PDF".to_owned(),
+            })
+            .await
+            .unwrap();
+        let snapshot = service
+            .capture_verified_artifact_snapshot(source.id.clone(), &artifact, BTreeMap::new())
+            .await
+            .unwrap();
+        let extraction_one = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("1".to_owned()),
+                page_count: 1,
+                status: PdfExtractionStatus::Ready,
+                pages: vec![crate::CapturePdfPage {
+                    page: 1,
+                    text: "First extraction".to_owned(),
+                }],
+            })
+            .await
+            .unwrap();
+        let occurrence = service
+            .create_citation_occurrence(CreateCitationOccurrence {
+                research_case_id: case.id.clone(),
+                origin: CitationOccurrenceOrigin::Imported {
+                    source: "fixture".to_owned(),
+                },
+                rendered_text: "[12]".to_owned(),
+            })
+            .await
+            .unwrap();
+        let target = service
+            .create_citation_target(CreateCitationTarget {
+                citation_occurrence_id: occurrence.id,
+                ordinal: 0,
+                reference_key: "12".to_owned(),
+                cited_locator: Some("p. 42".to_owned()),
+            })
+            .await
+            .unwrap();
+        let binding_one = service
+            .create_citation_target_binding(CreateCitationTargetBinding {
+                research_case_id: case.id.clone(),
+                citation_target_id: target.id.clone(),
+                source_id: source.id.clone(),
+                source_snapshot_id: Some(snapshot.id.clone()),
+                extraction_id: Some(extraction_one.id.clone()),
+                method: crate::CitationBindingMethod::Human,
+            })
+            .await
+            .unwrap();
+        assert!(binding_one.pdf_verification_ready());
+
+        let extraction_two = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("2".to_owned()),
+                page_count: 1,
+                status: PdfExtractionStatus::Ready,
+                pages: vec![crate::CapturePdfPage {
+                    page: 1,
+                    text: "Second extraction".to_owned(),
+                }],
+            })
+            .await
+            .unwrap();
+        let binding_two = service
+            .create_citation_target_binding(CreateCitationTargetBinding {
+                research_case_id: case.id.clone(),
+                citation_target_id: target.id.clone(),
+                source_id: source.id.clone(),
+                source_snapshot_id: Some(snapshot.id.clone()),
+                extraction_id: Some(extraction_two.id.clone()),
+                method: crate::CitationBindingMethod::Imported,
+            })
+            .await
+            .unwrap();
+        assert_ne!(binding_one.id, binding_two.id);
+        assert_eq!(
+            service
+                .get_citation_target_binding(binding_one.id.as_str())
+                .await
+                .unwrap()
+                .extraction_id,
+            Some(extraction_one.id.clone())
+        );
+        assert_eq!(
+            service
+                .latest_citation_target_binding(target.id.as_str())
+                .await
+                .unwrap()
+                .id,
+            binding_two.id
+        );
+
+        let other_source = service
+            .create_source(CreateResearchSource {
+                research_case_id: case.id.clone(),
+                kind: SourceKind::ReferencePdf,
+                label: "Other reference PDF".to_owned(),
+            })
+            .await
+            .unwrap();
+        let other_snapshot = service
+            .capture_verified_artifact_snapshot(other_source.id.clone(), &artifact, BTreeMap::new())
+            .await
+            .unwrap();
+        let other_extraction = service
+            .capture_pdf_extraction(CapturePdfExtraction {
+                source_snapshot_id: other_snapshot.id.clone(),
+                extractor: "pdfjs".to_owned(),
+                extractor_version: Some("other".to_owned()),
+                page_count: 1,
+                status: PdfExtractionStatus::Ready,
+                pages: vec![crate::CapturePdfPage {
+                    page: 1,
+                    text: "Other extraction".to_owned(),
+                }],
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            service
+                .create_citation_target_binding(CreateCitationTargetBinding {
+                    research_case_id: case.id.clone(),
+                    citation_target_id: target.id.clone(),
+                    source_id: source.id.clone(),
+                    source_snapshot_id: Some(snapshot.id.clone()),
+                    extraction_id: Some(other_extraction.id),
+                    method: crate::CitationBindingMethod::DeterministicResolver,
+                })
+                .await,
+            Err(ResearchError::Invalid(message)) if message.contains("does not belong to source snapshot")
+        ));
+
+        let other_case = service
+            .create_case(CreateResearchCase {
+                title: "Other case".to_owned(),
+            })
+            .await
+            .unwrap();
+        let other_claim = service
+            .create_claim(CreateResearchClaim {
+                research_case_id: other_case.id.clone(),
+                text: "Other claim".to_owned(),
+                origin: ClaimOrigin::User,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            service
+                .create_citation_target_binding(CreateCitationTargetBinding {
+                    research_case_id: other_case.id.clone(),
+                    citation_target_id: target.id.clone(),
+                    source_id: source.id.clone(),
+                    source_snapshot_id: Some(snapshot.id.clone()),
+                    extraction_id: Some(extraction_one.id.clone()),
+                    method: crate::CitationBindingMethod::Agent,
+                })
+                .await,
+            Err(ResearchError::Invalid(message)) if message.contains("same research case")
+        ));
+        assert!(matches!(
+            service
+                .create_claim_citation_link(CreateClaimCitationLink {
+                    research_case_id: other_case.id,
+                    claim_id: other_claim.id,
+                    citation_occurrence_id: target.citation_occurrence_id,
+                })
+                .await,
+            Err(ResearchError::Invalid(message)) if message.contains("same research case")
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

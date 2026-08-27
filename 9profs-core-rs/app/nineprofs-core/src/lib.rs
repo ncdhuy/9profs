@@ -14,21 +14,26 @@ use nineprofs_api_types::{
     ActiveDocsAgentRunRequest, ActiveDocumentDto, AgentRunContextDto, AgentRunDto, AgentRunRequest,
     AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
     CaptureResearchPdfEvidenceRequest, CaptureResearchPdfExtractionRequest,
-    CaptureResearchSourceSnapshotRequest, ClaimEvidenceLinkDto, CreateAssistantRequest,
-    CreateClaimEvidenceLinkRequest, CreateDocumentAgentConversationRequest,
-    CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
-    CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
-    DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
-    ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
-    McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
-    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto, ResearchClaimDto,
-    ResearchClaimEvidenceRelationDto, ResearchClaimOriginDto, ResearchContentHashDto,
-    ResearchEvidenceDto, ResearchEvidenceLocatorDto, ResearchExtractionRetrievalIndexDto,
-    ResearchHashAlgorithmDto, ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto,
-    ResearchPdfPageDto, ResearchPdfPageListDto, ResearchRetrievalCandidateDto,
-    ResearchRetrievalIndexDto, ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto,
-    ResearchRetrievalReadinessDto, ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto,
-    ResearchSourceDto, ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
+    CaptureResearchSourceSnapshotRequest, CitationOccurrenceDto, CitationTargetBindingDto,
+    CitationTargetDto, ClaimCitationLinkDto, ClaimEvidenceLinkDto, CreateAssistantRequest,
+    CreateCitationOccurrenceRequest, CreateCitationTargetBindingRequest,
+    CreateCitationTargetRequest, CreateClaimCitationLinkRequest, CreateClaimEvidenceLinkRequest,
+    CreateDocumentAgentConversationRequest, CreateDocumentAgentConversationRunRequest,
+    CreateMcpServerRequest, CreateResearchCaseRequest, CreateResearchClaimRequest,
+    CreateResearchEvidenceRequest, CreateResearchSourceRequest, DocsAgentProfile,
+    DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse,
+    EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
+    McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
+    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
+    ResearchCitationBindingMethodDto, ResearchCitationOccurrenceOriginDto,
+    ResearchCitationTargetResolutionDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto,
+    ResearchClaimOriginDto, ResearchContentHashDto, ResearchEvidenceDto,
+    ResearchEvidenceLocatorDto, ResearchExtractionRetrievalIndexDto, ResearchHashAlgorithmDto,
+    ResearchPdfExtractionDto, ResearchPdfExtractionStatusDto, ResearchPdfPageDto,
+    ResearchPdfPageListDto, ResearchRetrievalCandidateDto, ResearchRetrievalIndexDto,
+    ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto, ResearchRetrievalReadinessDto,
+    ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto, ResearchSourceDto,
+    ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
     RetrieveResearchRequest, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
     UpdateAssistantRequest, UpdateMcpServerRequest,
 };
@@ -45,12 +50,13 @@ use nineprofs_mcp::{
 use nineprofs_officecli::OfficeCliStatus;
 use nineprofs_research::{
     AssessmentMethod, CaptureMethod, CapturePdfEvidence, CapturePdfExtraction, CapturePdfPage,
-    CaptureSourceSnapshot, ClaimEvidenceRelation, ClaimOrigin, CreateClaimEvidenceLink,
-    CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
-    EvidenceLocator, HashAlgorithm, ResearchCase, ResearchClaim, ResearchError, ResearchEvidence,
-    ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage, ResearchPdfPageBatch,
-    ResearchRetrievalScope, ResearchSource, ResearchSourceId, ResearchSourceSnapshot, SourceKind,
-    SourceOrigin,
+    CaptureSourceSnapshot, CitationBindingMethod, CitationOccurrenceOrigin, ClaimEvidenceRelation,
+    ClaimOrigin, CreateCitationOccurrence, CreateCitationTarget, CreateCitationTargetBinding,
+    CreateClaimCitationLink, CreateClaimEvidenceLink, CreateResearchCase, CreateResearchClaim,
+    CreateResearchEvidence, CreateResearchSource, EvidenceLocator, HashAlgorithm, ResearchCase,
+    ResearchClaim, ResearchError, ResearchEvidence, ResearchPdfExtraction, ResearchPdfExtractionId,
+    ResearchPdfPage, ResearchPdfPageBatch, ResearchRetrievalScope, ResearchSource,
+    ResearchSourceId, ResearchSourceSnapshot, SourceKind, SourceOrigin,
 };
 use nineprofs_research_dify::{
     DifyCaseIndex, DifyError, DifyExtractionIndex, DifyIndexStatus, DifyReadiness,
@@ -1100,6 +1106,42 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             get(get_claim_evidence_link),
         )
         .route(
+            "/api/research/citation-occurrences",
+            get(list_citation_occurrences).post(create_citation_occurrence),
+        )
+        .route(
+            "/api/research/citation-occurrences/{id}",
+            get(get_citation_occurrence),
+        )
+        .route(
+            "/api/research/citation-occurrences/{id}/targets",
+            get(list_citation_targets).post(create_citation_target),
+        )
+        .route(
+            "/api/research/citation-targets/{id}",
+            get(get_citation_target),
+        )
+        .route(
+            "/api/research/citation-targets/{id}/bindings",
+            get(list_citation_target_bindings).post(create_citation_target_binding),
+        )
+        .route(
+            "/api/research/citation-target-bindings/{id}",
+            get(get_citation_target_binding),
+        )
+        .route(
+            "/api/research/citation-targets/{id}/latest-binding",
+            get(get_latest_citation_target_binding),
+        )
+        .route(
+            "/api/research/claim-citations",
+            get(list_claim_citation_links).post(create_claim_citation_link),
+        )
+        .route(
+            "/api/research/claim-citations/{id}",
+            get(get_claim_citation_link),
+        )
+        .route(
             "/api/research/cases/{id}/retrieval-index",
             get(get_research_retrieval_index),
         )
@@ -2081,6 +2123,22 @@ struct ResearchLinksQuery {
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
+struct CitationOccurrencesQuery {
+    #[serde(rename = "researchCaseId")]
+    research_case_id: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ClaimCitationsQuery {
+    #[serde(rename = "researchCaseId")]
+    research_case_id: Option<String>,
+    #[serde(rename = "claimId")]
+    claim_id: Option<String>,
+    #[serde(rename = "citationOccurrenceId")]
+    citation_occurrence_id: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
 struct ResearchPdfPagesQuery {
     #[serde(rename = "startPage")]
     start_page: Option<u32>,
@@ -2554,6 +2612,254 @@ async fn create_claim_evidence_link(
     Ok(axum::Json(ApiResponse::ok(claim_evidence_link_dto(link))))
 }
 
+async fn list_citation_occurrences(
+    State(state): State<AppState>,
+    Query(query): Query<CitationOccurrencesQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<CitationOccurrenceDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_citation_occurrences(query.research_case_id.as_deref())
+            .await?
+            .into_iter()
+            .map(citation_occurrence_dto)
+            .collect(),
+    )))
+}
+
+async fn get_citation_occurrence(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<CitationOccurrenceDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(citation_occurrence_dto(
+        state
+            .runtime
+            .research_service()
+            .get_citation_occurrence(&id)
+            .await?,
+    ))))
+}
+
+async fn create_citation_occurrence(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateCitationOccurrenceRequest>,
+) -> Result<axum::Json<ApiResponse<CitationOccurrenceDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let occurrence = state
+        .runtime
+        .research_service()
+        .create_citation_occurrence(CreateCitationOccurrence {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            origin: citation_occurrence_origin(request.origin)?,
+            rendered_text: request.rendered_text,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(citation_occurrence_dto(
+        occurrence,
+    ))))
+}
+
+async fn list_citation_targets(
+    State(state): State<AppState>,
+    Path(occurrence_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<CitationTargetDto>>>, ApiError> {
+    let service = state.runtime.research_service();
+    let mut targets = Vec::new();
+    for target in service.list_citation_targets(&occurrence_id).await? {
+        let resolution = service
+            .citation_target_resolution(target.id.as_str())
+            .await?;
+        targets.push(citation_target_dto(target, resolution));
+    }
+    Ok(axum::Json(ApiResponse::ok(targets)))
+}
+
+async fn create_citation_target(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(occurrence_id): Path<String>,
+    axum::Json(request): axum::Json<CreateCitationTargetRequest>,
+) -> Result<axum::Json<ApiResponse<CitationTargetDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let route_occurrence_id = nineprofs_research::CitationOccurrenceId::parse(occurrence_id)?;
+    let request_occurrence_id =
+        nineprofs_research::CitationOccurrenceId::parse(request.citation_occurrence_id)?;
+    if route_occurrence_id != request_occurrence_id {
+        return Err(ResearchError::Invalid(
+            "citation target occurrence does not match route".to_owned(),
+        )
+        .into());
+    }
+    let target = state
+        .runtime
+        .research_service()
+        .create_citation_target(CreateCitationTarget {
+            citation_occurrence_id: route_occurrence_id,
+            ordinal: request.ordinal,
+            reference_key: request.reference_key,
+            cited_locator: request.cited_locator,
+        })
+        .await?;
+    let resolution = state
+        .runtime
+        .research_service()
+        .citation_target_resolution(target.id.as_str())
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(citation_target_dto(
+        target, resolution,
+    ))))
+}
+
+async fn get_citation_target(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<CitationTargetDto>>, ApiError> {
+    let service = state.runtime.research_service();
+    let target = service.get_citation_target(&id).await?;
+    let resolution = service
+        .citation_target_resolution(target.id.as_str())
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(citation_target_dto(
+        target, resolution,
+    ))))
+}
+
+async fn list_citation_target_bindings(
+    State(state): State<AppState>,
+    Path(target_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<CitationTargetBindingDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_citation_target_bindings(&target_id)
+            .await?
+            .into_iter()
+            .map(citation_target_binding_dto)
+            .collect(),
+    )))
+}
+
+async fn create_citation_target_binding(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(target_id): Path<String>,
+    axum::Json(request): axum::Json<CreateCitationTargetBindingRequest>,
+) -> Result<axum::Json<ApiResponse<CitationTargetBindingDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let route_target_id = nineprofs_research::CitationTargetId::parse(target_id)?;
+    let request_target_id =
+        nineprofs_research::CitationTargetId::parse(request.citation_target_id)?;
+    if route_target_id != request_target_id {
+        return Err(ResearchError::Invalid(
+            "citation binding target does not match route".to_owned(),
+        )
+        .into());
+    }
+    let binding = state
+        .runtime
+        .research_service()
+        .create_citation_target_binding(CreateCitationTargetBinding {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            citation_target_id: route_target_id,
+            source_id: nineprofs_research::ResearchSourceId::parse(request.source_id)?,
+            source_snapshot_id: request
+                .source_snapshot_id
+                .map(nineprofs_research::ResearchSourceSnapshotId::parse)
+                .transpose()?,
+            extraction_id: request
+                .extraction_id
+                .map(nineprofs_research::ResearchPdfExtractionId::parse)
+                .transpose()?,
+            method: citation_binding_method(request.method),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(citation_target_binding_dto(
+        binding,
+    ))))
+}
+
+async fn get_citation_target_binding(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<CitationTargetBindingDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(citation_target_binding_dto(
+        state
+            .runtime
+            .research_service()
+            .get_citation_target_binding(&id)
+            .await?,
+    ))))
+}
+
+async fn get_latest_citation_target_binding(
+    State(state): State<AppState>,
+    Path(target_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<CitationTargetBindingDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(citation_target_binding_dto(
+        state
+            .runtime
+            .research_service()
+            .latest_citation_target_binding(&target_id)
+            .await?,
+    ))))
+}
+
+async fn list_claim_citation_links(
+    State(state): State<AppState>,
+    Query(query): Query<ClaimCitationsQuery>,
+) -> Result<axum::Json<ApiResponse<Vec<ClaimCitationLinkDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_claim_citation_links(
+                query.research_case_id.as_deref(),
+                query.claim_id.as_deref(),
+                query.citation_occurrence_id.as_deref(),
+            )
+            .await?
+            .into_iter()
+            .map(claim_citation_link_dto)
+            .collect(),
+    )))
+}
+
+async fn create_claim_citation_link(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateClaimCitationLinkRequest>,
+) -> Result<axum::Json<ApiResponse<ClaimCitationLinkDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let link = state
+        .runtime
+        .research_service()
+        .create_claim_citation_link(CreateClaimCitationLink {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
+            claim_id: nineprofs_research::ResearchClaimId::parse(request.claim_id)?,
+            citation_occurrence_id: nineprofs_research::CitationOccurrenceId::parse(
+                request.citation_occurrence_id,
+            )?,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(claim_citation_link_dto(link))))
+}
+
+async fn get_claim_citation_link(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ClaimCitationLinkDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(claim_citation_link_dto(
+        state
+            .runtime
+            .research_service()
+            .get_claim_citation_link(&id)
+            .await?,
+    ))))
+}
+
 async fn get_research_retrieval_index(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2927,6 +3233,59 @@ fn claim_evidence_link_dto(value: nineprofs_research::ClaimEvidenceLink) -> Clai
     }
 }
 
+fn citation_occurrence_dto(value: nineprofs_research::CitationOccurrence) -> CitationOccurrenceDto {
+    CitationOccurrenceDto {
+        occurrence_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        origin: citation_occurrence_origin_dto(value.origin),
+        rendered_text: value.rendered_text,
+        created_at_ms: value.created_at_ms,
+    }
+}
+
+fn citation_target_dto(
+    value: nineprofs_research::CitationTarget,
+    resolution: nineprofs_research::CitationTargetResolution,
+) -> CitationTargetDto {
+    CitationTargetDto {
+        target_id: value.id.to_string(),
+        citation_occurrence_id: value.citation_occurrence_id.to_string(),
+        ordinal: value.ordinal,
+        reference_key: value.reference_key,
+        cited_locator: value.cited_locator,
+        resolution: citation_target_resolution_dto(resolution),
+    }
+}
+
+fn citation_target_binding_dto(
+    value: nineprofs_research::CitationTargetBinding,
+) -> CitationTargetBindingDto {
+    let resolution = value.resolution();
+    let pdf_verification_ready = value.pdf_verification_ready();
+    CitationTargetBindingDto {
+        binding_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        citation_target_id: value.citation_target_id.to_string(),
+        source_id: value.source_id.to_string(),
+        source_snapshot_id: value.source_snapshot_id.map(|id| id.to_string()),
+        extraction_id: value.extraction_id.map(|id| id.to_string()),
+        method: citation_binding_method_dto(value.method),
+        resolution: citation_target_resolution_dto(resolution),
+        pdf_verification_ready,
+        created_at_ms: value.created_at_ms,
+    }
+}
+
+fn claim_citation_link_dto(value: nineprofs_research::ClaimCitationLink) -> ClaimCitationLinkDto {
+    ClaimCitationLinkDto {
+        link_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        claim_id: value.claim_id.to_string(),
+        citation_occurrence_id: value.citation_occurrence_id.to_string(),
+        created_at_ms: value.created_at_ms,
+    }
+}
+
 fn source_kind(value: ResearchSourceKindDto) -> SourceKind {
     match value {
         ResearchSourceKindDto::ReferencePdf => SourceKind::ReferencePdf,
@@ -3136,6 +3495,98 @@ fn evidence_locator_dto(value: EvidenceLocator) -> ResearchEvidenceLocatorDto {
             section,
             clause,
         },
+    }
+}
+
+fn citation_occurrence_origin(
+    value: ResearchCitationOccurrenceOriginDto,
+) -> Result<CitationOccurrenceOrigin, ApiError> {
+    Ok(match value {
+        ResearchCitationOccurrenceOriginDto::Manuscript {
+            document_id,
+            document_version,
+            locator,
+        } => CitationOccurrenceOrigin::Manuscript {
+            document_id,
+            document_version,
+            locator: locator.map(evidence_locator),
+        },
+        ResearchCitationOccurrenceOriginDto::ManuscriptSnapshot {
+            source_snapshot_id,
+            locator,
+        } => CitationOccurrenceOrigin::ManuscriptSnapshot {
+            source_snapshot_id: nineprofs_research::ResearchSourceSnapshotId::parse(
+                source_snapshot_id,
+            )?,
+            locator: locator.map(evidence_locator),
+        },
+        ResearchCitationOccurrenceOriginDto::Imported { source } => {
+            CitationOccurrenceOrigin::Imported { source }
+        }
+    })
+}
+
+fn citation_occurrence_origin_dto(
+    value: CitationOccurrenceOrigin,
+) -> ResearchCitationOccurrenceOriginDto {
+    match value {
+        CitationOccurrenceOrigin::Manuscript {
+            document_id,
+            document_version,
+            locator,
+        } => ResearchCitationOccurrenceOriginDto::Manuscript {
+            document_id,
+            document_version,
+            locator: locator.map(evidence_locator_dto),
+        },
+        CitationOccurrenceOrigin::ManuscriptSnapshot {
+            source_snapshot_id,
+            locator,
+        } => ResearchCitationOccurrenceOriginDto::ManuscriptSnapshot {
+            source_snapshot_id: source_snapshot_id.to_string(),
+            locator: locator.map(evidence_locator_dto),
+        },
+        CitationOccurrenceOrigin::Imported { source } => {
+            ResearchCitationOccurrenceOriginDto::Imported { source }
+        }
+    }
+}
+
+fn citation_binding_method(value: ResearchCitationBindingMethodDto) -> CitationBindingMethod {
+    match value {
+        ResearchCitationBindingMethodDto::Human => CitationBindingMethod::Human,
+        ResearchCitationBindingMethodDto::Imported => CitationBindingMethod::Imported,
+        ResearchCitationBindingMethodDto::DeterministicResolver => {
+            CitationBindingMethod::DeterministicResolver
+        }
+        ResearchCitationBindingMethodDto::Agent => CitationBindingMethod::Agent,
+    }
+}
+
+fn citation_binding_method_dto(value: CitationBindingMethod) -> ResearchCitationBindingMethodDto {
+    match value {
+        CitationBindingMethod::Human => ResearchCitationBindingMethodDto::Human,
+        CitationBindingMethod::Imported => ResearchCitationBindingMethodDto::Imported,
+        CitationBindingMethod::DeterministicResolver => {
+            ResearchCitationBindingMethodDto::DeterministicResolver
+        }
+        CitationBindingMethod::Agent => ResearchCitationBindingMethodDto::Agent,
+    }
+}
+
+fn citation_target_resolution_dto(
+    value: nineprofs_research::CitationTargetResolution,
+) -> ResearchCitationTargetResolutionDto {
+    match value {
+        nineprofs_research::CitationTargetResolution::Unresolved => {
+            ResearchCitationTargetResolutionDto::Unresolved
+        }
+        nineprofs_research::CitationTargetResolution::SourceBound => {
+            ResearchCitationTargetResolutionDto::SourceBound
+        }
+        nineprofs_research::CitationTargetResolution::PdfExtractionBound => {
+            ResearchCitationTargetResolutionDto::PdfExtractionBound
+        }
     }
 }
 
@@ -3385,6 +3836,114 @@ mod research_api_tests {
         let payload = json_body(response).await;
         assert_eq!(payload["data"][0]["caseId"], case_id);
         assert_eq!(payload["data"][0]["title"], "Secure review");
+    }
+
+    #[tokio::test]
+    async fn citation_routes_require_launch_secret_and_round_trip_targets() {
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.session_secret = Some(Arc::from("citation-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let router = build_router(Arc::clone(&runtime));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/research/cases")
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "citation-secret")
+                    .body(Body::from(r#"{"title":"Citation API review"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let case_id = json_body(response).await["data"]["caseId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let occurrence_body = serde_json::json!({
+            "researchCaseId": case_id,
+            "origin": {"kind": "imported", "source": "citation-api-test"},
+            "renderedText": "[12, 13]"
+        });
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/research/citation-occurrences")
+                    .header("content-type", "application/json")
+                    .body(Body::from(occurrence_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/research/citation-occurrences")
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "citation-secret")
+                    .body(Body::from(occurrence_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let occurrence_status = response.status();
+        let occurrence_payload = json_body(response).await;
+        assert_eq!(
+            occurrence_status,
+            StatusCode::OK,
+            "unexpected occurrence HTTP response: {occurrence_payload}"
+        );
+        assert!(
+            occurrence_payload["data"]["occurrenceId"].is_string(),
+            "unexpected occurrence response: {occurrence_payload}"
+        );
+        let occurrence_id = occurrence_payload["data"]["occurrenceId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let target_body = serde_json::json!({
+            "citationOccurrenceId": occurrence_id,
+            "ordinal": 0,
+            "referenceKey": "12",
+            "citedLocator": "p. 42"
+        });
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/api/research/citation-occurrences/{occurrence_id}/targets"
+                ))
+                .header("content-type", "application/json")
+                .header(TRUSTED_DECISION_HEADER, "citation-secret")
+                .body(Body::from(target_body.to_string()))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let target_payload = json_body(response).await;
+        assert_eq!(target_payload["data"]["referenceKey"], "12");
+        assert_eq!(target_payload["data"]["resolution"], "unresolved");
+
+        let response = router
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/citation-occurrences/{occurrence_id}/targets"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let targets = json_body(response).await;
+        assert_eq!(targets["data"].as_array().unwrap().len(), 1);
+        assert_eq!(targets["data"][0]["referenceKey"], "12");
     }
 }
 
