@@ -8,9 +8,9 @@ This document describes what exists, what remains GenOffice-derived, and the
 target boundaries for 9Profs. The pinned OfficeCLI sidecar is implemented for
 read-only inspection plus transactional detached creation and mutation;
 the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, Phase
-5C1 citation binding domain, and Phase 5C2A citation verification orchestration
-are implemented, while citation parsing, UI, and SaaS services remain future
-work.
+5C1 citation binding domain, Phase 5C2A citation verification orchestration,
+and Phase 5C2B model-backed citation assessment are implemented, while
+citation parsing, UI, and SaaS services remain future work.
 
 ## Non-negotiable rules
 
@@ -123,26 +123,26 @@ present and useful, but are not evidence that 9Profs Core has been implemented.
 
 ### Phase 0 status
 
-| Area                                          | Status      | Evidence                                                                                                                                                                                                       |
-| --------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase 0 contracts                             | IMPLEMENTED | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams                                                                                                                       |
-| Phase 1A Rust Core                            | IMPLEMENTED | `9profs-core-rs/` transport/runtime foundation; no product domains                                                                                                                                             |
-| Phase 2A agent metadata/catalog               | IMPLEMENTED | `nineprofs-agent` descriptors, builtin catalog, minimal SQLite custom metadata persistence                                                                                                                     |
-| Phase 2A Agent Registry                       | IMPLEMENTED | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates                                                                                                                     |
-| Phase 2A task lifecycle                       | IMPLEMENTED | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events                                                                                                                           |
-| Phase 2B1 real agent execution                | IMPLEMENTED | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs                                                                                                                                |
-| Phase 2C1 MCP Tool Provider                   | IMPLEMENTED | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider                                                                                                                   |
-| Phase 3A OfficeCLI read-only provider         | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API                                                                              |
-| Phase 3B OfficeCLI detached mutation          | IMPLEMENTED | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion                                                                          |
-| Phase 4A active DOCX GenOffice adapter        | IMPLEMENTED | Active inspection, DocumentVersion/preconditions, stale-change protection, approved mutation gateway, existing Docs command engine reuse                                                                       |
-| Phase 4B Rust Core ↔ renderer bridge          | IMPLEMENTED | Active document registry, dedicated bidirectional `/ws/documents`, DOCX inspection proxy, approved mutation proxy, and version synchronization                                                                 |
-| Phase 4C1 active-document proposals           | IMPLEMENTED | `nineprofs-document-tools`, explicit list/inspect/propose tools, ephemeral proposal store, freshness, read-only proposal APIs/events                                                                           |
-| Phase 4C2 proposal review/live commit         | IMPLEMENTED | Core-owned review workflow, trusted approve/reject/retry endpoints, bounded renderer idempotency, and existing Docs AI-panel command summaries                                                                 |
-| Phase 4D1 Core-owned active Docs runs         | IMPLEMENTED | Trusted Docs run API, server-owned proposal-only ToolSet, per-run document scope enforcement, and typed `/ws` event client                                                                                     |
-| Phase 4D1.1 Docs Core Agent readiness         | IMPLEMENTED | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API                                                                                  |
-| Phase 4D1.2 Docs Core conversation continuity | IMPLEMENTED | Core-owned conversation identity, bounded ephemeral state, transactional multi-turn AionRS context, and conversation-bound Docs scope                                                                          |
-| Phase 4D2 Docs AiPanel Core migration         | IMPLEMENTED | Core-default fresh text chat, streamed multi-turn UI, safe tool activity, proposal review integration, and Legacy attachment/history fallback                                                                  |
-  | Research domain                               | IMPLEMENTED | `nineprofs-research`, migrations `0005`–`0009`, content-addressed PDF artifacts, scoped retrieval seam, evidence/claims, and 5C1 citation binding; verification/UI remain future |
+| Area                                          | Status      | Evidence                                                                                                                                                                                |
+| --------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0 contracts                             | IMPLEMENTED | `packages/9profs-core/`, `packages/document-gateway/`, and compile-checked adapter seams                                                                                                |
+| Phase 1A Rust Core                            | IMPLEMENTED | `9profs-core-rs/` transport/runtime foundation; no product domains                                                                                                                      |
+| Phase 2A agent metadata/catalog               | IMPLEMENTED | `nineprofs-agent` descriptors, builtin catalog, minimal SQLite custom metadata persistence                                                                                              |
+| Phase 2A Agent Registry                       | IMPLEMENTED | hydrated authoritative catalog, stable lookup/order, explicit availability, custom updates                                                                                              |
+| Phase 2A task lifecycle                       | IMPLEMENTED | `RunId`, `AgentTaskId`, state transitions, cancellation, ownership, lifecycle events                                                                                                    |
+| Phase 2B1 real agent execution                | IMPLEMENTED | 9Profs executor boundary, AionRS backend, streaming, cancellation, and run APIs                                                                                                         |
+| Phase 2C1 MCP Tool Provider                   | IMPLEMENTED | `nineprofs-mcp`, SQLite config, pinned AionRS client mechanics, shared ToolRegistry provider                                                                                            |
+| Phase 3A OfficeCLI read-only provider         | IMPLEMENTED | `nineprofs-officecli`, pinned v1.0.144 sidecar, typed read-only tools, HTML-to-PNG raster boundary, artifact boundary, status API                                                       |
+| Phase 3B OfficeCLI detached mutation          | IMPLEMENTED | Typed create/mutation tools, writable eligibility, copy-on-write revisions, validation, HTML-to-PNG render gate, and atomic promotion                                                   |
+| Phase 4A active DOCX GenOffice adapter        | IMPLEMENTED | Active inspection, DocumentVersion/preconditions, stale-change protection, approved mutation gateway, existing Docs command engine reuse                                                |
+| Phase 4B Rust Core ↔ renderer bridge          | IMPLEMENTED | Active document registry, dedicated bidirectional `/ws/documents`, DOCX inspection proxy, approved mutation proxy, and version synchronization                                          |
+| Phase 4C1 active-document proposals           | IMPLEMENTED | `nineprofs-document-tools`, explicit list/inspect/propose tools, ephemeral proposal store, freshness, read-only proposal APIs/events                                                    |
+| Phase 4C2 proposal review/live commit         | IMPLEMENTED | Core-owned review workflow, trusted approve/reject/retry endpoints, bounded renderer idempotency, and existing Docs AI-panel command summaries                                          |
+| Phase 4D1 Core-owned active Docs runs         | IMPLEMENTED | Trusted Docs run API, server-owned proposal-only ToolSet, per-run document scope enforcement, and typed `/ws` event client                                                              |
+| Phase 4D1.1 Docs Core Agent readiness         | IMPLEMENTED | Executable `document-foundation` binding, Core-owned Docs Agent profile, truthful readiness diagnostics, and safe profile API                                                           |
+| Phase 4D1.2 Docs Core conversation continuity | IMPLEMENTED | Core-owned conversation identity, bounded ephemeral state, transactional multi-turn AionRS context, and conversation-bound Docs scope                                                   |
+| Phase 4D2 Docs AiPanel Core migration         | IMPLEMENTED | Core-default fresh text chat, streamed multi-turn UI, safe tool activity, proposal review integration, and Legacy attachment/history fallback                                           |
+| Research domain                               | IMPLEMENTED | `nineprofs-research`, migrations `0005`–`0010`, content-addressed PDF artifacts, scoped retrieval, evidence/claims, 5C1 citation binding, 5C2A orchestration, and 5C2B model assessment |
 
 ### Phase 1A Rust Core foundation
 
@@ -542,19 +542,19 @@ session owns that file.
 Start with explicit modules under a small package surface; split packages only
 after contracts stabilize. Proposed names are compatible with `packages/*`.
 
-| Proposed boundary                              | Owns                                                                                                                     | Must not own                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `packages/9profs-core/`                        | Runtime configuration, workspace/project service contracts, events, policy, usage hooks, service composition             | Office bytes, editor transactions, provider-specific wire formats       |
-| `packages/9profs-core/src/agent-runtime/`      | Agent run lifecycle, context assembly, cancellation, tool execution policy; wraps/adapts `packages/agent-core`           | DOCX XML, DOM mutation, canonical save                                  |
-| `packages/9profs-core/src/assistant-registry/` | Assistant descriptors, allowed skills, model/policy selection, versioning                                                | Direct provider secrets or Office persistence                           |
-| `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                                    | Product-specific editor internals                                       |
-| `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                            | Unmediated active-document writes                                       |
-| `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                            | Loading arbitrary code into the Docs persistence boundary               |
+| Proposed boundary                              | Owns                                                                                                                                                                                  | Must not own                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `packages/9profs-core/`                        | Runtime configuration, workspace/project service contracts, events, policy, usage hooks, service composition                                                                          | Office bytes, editor transactions, provider-specific wire formats       |
+| `packages/9profs-core/src/agent-runtime/`      | Agent run lifecycle, context assembly, cancellation, tool execution policy; wraps/adapts `packages/agent-core`                                                                        | DOCX XML, DOM mutation, canonical save                                  |
+| `packages/9profs-core/src/assistant-registry/` | Assistant descriptors, allowed skills, model/policy selection, versioning                                                                                                             | Direct provider secrets or Office persistence                           |
+| `packages/9profs-core/src/skills/`             | Shared skill metadata, lifecycle, permissions, input/output contracts                                                                                                                 | Product-specific editor internals                                       |
+| `packages/9profs-core/src/mcp/`                | MCP server/client registration, tool schemas, transport and capability policy                                                                                                         | Unmediated active-document writes                                       |
+| `packages/9profs-core/src/extensions/`         | Extension discovery, lifecycle, compatibility and permissions                                                                                                                         | Loading arbitrary code into the Docs persistence boundary               |
 | `9profs-core-rs/crates/nineprofs-research/`    | Phases 5A–5C1 cases, sources, immutable snapshots, evidence/locators, claims, categorical assessments, citation occurrences/targets/bindings, claim links, and provenance persistence | Canonical Office editing, adapters, provider SDKs, or research UI       |
-| `packages/research-domain/`                    | Future UI/workflow adapters over Core research transport                                                                 | Canonical Office editing or provider SDK details                        |
-| `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                                   | Format-specific OOXML/XLSX/PPTX/PDF implementation                      |
-| `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                           | Competing writer or presentation DOM mutation                           |
-| `packages/officecli-adapter/`                  | Transport-neutral status, inspection results, and artifact references                                                    | CLI process control or canonical writes to active GenOffice-owned files |
+| `packages/research-domain/`                    | Future UI/workflow adapters over Core research transport                                                                                                                              | Canonical Office editing or provider SDK details                        |
+| `packages/document-gateway/`                   | `DocumentChangeSet`, mutation validation, ownership/session checks, snapshot contracts                                                                                                | Format-specific OOXML/XLSX/PPTX/PDF implementation                      |
+| `packages/genoffice-adapter/`                  | Adapter from approved changes to GenOffice editor commands/transactions and save/reparse hooks                                                                                        | Competing writer or presentation DOM mutation                           |
+| `packages/officecli-adapter/`                  | Transport-neutral status, inspection results, and artifact references                                                                                                                 | CLI process control or canonical writes to active GenOffice-owned files |
 
 Existing app AI directories remain product adapters until these boundaries
 exist. `packages/project-store` can back local workspace history; it does not
@@ -573,23 +573,23 @@ behavior stays intact until a compatible replacement exists and is validated.
 
 ## Migration map
 
-| Current module                           | Current responsibility                              | Target responsibility                                                 | Action                                 | Migration phase |
-| ---------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------- | --------------- |
-| `apps/shell`                             | Electron host, tabs, settings, recent files, IPC    | Product host and 9Profs service client boundary                       | Keep; add typed clients later          | 1, 6            |
-| `packages/project-store`                 | Local projects/chats/attachments                    | Local history/workspace persistence behind product services           | Keep; adapt storage boundary           | 1, 6            |
-| `packages/agent-core`                    | Generic loop/skills/tools/IPC                       | Agent runtime execution kernel                                        | Adapt behind 9Profs runtime            | 1, 2            |
-| `packages/ai-provider`                   | Provider protocols and GenSpark-aware routing       | Provider adapter behind policy/usage gateway                          | Adapt; isolate vendor policy           | 2               |
-| `packages/ai-search`                     | Search backends and fallbacks                       | External search adapter and research evidence input                   | Adapt; preserve fallback behavior      | 2, 5            |
-| `apps/*/src/*/ai`                        | Product-specific tools, prompts, transports         | Registered skills using document/research contracts                   | Adapt incrementally                    | 2, 4, 5         |
-| `apps/docs` + `packages/docx-engine`     | Canonical DOCX editor, persistence, renderer        | GenOffice-derived Office Core                                         | Keep; harden V2 and add adapter seam   | 0, 4            |
-| `apps/docs/src/renderer/presentation-v2` | Experimental derived layout/refinement/diagnostics  | Validated optional presentation implementation                        | Keep V1 fallback; prove before default | 0               |
-| `apps/sheets`                            | Univer XLSX editing, gateway, Rust sidecar          | GenOffice-derived Office Core                                         | Keep; no cross-product rewrite         | 0, 4            |
-| `apps/slides` + `packages/pptx-*`        | PPTX model, render, canvas, save                    | GenOffice-derived Office Core                                         | Keep; expose gateway later             | 0, 4            |
-| `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                   | 0, 4, 5         |
-| `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                      | 0, 4, 5         |
-| `nineprofs-officecli`                    | Pinned read-only OfficeCLI sidecar                  | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer    | 3A, 3B, 4       |
-| `nineprofs-research`                     | Evidence/provenance and citation binding domain     | Core-owned Research Domain persistence and transport                  | Implemented; keep verification/adapters above it | 5A–5C1         |
-| No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof  | 6               |
+| Current module                           | Current responsibility                              | Target responsibility                                                 | Action                                           | Migration phase |
+| ---------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------ | --------------- |
+| `apps/shell`                             | Electron host, tabs, settings, recent files, IPC    | Product host and 9Profs service client boundary                       | Keep; add typed clients later                    | 1, 6            |
+| `packages/project-store`                 | Local projects/chats/attachments                    | Local history/workspace persistence behind product services           | Keep; adapt storage boundary                     | 1, 6            |
+| `packages/agent-core`                    | Generic loop/skills/tools/IPC                       | Agent runtime execution kernel                                        | Adapt behind 9Profs runtime                      | 1, 2            |
+| `packages/ai-provider`                   | Provider protocols and GenSpark-aware routing       | Provider adapter behind policy/usage gateway                          | Adapt; isolate vendor policy                     | 2               |
+| `packages/ai-search`                     | Search backends and fallbacks                       | External search adapter and research evidence input                   | Adapt; preserve fallback behavior                | 2, 5            |
+| `apps/*/src/*/ai`                        | Product-specific tools, prompts, transports         | Registered skills using document/research contracts                   | Adapt incrementally                              | 2, 4, 5         |
+| `apps/docs` + `packages/docx-engine`     | Canonical DOCX editor, persistence, renderer        | GenOffice-derived Office Core                                         | Keep; harden V2 and add adapter seam             | 0, 4            |
+| `apps/docs/src/renderer/presentation-v2` | Experimental derived layout/refinement/diagnostics  | Validated optional presentation implementation                        | Keep V1 fallback; prove before default           | 0               |
+| `apps/sheets`                            | Univer XLSX editing, gateway, Rust sidecar          | GenOffice-derived Office Core                                         | Keep; no cross-product rewrite                   | 0, 4            |
+| `apps/slides` + `packages/pptx-*`        | PPTX model, render, canvas, save                    | GenOffice-derived Office Core                                         | Keep; expose gateway later                       | 0, 4            |
+| `apps/pdf`                               | PDF viewer/editor/save and AI tools                 | GenOffice-derived Office Core plus bounded AI context                 | Keep; adapt AI later                             | 0, 4, 5         |
+| `apps/markdown`                          | Tiptap Markdown editor and plain-file serialization | GenOffice-derived Office Core plus research-friendly document context | Keep; adapt later                                | 0, 4, 5         |
+| `nineprofs-officecli`                    | Pinned read-only OfficeCLI sidecar                  | `document-gateway`, `genoffice-adapter`, `officecli-adapter`          | Detached mutation and active writer              | 3A, 3B, 4       |
+| `nineprofs-research`                     | Evidence/provenance and citation binding domain     | Core-owned Research Domain persistence and transport                  | Implemented; keep verification/adapters above it | 5A–5C1          |
+| No current module                        | No account/billing/usage product backend            | Product/SaaS services                                                 | Add after runtime and ownership proof            | 6               |
 
 ## Ordered implementation sequence
 
@@ -1025,7 +1025,34 @@ retrieval. Case-wide support from another source does not validate a citation.
   the claim through the generic `ClaimEvidenceLink` with assessment metadata.
 - Verification results, candidate audits, evidence mappings, failure codes, and
   identifier-only lifecycle events are append-oriented and queryable by run or
-  claim. No real LLM/provider, manuscript parser, UI, or Agent tool is included.
+  claim.
+
+#### Phase 5C2B — model-backed citation assessment (IMPLEMENTED)
+
+- `nineprofs-research-assessor` implements the production
+  `CitationAssessmentProvider` as one bounded, stateless model invocation. It
+  supports `openai` and `anthropic`, with optional launch-scoped custom base
+  URLs for OpenAI-compatible endpoints.
+- Assessor configuration is separate from conversational Agent configuration:
+  `NINEPROFS_CITATION_ASSESSOR_PROVIDER`, `_MODEL`, `_BASE_URL`, and
+  `_API_KEY_ENV`. Only the credential environment-variable name is stored;
+  credential values are resolved at readiness or invocation time and never
+  serialized or logged.
+- OpenAI uses bounded JSON mode; Anthropic uses a forced native tool schema.
+  Both paths apply strict local `deny_unknown_fields` deserialization, accept
+  only the four canonical relations, reject unknown candidate IDs and oversized
+  input/output, and allow at most one narrow outer Markdown fence.
+- The model receives canonical local candidate passages only. It never performs
+  retrieval, uses tools, creates `ResearchEvidence`, supplies provenance, or
+  writes persistence. Only the existing 5C2A orchestrator can revalidate ranges
+  and promote evidence.
+- Core startup remains independent of assessor credentials. Invalid or missing
+  assessor configuration leaves verification available with the existing
+  `assessor_not_configured` result; readiness is exposed internally without
+  provider secrets.
+
+Still future: manuscript citation parsing, bibliography resolution, verification
+UI, and Agent citation tools (Phase 5C3).
 
 Dify retrieval remains an adapter and is not a citation identity owner.
 

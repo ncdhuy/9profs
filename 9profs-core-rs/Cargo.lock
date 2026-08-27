@@ -2309,6 +2309,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nineprofs-research-assessor"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nineprofs-db",
+ "nineprofs-realtime",
+ "nineprofs-research",
+ "nineprofs-research-verification",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "nineprofs-research-dify"
 version = "0.1.0"
 dependencies = [
@@ -2360,6 +2377,7 @@ dependencies = [
  "nineprofs-officecli",
  "nineprofs-realtime",
  "nineprofs-research",
+ "nineprofs-research-assessor",
  "nineprofs-research-dify",
  "nineprofs-research-verification",
  "nineprofs-skills",

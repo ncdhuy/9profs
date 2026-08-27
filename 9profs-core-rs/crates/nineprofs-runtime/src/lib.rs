@@ -23,8 +23,11 @@ use nineprofs_officecli::{
 };
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
+use nineprofs_research_assessor::{
+    CitationAssessorConfig, CitationAssessorReadiness, ModelCitationAssessor,
+};
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
-use nineprofs_research_verification::CitationVerificationService;
+use nineprofs_research_verification::{CitationAssessmentProvider, CitationVerificationService};
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
@@ -54,6 +57,8 @@ pub struct RuntimeConfig {
     pub session_secret: Option<Arc<str>>,
     /// Launch-scoped Dify credentials. Never persisted or exposed through DTOs.
     pub dify: Option<DifyConfig>,
+    /// Launch-scoped citation assessor configuration. Credential value is never stored.
+    pub citation_assessor: CitationAssessorConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -67,6 +72,7 @@ impl Default for RuntimeConfig {
             custom_skill_roots: Vec::new(),
             session_secret: None,
             dify: None,
+            citation_assessor: CitationAssessorConfig::default(),
         }
     }
 }
@@ -90,6 +96,7 @@ impl RuntimeConfig {
             }
         }
         config.dify = DifyConfig::from_env();
+        config.citation_assessor = CitationAssessorConfig::from_env();
         if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
             config.custom_skill_roots = value
                 .split(';')
@@ -180,12 +187,18 @@ impl CoreRuntime {
             Arc::clone(&event_bus),
             config.dify.clone(),
         )?);
-        let citation_verification_service = Arc::new(CitationVerificationService::new(
+        let mut citation_verification_service = CitationVerificationService::new(
             database.pool().clone(),
             Arc::clone(&research_service),
             Arc::clone(&dify_service),
             Arc::clone(&event_bus),
-        ));
+        );
+        if config.citation_assessor.is_ready() {
+            let assessor: Arc<dyn CitationAssessmentProvider> =
+                Arc::new(ModelCitationAssessor::new(config.citation_assessor.clone()));
+            citation_verification_service = citation_verification_service.with_assessor(assessor);
+        }
+        let citation_verification_service = Arc::new(citation_verification_service);
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),
@@ -375,6 +388,10 @@ impl CoreRuntime {
         Arc::clone(&self.citation_verification_service)
     }
 
+    pub fn citation_assessor_readiness(&self) -> CitationAssessorReadiness {
+        self.config.citation_assessor.readiness()
+    }
+
     pub async fn resolve_assistant_backend(
         &self,
         assistant_id: &str,
@@ -427,6 +444,10 @@ mod tests {
         assert_eq!(runtime.info().service, "9profs-core");
         assert_eq!(runtime.event_bus().receiver_count(), 0);
         assert!(!runtime.config().session_secret_configured());
+        assert!(matches!(
+            runtime.citation_assessor_readiness().status,
+            nineprofs_research_assessor::CitationAssessorReadinessStatus::NotConfigured
+        ));
     }
 
     #[tokio::test]

@@ -15,6 +15,7 @@ members = [
     "crates/nineprofs-agent",
     "crates/nineprofs-research",
     "crates/nineprofs-research-dify",
+    "crates/nineprofs-research-assessor",
     "crates/nineprofs-research-verification",
     "crates/nineprofs-runtime",
     "app/nineprofs-core",

@@ -170,6 +170,28 @@ pub struct CitationAssessmentProviderIdentity {
 
 #[derive(Debug, Error)]
 pub enum CitationAssessmentProviderError {
+    #[error("citation assessor is not configured")]
+    NotConfigured,
+    #[error("citation assessor configuration is invalid")]
+    InvalidConfiguration,
+    #[error("citation assessor request timed out")]
+    Timeout,
+    #[error("citation assessor authorization failed")]
+    Unauthorized,
+    #[error("citation assessor rate limit exceeded")]
+    RateLimited,
+    #[error("citation assessor provider is unavailable")]
+    ProviderUnavailable,
+    #[error("citation assessor response was malformed")]
+    MalformedResponse,
+    #[error("citation assessor returned invalid structured output")]
+    InvalidStructuredOutput,
+    #[error("citation assessor response exceeded size limit")]
+    ResponseTooLarge,
+    #[error("citation assessor input exceeded size limit")]
+    InputTooLarge,
+    #[error("citation assessor input is invalid")]
+    InvalidInput,
     #[error("citation assessor failed")]
     Failed,
 }
@@ -525,7 +547,26 @@ impl CitationVerificationService {
                     .collect(),
             })
             .await
-            .map_err(|_| CitationVerificationError::AssessorFailed)?;
+            .map_err(|error| match error {
+                CitationAssessmentProviderError::NotConfigured
+                | CitationAssessmentProviderError::InvalidConfiguration => {
+                    CitationVerificationError::AssessorNotConfigured
+                }
+                CitationAssessmentProviderError::MalformedResponse
+                | CitationAssessmentProviderError::InvalidStructuredOutput
+                | CitationAssessmentProviderError::ResponseTooLarge => {
+                    CitationVerificationError::AssessorInvalidOutput
+                }
+                CitationAssessmentProviderError::Timeout
+                | CitationAssessmentProviderError::Unauthorized
+                | CitationAssessmentProviderError::RateLimited
+                | CitationAssessmentProviderError::ProviderUnavailable
+                | CitationAssessmentProviderError::InputTooLarge
+                | CitationAssessmentProviderError::InvalidInput
+                | CitationAssessmentProviderError::Failed => {
+                    CitationVerificationError::AssessorFailed
+                }
+            })?;
         validate_assessment(&assessment, &canonical)?;
 
         let identity = assessor.identity();
