@@ -563,6 +563,9 @@ Existing app AI directories remain product adapters until these boundaries
 exist. `packages/project-store` can back local workspace history; it does not
 become a remote SaaS contract by implication.
 
+`nineprofs-research` keeps one public `ResearchService`; its implementation is
+modularized internally by research domain without changing public behavior.
+
 ### Core application module layout (R1A)
 
 The `nineprofs-core` HTTP layer is composed under
