@@ -563,6 +563,16 @@ Existing app AI directories remain product adapters until these boundaries
 exist. `packages/project-store` can back local workspace history; it does not
 become a remote SaaS contract by implication.
 
+### Core application module layout (R1A)
+
+The `nineprofs-core` HTTP layer is composed under
+`9profs-core-rs/app/nineprofs-core/src/api/`. Feature modules own system,
+documents, proposals, agents, assistants, skills, MCP, OfficeCLI, WebSockets,
+and nested Research modules for cases, sources, PDF, evidence, claims,
+citations, manuscript, verification, retrieval, and shared mappings. R1A is a
+structural modularization; public routes, startup contracts, and behavior stay
+unchanged.
+
 ## Existing AI package classification
 
 | Module                 | Classification | Current responsibility                                                                                                      | Why                                                                                                                                                                            |
