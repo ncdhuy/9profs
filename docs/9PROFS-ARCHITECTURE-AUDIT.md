@@ -458,9 +458,25 @@ transaction. Read surfaces are bounded and expose no marker/reference data in
 lifecycle events. 5C3B1 creates no target bindings, claims, claim links, or
 verification records.
 
-Future: 5C3B2 manuscript claim extraction, 5C3B3 source/PDF binding, and 5C3C
-verification UI, Agent citation tools, plain-text recognition, and additional
-citation-manager adapters.
+## Phase 5C3B3A manuscript reference catalog synchronization
+
+Implemented as a deterministic Research-side audit projection of one completed
+5C3B1 citation sync run. The Docs adapter reuses the structured live DOCX
+inventory and maps each target to its exact synchronized `CitationTarget` ID.
+It sends only bounded Word-native `tag/title/author/year` hints and Zotero
+`itemId/uris`; raw OOXML, field instructions, CSL JSON, and arbitrary metadata
+are excluded.
+
+`ManuscriptReferenceEntry` is version-scoped observation, not `ResearchSource`.
+Entries deduplicate by `(format, referenceKey)`, descriptor SHA-256 conflicts
+fail closed, and catalog SHA-256 conflicts for one citation sync are typed
+inconsistencies. Catalog run, entries, and exact target mappings commit in one
+SQLite transaction. Repeating the same sync run and catalog hash reuses the
+completed run; later document versions retain historical observations.
+
+Still future: 5C3B3B identifier parsing and ResearchSource/PDF resolution,
+exact CitationTargetBinding materialization, fuzzy/manual resolution UI, and
+verification UI.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 

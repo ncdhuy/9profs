@@ -22,15 +22,19 @@ use nineprofs_api_types::{
     CreateCitationTargetRequest, CreateCitationVerificationRequest, CreateClaimCitationLinkRequest,
     CreateClaimEvidenceLinkRequest, CreateDocumentAgentConversationRequest,
     CreateDocumentAgentConversationRunRequest, CreateManuscriptClaimExtractionRequest,
-    CreateMcpServerRequest, CreateResearchCaseRequest, CreateResearchClaimRequest,
-    CreateResearchEvidenceRequest, CreateResearchSourceRequest, DocsAgentProfile,
-    DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse,
-    EventEnvelope, HealthResponse, ManuscriptCitationFormatDto,
+    CreateManuscriptReferenceCatalogRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
+    CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
+    DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
+    ErrorResponse, EventEnvelope, HealthResponse, ManuscriptCitationFormatDto,
     ManuscriptCitationSyncCitationRequest, ManuscriptCitationSyncOccurrenceDto,
     ManuscriptCitationSyncRunDto, ManuscriptCitationSyncStatusDto, ManuscriptCitationSyncTargetDto,
     ManuscriptCitationSyncTargetRequest, ManuscriptClaimExtractionCoverageDto,
     ManuscriptClaimExtractionCoverageStatusDto, ManuscriptClaimExtractionItemDto,
-    ManuscriptClaimExtractionRunDto, ManuscriptClaimExtractionStatusDto, McpConnectionTestDto,
+    ManuscriptClaimExtractionRunDto, ManuscriptClaimExtractionStatusDto,
+    ManuscriptReferenceCatalogCitationRequest, ManuscriptReferenceCatalogRunDto,
+    ManuscriptReferenceCatalogStatusDto, ManuscriptReferenceCatalogTargetRequest,
+    ManuscriptReferenceEntryDto, ManuscriptReferenceTargetMappingDto,
+    ManuscriptReferenceWordSourceDto, ManuscriptReferenceZoteroDto, McpConnectionTestDto,
     McpServerDto, McpToolDto, McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto,
     ResearchArtifactDto, ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
     ResearchCitationBindingMethodDto, ResearchCitationOccurrenceOriginDto,
@@ -1150,6 +1154,27 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             get(list_manuscript_citation_sync_targets),
         )
         .route(
+            "/api/research/manuscript-citation-syncs/{sync_run_id}/reference-catalog",
+            get(get_manuscript_reference_catalog_for_sync)
+                .post(create_manuscript_reference_catalog),
+        )
+        .route(
+            "/api/research/cases/{case_id}/manuscripts/{manuscript_source_id}/reference-catalog/latest",
+            get(latest_manuscript_reference_catalog),
+        )
+        .route(
+            "/api/research/manuscript-reference-catalog-runs/{id}",
+            get(get_manuscript_reference_catalog),
+        )
+        .route(
+            "/api/research/manuscript-reference-catalog-runs/{id}/entries",
+            get(list_manuscript_reference_entries),
+        )
+        .route(
+            "/api/research/manuscript-reference-entries/{id}/mappings",
+            get(list_manuscript_reference_target_mappings),
+        )
+        .route(
             "/api/research/manuscript-citation-syncs/{sync_run_id}/claim-extractions",
             get(list_manuscript_claim_extractions).post(create_manuscript_claim_extraction),
         )
@@ -1623,6 +1648,21 @@ impl IntoResponse for ApiError {
                 ResearchError::ManuscriptCitationSyncConflict { .. } => (
                     StatusCode::CONFLICT,
                     "manuscript_citation_sync_conflict",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptReferenceCatalogStale => (
+                    StatusCode::CONFLICT,
+                    "reference_catalog_stale",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptReferenceCatalogConflict { .. } => (
+                    StatusCode::CONFLICT,
+                    "reference_catalog_conflict",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptReferenceDescriptorConflict { .. } => (
+                    StatusCode::CONFLICT,
+                    "reference_descriptor_conflict",
                     error.to_string(),
                 ),
                 ResearchError::ManuscriptClaimExtractorNotConfigured => (
@@ -2870,6 +2910,111 @@ async fn list_manuscript_citation_sync_targets(
     )))
 }
 
+async fn create_manuscript_reference_catalog(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(sync_run_id): Path<String>,
+    axum::Json(request): axum::Json<CreateManuscriptReferenceCatalogRequest>,
+) -> Result<axum::Json<ApiResponse<ManuscriptReferenceCatalogRunDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let run = state
+        .runtime
+        .research_service()
+        .sync_manuscript_reference_catalog(nineprofs_research::SyncManuscriptReferenceCatalog {
+            citation_sync_run_id: nineprofs_research::ManuscriptCitationSyncRunId::parse(
+                sync_run_id,
+            )?,
+            document_id: request.document_id,
+            document_version: request.document_version,
+            citations: request
+                .citations
+                .into_iter()
+                .map(manuscript_reference_catalog_citation)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_reference_catalog_run_dto(run),
+    )))
+}
+
+async fn get_manuscript_reference_catalog_for_sync(
+    State(state): State<AppState>,
+    Path(sync_run_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ManuscriptReferenceCatalogRunDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_reference_catalog_run_dto(
+            state
+                .runtime
+                .research_service()
+                .manuscript_reference_catalog_for_sync(&sync_run_id)
+                .await?,
+        ),
+    )))
+}
+
+async fn latest_manuscript_reference_catalog(
+    State(state): State<AppState>,
+    Path((case_id, manuscript_source_id)): Path<(String, String)>,
+) -> Result<axum::Json<ApiResponse<ManuscriptReferenceCatalogRunDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_reference_catalog_run_dto(
+            state
+                .runtime
+                .research_service()
+                .latest_manuscript_reference_catalog(&case_id, &manuscript_source_id)
+                .await?,
+        ),
+    )))
+}
+
+async fn get_manuscript_reference_catalog(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ManuscriptReferenceCatalogRunDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_reference_catalog_run_dto(
+            state
+                .runtime
+                .research_service()
+                .get_manuscript_reference_catalog(&id)
+                .await?,
+        ),
+    )))
+}
+
+async fn list_manuscript_reference_entries(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptReferenceEntryDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_reference_entries(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_reference_entry_dto)
+            .collect(),
+    )))
+}
+
+async fn list_manuscript_reference_target_mappings(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptReferenceTargetMappingDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_reference_target_mappings(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_reference_target_mapping_dto)
+            .collect(),
+    )))
+}
+
 async fn create_manuscript_claim_extraction(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3671,6 +3816,83 @@ fn manuscript_citation_sync_target_dto(
     }
 }
 
+fn manuscript_reference_catalog_run_dto(
+    value: nineprofs_research::ManuscriptReferenceCatalogRun,
+) -> ManuscriptReferenceCatalogRunDto {
+    ManuscriptReferenceCatalogRunDto {
+        catalog_run_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        manuscript_source_id: value.manuscript_source_id.to_string(),
+        citation_sync_run_id: value.citation_sync_run_id.to_string(),
+        document_id: value.document_id,
+        document_version: value.document_version,
+        catalog_hash: research_content_hash_dto(value.catalog_hash),
+        entry_count: value.entry_count,
+        target_mapping_count: value.target_mapping_count,
+        status: manuscript_reference_catalog_status_dto(value.status),
+        created_at_ms: value.created_at_ms,
+        completed_at_ms: value.completed_at_ms,
+        failure_code: value.failure_code,
+    }
+}
+
+fn manuscript_reference_catalog_status_dto(
+    value: nineprofs_research::ManuscriptReferenceCatalogStatus,
+) -> ManuscriptReferenceCatalogStatusDto {
+    match value {
+        nineprofs_research::ManuscriptReferenceCatalogStatus::Running => {
+            ManuscriptReferenceCatalogStatusDto::Running
+        }
+        nineprofs_research::ManuscriptReferenceCatalogStatus::Completed => {
+            ManuscriptReferenceCatalogStatusDto::Completed
+        }
+        nineprofs_research::ManuscriptReferenceCatalogStatus::Failed => {
+            ManuscriptReferenceCatalogStatusDto::Failed
+        }
+    }
+}
+
+fn manuscript_reference_entry_dto(
+    value: nineprofs_research::ManuscriptReferenceEntry,
+) -> ManuscriptReferenceEntryDto {
+    ManuscriptReferenceEntryDto {
+        entry_id: value.id.to_string(),
+        catalog_run_id: value.catalog_run_id.to_string(),
+        ordinal: value.ordinal,
+        format: manuscript_citation_sync_format_dto(value.format),
+        reference_key: value.reference_key,
+        descriptor_hash: research_content_hash_dto(value.descriptor_hash),
+        word_source: value.word_tag.map(|tag| ManuscriptReferenceWordSourceDto {
+            tag,
+            title: value.word_title.unwrap_or_default(),
+            author: value.word_author.unwrap_or_default(),
+            year: value.word_year.unwrap_or_default(),
+        }),
+        zotero: if value.zotero_item_id.is_some() || !value.zotero_uris.is_empty() {
+            Some(ManuscriptReferenceZoteroDto {
+                item_id: value.zotero_item_id,
+                uris: value.zotero_uris,
+            })
+        } else {
+            None
+        },
+        target_count: value.target_count,
+    }
+}
+
+fn manuscript_reference_target_mapping_dto(
+    value: nineprofs_research::ManuscriptReferenceTargetMapping,
+) -> ManuscriptReferenceTargetMappingDto {
+    ManuscriptReferenceTargetMappingDto {
+        mapping_id: value.id.to_string(),
+        catalog_run_id: value.catalog_run_id.to_string(),
+        reference_entry_id: value.reference_entry_id.to_string(),
+        citation_occurrence_id: value.citation_occurrence_id.to_string(),
+        citation_target_id: value.citation_target_id.to_string(),
+        document_target_ordinal: value.document_target_ordinal,
+    }
+}
+
 fn manuscript_citation_sync_format_dto(
     value: nineprofs_research::ManuscriptCitationFormat,
 ) -> ManuscriptCitationFormatDto {
@@ -3807,6 +4029,56 @@ fn manuscript_citation_sync_citation(
                 }
             })
             .collect(),
+    })
+}
+
+fn manuscript_reference_catalog_citation(
+    value: ManuscriptReferenceCatalogCitationRequest,
+) -> Result<nineprofs_research::ManuscriptReferenceCatalogCitationInput, ApiError> {
+    Ok(
+        nineprofs_research::ManuscriptReferenceCatalogCitationInput {
+            citation_occurrence_id: value.citation_occurrence_id,
+            block_id: value.block_id,
+            start: value.start,
+            end: value.end,
+            format: match value.format {
+                ManuscriptCitationFormatDto::WordNative => {
+                    nineprofs_research::ManuscriptCitationFormat::WordNative
+                }
+                ManuscriptCitationFormatDto::Zotero => {
+                    nineprofs_research::ManuscriptCitationFormat::Zotero
+                }
+            },
+            targets: value
+                .targets
+                .into_iter()
+                .map(manuscript_reference_catalog_target)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+    )
+}
+
+fn manuscript_reference_catalog_target(
+    value: ManuscriptReferenceCatalogTargetRequest,
+) -> Result<nineprofs_research::ManuscriptReferenceCatalogTargetInput, ApiError> {
+    Ok(nineprofs_research::ManuscriptReferenceCatalogTargetInput {
+        citation_target_id: value.citation_target_id,
+        ordinal: value.ordinal,
+        reference_key: value.reference_key,
+        word_source: value.word_source.map(|source| {
+            nineprofs_research::ManuscriptReferenceCatalogWordSourceInput {
+                tag: source.tag,
+                title: source.title,
+                author: source.author,
+                year: source.year,
+            }
+        }),
+        zotero: value.zotero.map(|zotero| {
+            nineprofs_research::ManuscriptReferenceCatalogZoteroInput {
+                item_id: zotero.item_id,
+                uris: zotero.uris,
+            }
+        }),
     })
 }
 
@@ -4758,6 +5030,7 @@ mod research_api_tests {
             .to_owned();
 
         let response = router
+            .clone()
             .oneshot(
                 Request::get(format!(
                     "/api/research/manuscript-citation-sync-occurrences/{sync_occurrence_id}/targets"
@@ -4768,9 +5041,151 @@ mod research_api_tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let target = json_body(response).await["data"][0].clone();
+        assert_eq!(target["documentTargetOrdinal"], 1);
+        let citation_target_id = target["citationTargetId"].as_str().unwrap();
+
+        let catalog_path =
+            format!("/api/research/manuscript-citation-syncs/{run_id}/reference-catalog");
+        let catalog_body = serde_json::json!({
+            "documentId": "doc-1",
+            "documentVersion": 3,
+            "citations": [{
+                "citationOccurrenceId": sync_occurrence["citationOccurrenceId"],
+                "blockId": "b7",
+                "start": 13,
+                "end": 17,
+                "format": "zotero",
+                "targets": [{
+                    "citationTargetId": citation_target_id,
+                    "ordinal": 1,
+                    "referenceKey": "12",
+                    "zotero": {"itemId": "12", "uris": []}
+                }]
+            }]
+        });
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&catalog_path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(catalog_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let mut override_body = catalog_body.clone();
+        override_body["researchCaseId"] = serde_json::json!(case_id);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&catalog_path)
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(override_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&catalog_path)
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(catalog_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let catalog = json_body(response).await["data"].clone();
+        assert_eq!(catalog["status"], "completed");
+        assert_eq!(catalog["entryCount"], 1);
+        assert_eq!(catalog["targetMappingCount"], 1);
+        let catalog_run_id = catalog["catalogRunId"].as_str().unwrap().to_owned();
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&catalog_path)
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(catalog_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            json_body(response).await["data"][0]["documentTargetOrdinal"],
-            1
+            json_body(response).await["data"]["catalogRunId"],
+            catalog_run_id
+        );
+
+        let response = router
+            .clone()
+            .oneshot(Request::get(&catalog_path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await["data"]["catalogRunId"],
+            catalog_run_id
+        );
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/cases/{case_id}/manuscripts/{source_id}/reference-catalog/latest"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await["data"]["catalogRunId"],
+            catalog_run_id
+        );
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/manuscript-reference-catalog-runs/{catalog_run_id}/entries"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let entry = json_body(response).await["data"][0].clone();
+        assert_eq!(entry["format"], "zotero");
+        assert_eq!(entry["referenceKey"], "12");
+        let entry_id = entry["entryId"].as_str().unwrap();
+
+        let response = router
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/manuscript-reference-entries/{entry_id}/mappings"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await["data"][0]["citationTargetId"],
+            citation_target_id
         );
     }
 }

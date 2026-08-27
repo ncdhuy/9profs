@@ -30,6 +30,11 @@ pub const MAX_RETRIEVAL_SCOPE_IDS: usize = 16;
 pub const MAX_CLAIM_EXTRACTION_BLOCKS: usize = 4_096;
 pub const MAX_CLAIM_EXTRACTION_CONTEXT_BYTES: usize = 512 * 1024;
 pub const MAX_CLAIM_EXTRACTION_CITATIONS_PER_BLOCK: usize = 128;
+pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_ENTRIES: usize = 4_096;
+pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_TARGETS: usize = 65_536;
+pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_MANUSCRIPT_REFERENCE_URI_COUNT: usize = 16;
+pub const MAX_MANUSCRIPT_REFERENCE_URI_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Error)]
 pub enum ResearchError {
@@ -60,6 +65,17 @@ pub enum ResearchError {
     ManuscriptClaimExtractionStale,
     #[error("manuscript claim extraction failed: {0}")]
     ManuscriptClaimExtractionFailed(String),
+    #[error("manuscript reference catalog is stale for citation sync run")]
+    ManuscriptReferenceCatalogStale,
+    #[error(
+        "manuscript reference catalog already exists for citation sync run {citation_sync_run_id}"
+    )]
+    ManuscriptReferenceCatalogConflict { citation_sync_run_id: String },
+    #[error("reference descriptor conflicts for {format} reference {reference_key}")]
+    ManuscriptReferenceDescriptorConflict {
+        format: String,
+        reference_key: String,
+    },
 }
 
 macro_rules! id_type {
@@ -125,6 +141,15 @@ id_type!(
 id_type!(
     ManuscriptClaimExtractionCoverageId,
     "manuscript claim extraction coverage ID"
+);
+id_type!(
+    ManuscriptReferenceCatalogRunId,
+    "manuscript reference catalog run ID"
+);
+id_type!(ManuscriptReferenceEntryId, "manuscript reference entry ID");
+id_type!(
+    ManuscriptReferenceTargetMappingId,
+    "manuscript reference target mapping ID"
 );
 
 /// Provider-neutral retrieval boundary. Provider adapters translate these
@@ -496,6 +521,58 @@ pub struct ManuscriptCitationSyncTarget {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceCatalogStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceCatalogRun {
+    pub id: ManuscriptReferenceCatalogRunId,
+    pub research_case_id: ResearchCaseId,
+    pub manuscript_source_id: ResearchSourceId,
+    pub citation_sync_run_id: ManuscriptCitationSyncRunId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub catalog_hash: ContentHash,
+    pub entry_count: u32,
+    pub target_mapping_count: u32,
+    pub status: ManuscriptReferenceCatalogStatus,
+    pub created_at_ms: TimestampMs,
+    pub completed_at_ms: Option<TimestampMs>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceEntry {
+    pub id: ManuscriptReferenceEntryId,
+    pub catalog_run_id: ManuscriptReferenceCatalogRunId,
+    pub ordinal: u32,
+    pub format: ManuscriptCitationFormat,
+    pub reference_key: String,
+    pub descriptor_hash: ContentHash,
+    pub word_tag: Option<String>,
+    pub word_title: Option<String>,
+    pub word_author: Option<String>,
+    pub word_year: Option<String>,
+    pub zotero_item_id: Option<String>,
+    pub zotero_uris: Vec<String>,
+    pub target_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceTargetMapping {
+    pub id: ManuscriptReferenceTargetMappingId,
+    pub catalog_run_id: ManuscriptReferenceCatalogRunId,
+    pub reference_entry_id: ManuscriptReferenceEntryId,
+    pub citation_occurrence_id: CitationOccurrenceId,
+    pub citation_target_id: CitationTargetId,
+    pub document_target_ordinal: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CitationBindingMethod {
     Human,
     Imported,
@@ -764,6 +841,54 @@ pub struct ManuscriptCitationSyncWrite {
     pub citation_targets: Vec<CitationTarget>,
     pub sync_occurrences: Vec<ManuscriptCitationSyncOccurrence>,
     pub sync_targets: Vec<ManuscriptCitationSyncTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceCatalogWordSourceInput {
+    pub tag: String,
+    pub title: String,
+    pub author: String,
+    pub year: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceCatalogZoteroInput {
+    pub item_id: Option<String>,
+    pub uris: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceCatalogTargetInput {
+    pub citation_target_id: String,
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub word_source: Option<ManuscriptReferenceCatalogWordSourceInput>,
+    pub zotero: Option<ManuscriptReferenceCatalogZoteroInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceCatalogCitationInput {
+    pub citation_occurrence_id: String,
+    pub block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub format: ManuscriptCitationFormat,
+    pub targets: Vec<ManuscriptReferenceCatalogTargetInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SyncManuscriptReferenceCatalog {
+    pub citation_sync_run_id: ManuscriptCitationSyncRunId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub citations: Vec<ManuscriptReferenceCatalogCitationInput>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ManuscriptReferenceCatalogWrite {
+    pub run: ManuscriptReferenceCatalogRun,
+    pub entries: Vec<ManuscriptReferenceEntry>,
+    pub mappings: Vec<ManuscriptReferenceTargetMapping>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -372,6 +372,73 @@ pub struct ManuscriptCitationSyncTargetDto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceCatalogStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceWordSourceDto {
+    pub tag: String,
+    pub title: String,
+    pub author: String,
+    pub year: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceZoteroDto {
+    pub item_id: Option<String>,
+    pub uris: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceCatalogRunDto {
+    pub catalog_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub citation_sync_run_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub catalog_hash: ResearchContentHashDto,
+    pub entry_count: u32,
+    pub target_mapping_count: u32,
+    pub status: ManuscriptReferenceCatalogStatusDto,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceEntryDto {
+    pub entry_id: String,
+    pub catalog_run_id: String,
+    pub ordinal: u32,
+    pub format: ManuscriptCitationFormatDto,
+    pub reference_key: String,
+    pub descriptor_hash: ResearchContentHashDto,
+    pub word_source: Option<ManuscriptReferenceWordSourceDto>,
+    pub zotero: Option<ManuscriptReferenceZoteroDto>,
+    pub target_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceTargetMappingDto {
+    pub mapping_id: String,
+    pub catalog_run_id: String,
+    pub reference_entry_id: String,
+    pub citation_occurrence_id: String,
+    pub citation_target_id: String,
+    pub document_target_ordinal: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ManuscriptClaimExtractionStatusDto {
     Running,
     Completed,
@@ -588,6 +655,52 @@ pub struct SyncManuscriptCitationsRequest {
     pub document_id: String,
     pub document_version: i64,
     pub citations: Vec<ManuscriptCitationSyncCitationRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptReferenceCatalogWordSourceRequest {
+    pub tag: String,
+    pub title: String,
+    pub author: String,
+    pub year: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptReferenceCatalogZoteroRequest {
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub uris: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptReferenceCatalogTargetRequest {
+    pub citation_target_id: String,
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub word_source: Option<ManuscriptReferenceCatalogWordSourceRequest>,
+    pub zotero: Option<ManuscriptReferenceCatalogZoteroRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptReferenceCatalogCitationRequest {
+    pub citation_occurrence_id: String,
+    pub block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub format: ManuscriptCitationFormatDto,
+    pub targets: Vec<ManuscriptReferenceCatalogTargetRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptReferenceCatalogRequest {
+    pub document_id: String,
+    pub document_version: i64,
+    pub citations: Vec<ManuscriptReferenceCatalogCitationRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

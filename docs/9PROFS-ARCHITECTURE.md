@@ -10,9 +10,10 @@ read-only inspection plus transactional detached creation and mutation;
 the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, Phase
 5C1 citation binding domain, Phase 5C2A citation verification orchestration,
 Phase 5C2B model-backed citation assessment, Phase 5C3A inline citation
-inventory, Phase 5C3B1 live manuscript citation synchronization, and Phase
-5C3B2 atomic manuscript claim extraction are implemented. Citation UI and SaaS
-services remain future work.
+inventory, Phase 5C3B1 live manuscript citation synchronization, Phase 5C3B2
+atomic manuscript claim extraction, and Phase 5C3B3A manuscript reference
+catalog synchronization are implemented. Citation UI and SaaS services remain
+future work.
 
 ## Non-negotiable rules
 
@@ -40,7 +41,7 @@ dependency order.
 Product Layer
 └─ apps/shell + packages/project-store + local settings/recent files
 
-Research Domain Layer (Phases 5A, 5B1, 5B2, 5C1, 5C3B1, and 5C3B2 implemented)
+Research Domain Layer (Phases 5A, 5B1, 5B2, 5C1, 5C3B1, 5C3B2, and 5C3B3A implemented)
 └─ nineprofs-research provenance, evidence, claims, citation occurrences/targets/bindings/sync
 
 AI / Agent Core
@@ -1136,8 +1137,28 @@ Dify retrieval remains an adapter and is not a citation identity owner.
   bindings, evidence, verification results, retrieval state, Dify state, Agent
   tools, or citation UI.
 
-Still future: 5C3B3 source/PDF binding, 5C3C citation UI, Agent citation tools,
-plain-text recognition, and additional citation-manager adapters.
+#### Phase 5C3B3A — manuscript reference catalog synchronization (IMPLEMENTED)
+
+- `apps/docs` builds a read-only catalog input from the live structured DOCX
+  citation inventory. It preserves bounded Word-native source hints and Zotero
+  item IDs/URIs, then maps every target to the exact completed 5C3B1
+  `CitationTarget` ID. It does not scan text or reparse OOXML.
+- Each completed catalog is an immutable, document-version-scoped observation.
+  `ManuscriptReferenceEntry` is distinct from `ResearchSource`; manager
+  metadata is a resolution hint, not provenance authority. Entries deduplicate
+  only by `(format, referenceKey)`, so Word and Zotero key collisions remain
+  distinct.
+- Server-side SHA-256 descriptor and catalog hashes provide deterministic
+  conflict detection. Same sync run plus same hash is idempotent; a different
+  hash is rejected. Descriptor conflicts fail closed. Exact target mappings
+  remain queryable through bounded read routes.
+- SQLite commits catalog run, entries, and target mappings in one transaction.
+  This phase creates no `ResearchSource` match, `CitationTargetBinding`,
+  `ResearchEvidence`, claim, verification, Dify, model, or Agent state.
+
+Still future: 5C3B3B identifier parsing and ResearchSource/PDF resolution,
+exact CitationTargetBinding materialization, fuzzy/manual resolution UI,
+verification UI, and additional citation-manager adapters.
 
 ### Phase 6 — product/SaaS layer
 

@@ -4,6 +4,8 @@ import type {
   ManuscriptCitationFormat,
   ManuscriptCitationSyncOccurrence,
   ManuscriptCitationSyncRun,
+  ManuscriptCitationSyncTarget,
+  SyncManuscriptReferenceCatalogInput,
   SyncManuscriptCitationsInput,
 } from '@genoffice/9profs-core'
 import {
@@ -57,6 +59,102 @@ export function buildManuscriptCitationSyncInput({
             referenceKey: target.referenceKey,
             citedLocator: target.citedLocator ?? null,
           })),
+        },
+      ]
+    }),
+  }
+}
+
+export interface BuildManuscriptReferenceCatalogInputOptions {
+  readonly editor: Pick<Editor, 'state'>
+  readonly activeDocument: Pick<ActiveDocument, 'documentId' | 'version'>
+  readonly syncRun: ManuscriptCitationSyncRun
+  readonly syncOccurrences: readonly ManuscriptCitationSyncOccurrence[]
+  readonly syncTargets: readonly ManuscriptCitationSyncTarget[]
+}
+
+export function buildManuscriptReferenceCatalogInput({
+  editor,
+  activeDocument,
+  syncRun,
+  syncOccurrences,
+  syncTargets,
+}: BuildManuscriptReferenceCatalogInputOptions): SyncManuscriptReferenceCatalogInput {
+  if (
+    syncRun.status !== 'completed' ||
+    activeDocument.documentId !== syncRun.documentId ||
+    activeDocument.version !== syncRun.documentVersion
+  ) {
+    throw new Error('active document does not match completed citation sync')
+  }
+  const occurrenceByPosition = new Map(
+    syncOccurrences.map((occurrence) => [
+      `${occurrence.documentBlockId}:${occurrence.start}:${occurrence.end}`,
+      occurrence,
+    ]),
+  )
+  const targetsByOccurrence = new Map<string, ManuscriptCitationSyncTarget[]>()
+  for (const target of syncTargets) {
+    const targets = targetsByOccurrence.get(target.syncOccurrenceId) ?? []
+    targets.push(target)
+    targetsByOccurrence.set(target.syncOccurrenceId, targets)
+  }
+  return {
+    documentId: syncRun.documentId,
+    documentVersion: syncRun.documentVersion,
+    citations: extractDocxCitationsFromPmDoc(pmDocFromEditor(editor)).flatMap((citation) => {
+      const format = manuscriptCitationFormat(citation.format)
+      if (format === undefined) return []
+      const occurrence = occurrenceByPosition.get(
+        `${citation.blockId}:${citation.start}:${citation.end}`,
+      )
+      if (occurrence === undefined || occurrence.syncRunId !== syncRun.syncRunId) {
+        throw new Error('citation sync occurrence does not match live PM citation')
+      }
+      const targets = [...(targetsByOccurrence.get(occurrence.syncOccurrenceId) ?? [])].sort(
+        (left, right) => left.documentTargetOrdinal - right.documentTargetOrdinal,
+      )
+      if (targets.length !== citation.targets.length) {
+        throw new Error('citation sync targets do not match live PM citation')
+      }
+      return [
+        {
+          citationOccurrenceId: occurrence.citationOccurrenceId,
+          blockId: citation.blockId,
+          start: citation.start,
+          end: citation.end,
+          format,
+          targets: citation.targets.map((target) => {
+            const syncTarget = targets.find(
+              (candidate) => candidate.documentTargetOrdinal === target.ordinal,
+            )
+            if (syncTarget === undefined || syncTarget.documentTargetOrdinal !== target.ordinal) {
+              throw new Error('citation sync target does not match live PM citation')
+            }
+            return {
+              citationTargetId: syncTarget.citationTargetId,
+              ordinal: target.ordinal,
+              referenceKey: target.referenceKey,
+              ...(format === 'word_native' && target.source
+                ? {
+                    wordSource: {
+                      tag: target.source.tag,
+                      title: target.source.title,
+                      author: target.source.author,
+                      year: target.source.year,
+                    },
+                  }
+                : {}),
+              ...(format === 'zotero'
+                ? {
+                    zotero: {
+                      itemId: target.itemId ?? null,
+                      uris: target.uris ?? [],
+                    },
+                  }
+                : {}),
+            }
+          }),
         },
       ]
     }),

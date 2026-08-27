@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
 import { parseDocx, saveDocx, type DocxCitation, type Run } from '@genoffice/docx-engine'
+import { createCoreTransport } from '@genoffice/9profs-core'
 import { buildDocx } from '../../../packages/docx-engine/tests/helpers/build-docx'
 import {
   blocksToPmDoc,
@@ -14,6 +15,7 @@ import { editorExtensions } from '../src/renderer/editor/extensions'
 import { buildDocumentContext } from '../src/renderer/ai/protocol'
 import {
   buildManuscriptCitationSyncInput,
+  buildManuscriptReferenceCatalogInput,
   buildManuscriptClaimExtractionInput,
 } from '../src/renderer/editor/manuscript-citations'
 
@@ -29,7 +31,7 @@ const citation: DocxCitation = {
   renderedText: '[12,13]',
   instruction: ' ADDIN ZOTERO_ITEM CSL_CITATION {"citationItems":[{"id":12},{"id":13}]}',
   targets: [
-    { ordinal: 1, referenceKey: '12', itemId: '12' },
+    { ordinal: 1, referenceKey: '12', itemId: '12', uris: ['zotero://select/items/12'] },
     { ordinal: 2, referenceKey: '13', itemId: '13' },
   ],
   originalXml:
@@ -39,9 +41,23 @@ const citation: DocxCitation = {
     '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
 }
 
-function sourceBlock(): never {
+const wordCitation: DocxCitation = {
+  format: 'WordNative',
+  renderedText: '[Smith2020]',
+  instruction: ' CITATION Smith2020 \\l 1033 ',
+  targets: [
+    {
+      ordinal: 1,
+      referenceKey: 'Smith2020',
+      source: { tag: 'Smith2020', title: 'Safe title', author: 'Smith', year: '2020' },
+    },
+  ],
+  originalXml: '<w:fldSimple w:instr=" CITATION Smith2020 \\l 1033 "/>',
+}
+
+function sourceBlock(selectedCitation: DocxCitation = citation): never {
   const run: Run = { text: 'Drug A works ' }
-  const citationRun: Run = { text: citation.renderedText, citation }
+  const citationRun: Run = { text: selectedCitation.renderedText, citation: selectedCitation }
   const tail: Run = { text: ' in adults.' }
   return {
     id: 'b7',
@@ -52,11 +68,11 @@ function sourceBlock(): never {
   } as never
 }
 
-function editorForCitation(): Editor {
+function editorForCitation(selectedCitation: DocxCitation = citation): Editor {
   const editor = new Editor({
     element: document.createElement('div'),
     extensions: editorExtensions,
-    content: blocksToPmDoc([sourceBlock()] as never) as never,
+    content: blocksToPmDoc([sourceBlock(selectedCitation)] as never) as never,
   })
   editors.add(editor)
   return editor
@@ -107,6 +123,160 @@ describe('Docs inline citation atom', () => {
         },
       ],
     })
+  })
+
+  it('builds a reference catalog payload from live DOCX metadata and exact sync target IDs', async () => {
+    const editor = editorForCitation()
+    const input = buildManuscriptReferenceCatalogInput({
+      editor,
+      activeDocument: { documentId: 'doc-1', version: 7 },
+      syncRun: {
+        syncRunId: 'sync-1',
+        researchCaseId: 'case-1' as never,
+        manuscriptSourceId: 'source-1' as never,
+        documentId: 'doc-1',
+        documentVersion: 7,
+        inventoryHash: { algorithm: 'sha256', value: 'hash-1' },
+        status: 'completed',
+        occurrenceCount: 1,
+        createdAtMs: 1,
+        completedAtMs: 2,
+        failureCode: null,
+      },
+      syncOccurrences: [
+        {
+          syncOccurrenceId: 'sync-occurrence-1',
+          syncRunId: 'sync-1',
+          ordinal: 0,
+          citationOccurrenceId: 'citation-occurrence-1',
+          documentBlockId: 'b7',
+          start: 13,
+          end: 20,
+          format: 'zotero',
+        },
+      ],
+      syncTargets: [
+        {
+          syncTargetId: 'sync-target-1',
+          syncOccurrenceId: 'sync-occurrence-1',
+          documentTargetOrdinal: 1,
+          citationTargetId: 'citation-target-12',
+        },
+        {
+          syncTargetId: 'sync-target-2',
+          syncOccurrenceId: 'sync-occurrence-1',
+          documentTargetOrdinal: 2,
+          citationTargetId: 'citation-target-13',
+        },
+      ],
+    })
+    expect(input).toEqual({
+      documentId: 'doc-1',
+      documentVersion: 7,
+      citations: [
+        {
+          citationOccurrenceId: 'citation-occurrence-1',
+          blockId: 'b7',
+          start: 13,
+          end: 20,
+          format: 'zotero',
+          targets: [
+            {
+              citationTargetId: 'citation-target-12',
+              ordinal: 1,
+              referenceKey: '12',
+              zotero: { itemId: '12', uris: ['zotero://select/items/12'] },
+            },
+            {
+              citationTargetId: 'citation-target-13',
+              ordinal: 2,
+              referenceKey: '13',
+              zotero: { itemId: '13', uris: [] },
+            },
+          ],
+        },
+      ],
+    })
+
+    let postedBody: BodyInit | null | undefined
+    const transport = createCoreTransport('http://127.0.0.1:39761/', async (_request, init) => {
+      postedBody = init?.body
+      return {
+        ok: true,
+        json: async () => ({ success: true, data: { catalogRunId: 'catalog-1' } }),
+      }
+    })
+    await expect(transport.syncManuscriptReferenceCatalog('sync-1', input)).resolves.toEqual({
+      catalogRunId: 'catalog-1',
+    })
+    expect(postedBody).toBe(JSON.stringify(input))
+  })
+
+  it('preserves bounded Word source hints without mutating the live editor', () => {
+    const editor = editorForCitation(wordCitation)
+    const occurrence = extractDocxCitationsFromPmDoc(editor.state.doc.toJSON() as PmNode)[0]
+    const before = editor.getJSON()
+    const input = buildManuscriptReferenceCatalogInput({
+      editor,
+      activeDocument: { documentId: 'doc-1', version: 7 },
+      syncRun: {
+        syncRunId: 'sync-word-1',
+        researchCaseId: 'case-1' as never,
+        manuscriptSourceId: 'source-1' as never,
+        documentId: 'doc-1',
+        documentVersion: 7,
+        inventoryHash: { algorithm: 'sha256', value: 'hash-word-1' },
+        status: 'completed',
+        occurrenceCount: 1,
+        createdAtMs: 1,
+        completedAtMs: 2,
+        failureCode: null,
+      },
+      syncOccurrences: [
+        {
+          syncOccurrenceId: 'sync-word-occurrence-1',
+          syncRunId: 'sync-word-1',
+          ordinal: 0,
+          citationOccurrenceId: 'citation-word-occurrence-1',
+          documentBlockId: occurrence.blockId,
+          start: occurrence.start,
+          end: occurrence.end,
+          format: 'word_native',
+        },
+      ],
+      syncTargets: [
+        {
+          syncTargetId: 'sync-word-target-1',
+          syncOccurrenceId: 'sync-word-occurrence-1',
+          documentTargetOrdinal: 1,
+          citationTargetId: 'citation-word-target-1',
+        },
+      ],
+    })
+
+    expect(input.citations).toEqual([
+      {
+        citationOccurrenceId: 'citation-word-occurrence-1',
+        blockId: occurrence.blockId,
+        start: occurrence.start,
+        end: occurrence.end,
+        format: 'word_native',
+        targets: [
+          {
+            citationTargetId: 'citation-word-target-1',
+            ordinal: 1,
+            referenceKey: 'Smith2020',
+            wordSource: {
+              tag: 'Smith2020',
+              title: 'Safe title',
+              author: 'Smith',
+              year: '2020',
+            },
+          },
+        ],
+      },
+    ])
+    expect(editor.getJSON()).toEqual(before)
   })
 
   it('builds claim extraction blocks from live PM text and completed sync occurrence IDs', () => {

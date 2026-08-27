@@ -778,6 +778,114 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('maps manuscript reference catalog sync and read routes through the trusted transport', async () => {
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }> = []
+    const catalogRun = {
+      catalogRunId: 'catalog/run-1',
+      researchCaseId: 'case-1',
+      manuscriptSourceId: 'source-1',
+      citationSyncRunId: 'sync/run-1',
+      documentId: 'doc-1',
+      documentVersion: 4,
+      catalogHash: { algorithm: 'sha256', value: 'catalog-hash' },
+      entryCount: 1,
+      targetMappingCount: 1,
+      status: 'completed',
+      createdAtMs: 1,
+      completedAtMs: 2,
+      failureCode: null,
+    }
+    const entry = {
+      entryId: 'entry-1',
+      catalogRunId: 'catalog/run-1',
+      ordinal: 0,
+      format: 'zotero',
+      referenceKey: '12',
+      descriptorHash: { algorithm: 'sha256', value: 'descriptor-hash' },
+      wordSource: null,
+      zotero: { itemId: '12', uris: [] },
+      targetCount: 1,
+    }
+    const mapping = {
+      mappingId: 'mapping-1',
+      catalogRunId: 'catalog/run-1',
+      referenceEntryId: 'entry-1',
+      citationOccurrenceId: 'citation-occurrence-1',
+      citationTargetId: 'citation-target-1',
+      documentTargetOrdinal: 1,
+    }
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+        const data = input.includes('/entries')
+          ? [entry]
+          : input.includes('/mappings')
+            ? [mapping]
+            : catalogRun
+        return { ok: true, json: async () => ({ success: true, data }) }
+      },
+      { sessionSecret: 'research-secret' },
+    )
+    const input = {
+      documentId: 'doc-1',
+      documentVersion: 4,
+      citations: [
+        {
+          citationOccurrenceId: 'citation-occurrence-1',
+          blockId: 'b1',
+          start: 2,
+          end: 7,
+          format: 'zotero' as const,
+          targets: [
+            {
+              citationTargetId: 'citation-target-1',
+              ordinal: 1,
+              referenceKey: '12',
+              zotero: { itemId: '12', uris: [] },
+            },
+          ],
+        },
+      ],
+    }
+
+    await expect(transport.syncManuscriptReferenceCatalog('sync/run 1', input)).resolves.toEqual(
+      catalogRun,
+    )
+    await expect(transport.manuscriptReferenceCatalog('sync/run 1')).resolves.toEqual(catalogRun)
+    await expect(transport.latestManuscriptReferenceCatalog('case/1', 'source/1')).resolves.toEqual(
+      catalogRun,
+    )
+    await expect(transport.manuscriptReferenceCatalogRun('catalog/run-1')).resolves.toEqual(
+      catalogRun,
+    )
+    await expect(transport.manuscriptReferenceEntries('catalog/run-1')).resolves.toEqual([entry])
+    await expect(transport.manuscriptReferenceTargetMappings('entry-1')).resolves.toEqual([mapping])
+
+    expect(requests[0]).toEqual({
+      input:
+        'http://127.0.0.1:39761/api/research/manuscript-citation-syncs/sync%2Frun%201/reference-catalog',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-nineprofs-session-secret': 'research-secret',
+      },
+      body: JSON.stringify(input),
+    })
+    expect(requests.slice(1).map(({ input: path }) => path)).toEqual([
+      'http://127.0.0.1:39761/api/research/manuscript-citation-syncs/sync%2Frun%201/reference-catalog',
+      'http://127.0.0.1:39761/api/research/cases/case%2F1/manuscripts/source%2F1/reference-catalog/latest',
+      'http://127.0.0.1:39761/api/research/manuscript-reference-catalog-runs/catalog%2Frun-1',
+      'http://127.0.0.1:39761/api/research/manuscript-reference-catalog-runs/catalog%2Frun-1/entries',
+      'http://127.0.0.1:39761/api/research/manuscript-reference-entries/entry-1/mappings',
+    ])
+  })
+
   it('maps citation verification runs and keeps creation on the trusted boundary', async () => {
     const requests: Array<{
       input: string

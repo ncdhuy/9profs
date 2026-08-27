@@ -664,6 +664,92 @@ export interface ManuscriptCitationSyncTarget {
   readonly citationTargetId: string
 }
 
+export type ManuscriptReferenceCatalogStatus = 'running' | 'completed' | 'failed'
+
+export interface ManuscriptReferenceWordSource {
+  readonly tag: string
+  readonly title: string
+  readonly author: string
+  readonly year: string
+}
+
+export interface ManuscriptReferenceZotero {
+  readonly itemId: string | null
+  readonly uris: readonly string[]
+}
+
+export interface ManuscriptReferenceCatalogRun {
+  readonly catalogRunId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly citationSyncRunId: string
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly catalogHash: ResearchContentHash
+  readonly entryCount: number
+  readonly targetMappingCount: number
+  readonly status: ManuscriptReferenceCatalogStatus
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly failureCode: string | null
+}
+
+export interface ManuscriptReferenceEntry {
+  readonly entryId: string
+  readonly catalogRunId: string
+  readonly ordinal: number
+  readonly format: ManuscriptCitationFormat
+  readonly referenceKey: string
+  readonly descriptorHash: ResearchContentHash
+  readonly wordSource: ManuscriptReferenceWordSource | null
+  readonly zotero: ManuscriptReferenceZotero | null
+  readonly targetCount: number
+}
+
+export interface ManuscriptReferenceTargetMapping {
+  readonly mappingId: string
+  readonly catalogRunId: string
+  readonly referenceEntryId: string
+  readonly citationOccurrenceId: string
+  readonly citationTargetId: string
+  readonly documentTargetOrdinal: number
+}
+
+export interface ManuscriptReferenceWordSourceInput {
+  readonly tag: string
+  readonly title: string
+  readonly author: string
+  readonly year: string
+}
+
+export interface ManuscriptReferenceZoteroInput {
+  readonly itemId?: string | null
+  readonly uris: readonly string[]
+}
+
+export interface ManuscriptReferenceCatalogTargetInput {
+  readonly citationTargetId: string
+  readonly ordinal: number
+  readonly referenceKey: string
+  readonly wordSource?: ManuscriptReferenceWordSourceInput | null
+  readonly zotero?: ManuscriptReferenceZoteroInput | null
+}
+
+export interface ManuscriptReferenceCatalogCitationInput {
+  readonly citationOccurrenceId: string
+  readonly blockId: string
+  readonly start: number
+  readonly end: number
+  readonly format: ManuscriptCitationFormat
+  readonly targets: readonly ManuscriptReferenceCatalogTargetInput[]
+}
+
+export interface SyncManuscriptReferenceCatalogInput {
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly citations: readonly ManuscriptReferenceCatalogCitationInput[]
+}
+
 export interface CitationTargetBinding {
   readonly bindingId: string
   readonly researchCaseId: ResearchCaseId

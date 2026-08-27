@@ -36,6 +36,9 @@ import type {
   ManuscriptCitationSyncOccurrence,
   ManuscriptCitationSyncRun,
   ManuscriptCitationSyncTarget,
+  ManuscriptReferenceCatalogRun,
+  ManuscriptReferenceEntry,
+  ManuscriptReferenceTargetMapping,
   ManuscriptClaimExtractionItem,
   ManuscriptClaimExtractionRun,
   ManuscriptClaimExtractionCoverage,
@@ -48,6 +51,7 @@ import type {
   CreateCitationTargetBindingInput,
   CreateCitationTargetInput,
   SyncManuscriptCitationsInput,
+  SyncManuscriptReferenceCatalogInput,
   CreateClaimCitationLinkInput,
   CreateCitationVerificationInput,
   CreateResearchCaseInput,
@@ -231,6 +235,18 @@ export interface CoreTransport {
   ): Promise<ManuscriptCitationSyncRun>
   manuscriptCitationSyncOccurrences(syncRunId: string): Promise<ManuscriptCitationSyncOccurrence[]>
   manuscriptCitationSyncTargets(syncOccurrenceId: string): Promise<ManuscriptCitationSyncTarget[]>
+  syncManuscriptReferenceCatalog(
+    syncRunId: string,
+    input: SyncManuscriptReferenceCatalogInput,
+  ): Promise<ManuscriptReferenceCatalogRun>
+  manuscriptReferenceCatalog(syncRunId: string): Promise<ManuscriptReferenceCatalogRun>
+  latestManuscriptReferenceCatalog(
+    researchCaseId: ResearchCaseId,
+    manuscriptSourceId: ResearchSourceId,
+  ): Promise<ManuscriptReferenceCatalogRun>
+  manuscriptReferenceCatalogRun(catalogRunId: string): Promise<ManuscriptReferenceCatalogRun>
+  manuscriptReferenceEntries(catalogRunId: string): Promise<ManuscriptReferenceEntry[]>
+  manuscriptReferenceTargetMappings(entryId: string): Promise<ManuscriptReferenceTargetMapping[]>
   createManuscriptClaimExtraction(
     syncRunId: string,
     input: CreateManuscriptClaimExtractionInput,
@@ -579,6 +595,32 @@ export function createCoreTransport(
     manuscriptCitationSyncTargets: (syncOccurrenceId) =>
       get<ManuscriptCitationSyncTarget[]>(
         `/api/research/manuscript-citation-sync-occurrences/${encodeURIComponent(syncOccurrenceId)}/targets`,
+      ),
+    syncManuscriptReferenceCatalog: (syncRunId, input) =>
+      trustedRequest<ManuscriptReferenceCatalogRun>(
+        `/api/research/manuscript-citation-syncs/${encodeURIComponent(syncRunId)}/reference-catalog`,
+        'POST',
+        input,
+      ),
+    manuscriptReferenceCatalog: (syncRunId) =>
+      get<ManuscriptReferenceCatalogRun>(
+        `/api/research/manuscript-citation-syncs/${encodeURIComponent(syncRunId)}/reference-catalog`,
+      ),
+    latestManuscriptReferenceCatalog: (researchCaseId, manuscriptSourceId) =>
+      get<ManuscriptReferenceCatalogRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscripts/${encodeURIComponent(manuscriptSourceId)}/reference-catalog/latest`,
+      ),
+    manuscriptReferenceCatalogRun: (catalogRunId) =>
+      get<ManuscriptReferenceCatalogRun>(
+        `/api/research/manuscript-reference-catalog-runs/${encodeURIComponent(catalogRunId)}`,
+      ),
+    manuscriptReferenceEntries: (catalogRunId) =>
+      get<ManuscriptReferenceEntry[]>(
+        `/api/research/manuscript-reference-catalog-runs/${encodeURIComponent(catalogRunId)}/entries`,
+      ),
+    manuscriptReferenceTargetMappings: (entryId) =>
+      get<ManuscriptReferenceTargetMapping[]>(
+        `/api/research/manuscript-reference-entries/${encodeURIComponent(entryId)}/mappings`,
       ),
     createManuscriptClaimExtraction: (syncRunId, input) =>
       trustedRequest<ManuscriptClaimExtractionRun>(
