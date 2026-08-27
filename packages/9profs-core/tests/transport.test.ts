@@ -683,4 +683,67 @@ describe('Core transport boundary', () => {
       },
     ])
   })
+
+  it('maps citation verification runs and keeps creation on the trusted boundary', async () => {
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }> = []
+    const run = {
+      runId: 'citation-verification-1',
+      status: 'completed',
+      candidates: [],
+      evidence: [],
+    }
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: input.includes('/api/research/claims/') ? [run] : run,
+          }),
+        }
+      },
+      { sessionSecret: 'research-secret' },
+    )
+
+    await expect(
+      transport.createCitationVerification({
+        claimCitationLinkId: 'claim-citation-1',
+        citationTargetBindingId: 'binding-1',
+      }),
+    ).resolves.toEqual(run)
+    await expect(transport.citationVerification('run/1')).resolves.toEqual(run)
+    await expect(transport.claimCitationVerifications('claim/1')).resolves.toEqual([run])
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/research/citation-verifications',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-nineprofs-session-secret': 'research-secret',
+        },
+        body: '{"claimCitationLinkId":"claim-citation-1","citationTargetBindingId":"binding-1"}',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/citation-verifications/run%2F1',
+        method: undefined,
+        headers: undefined,
+        body: undefined,
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/claims/claim%2F1/citation-verifications',
+        method: undefined,
+        headers: undefined,
+        body: undefined,
+      },
+    ])
+  })
 })

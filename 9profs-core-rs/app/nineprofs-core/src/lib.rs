@@ -15,15 +15,17 @@ use nineprofs_api_types::{
     AgentRunStartedDto, AgentTaskDto, AgentTaskFailureDto, ApiResponse, AssistantDto,
     CaptureResearchPdfEvidenceRequest, CaptureResearchPdfExtractionRequest,
     CaptureResearchSourceSnapshotRequest, CitationOccurrenceDto, CitationTargetBindingDto,
-    CitationTargetDto, ClaimCitationLinkDto, ClaimEvidenceLinkDto, CreateAssistantRequest,
+    CitationTargetDto, CitationVerificationCandidateDto, CitationVerificationEvidenceDto,
+    CitationVerificationResultDto, CitationVerificationRunDto, CitationVerificationStatusDto,
+    ClaimCitationLinkDto, ClaimEvidenceLinkDto, CreateAssistantRequest,
     CreateCitationOccurrenceRequest, CreateCitationTargetBindingRequest,
-    CreateCitationTargetRequest, CreateClaimCitationLinkRequest, CreateClaimEvidenceLinkRequest,
-    CreateDocumentAgentConversationRequest, CreateDocumentAgentConversationRunRequest,
-    CreateMcpServerRequest, CreateResearchCaseRequest, CreateResearchClaimRequest,
-    CreateResearchEvidenceRequest, CreateResearchSourceRequest, DocsAgentProfile,
-    DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse,
-    EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto, McpTransportDto,
-    McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
+    CreateCitationTargetRequest, CreateCitationVerificationRequest, CreateClaimCitationLinkRequest,
+    CreateClaimEvidenceLinkRequest, CreateDocumentAgentConversationRequest,
+    CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
+    CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
+    DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
+    ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
+    McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
     ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
     ResearchCitationBindingMethodDto, ResearchCitationOccurrenceOriginDto,
     ResearchCitationTargetResolutionDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto,
@@ -61,6 +63,9 @@ use nineprofs_research::{
 use nineprofs_research_dify::{
     DifyCaseIndex, DifyError, DifyExtractionIndex, DifyIndexStatus, DifyReadiness,
     RetrievalCandidate, RetrievalIndexState,
+};
+use nineprofs_research_verification::{
+    CitationVerificationError, CitationVerificationRun, CreateCitationVerification,
 };
 use nineprofs_runtime::{AgentExecutionServiceError, CoreRuntime};
 use nineprofs_skills::{Skill, SkillSource};
@@ -1142,6 +1147,18 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             get(get_claim_citation_link),
         )
         .route(
+            "/api/research/citation-verifications",
+            post(create_citation_verification),
+        )
+        .route(
+            "/api/research/citation-verifications/{id}",
+            get(get_citation_verification),
+        )
+        .route(
+            "/api/research/claims/{claim_id}/citation-verifications",
+            get(list_claim_citation_verifications),
+        )
+        .route(
             "/api/research/cases/{id}/retrieval-index",
             get(get_research_retrieval_index),
         )
@@ -1432,6 +1449,7 @@ enum ApiError {
     ProposalWorkflow(ProposalWorkflowError),
     Research(ResearchError),
     Dify(DifyError),
+    Verification(CitationVerificationError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -1475,6 +1493,12 @@ impl From<ResearchError> for ApiError {
 impl From<DifyError> for ApiError {
     fn from(error: DifyError) -> Self {
         Self::Dify(error)
+    }
+}
+
+impl From<CitationVerificationError> for ApiError {
+    fn from(error: CitationVerificationError) -> Self {
+        Self::Verification(error)
     }
 }
 
@@ -1584,6 +1608,33 @@ impl IntoResponse for ApiError {
                     | DifyError::Research(_) => StatusCode::BAD_GATEWAY,
                 };
                 (status, "dify_error", error.to_string())
+            }
+            Self::Verification(error) => {
+                let status = match error {
+                    CitationVerificationError::ClaimCitationLinkNotFound
+                    | CitationVerificationError::ClaimNotFound
+                    | CitationVerificationError::CitationOccurrenceNotFound
+                    | CitationVerificationError::CitationTargetNotFound
+                    | CitationVerificationError::CitationBindingNotFound
+                    | CitationVerificationError::NotFound => StatusCode::NOT_FOUND,
+                    CitationVerificationError::CitationChainMismatch
+                    | CitationVerificationError::BindingNotPdfReady
+                    | CitationVerificationError::RetrievalIndexNotReady
+                    | CitationVerificationError::AssessorInvalidOutput
+                    | CitationVerificationError::CandidateUnknown
+                    | CitationVerificationError::CandidateIntegrityFailed => StatusCode::CONFLICT,
+                    CitationVerificationError::RetrievalNotConfigured
+                    | CitationVerificationError::AssessorNotConfigured => {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                    CitationVerificationError::RetrievalFailed
+                    | CitationVerificationError::AssessorFailed => StatusCode::BAD_GATEWAY,
+                    CitationVerificationError::EvidencePromotionFailed
+                    | CitationVerificationError::PersistenceInvalid(_)
+                    | CitationVerificationError::Research(_)
+                    | CitationVerificationError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                (status, error.code(), error.to_string())
             }
             Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),
             Self::Unauthorized => (
@@ -2860,6 +2911,54 @@ async fn get_claim_citation_link(
     ))))
 }
 
+async fn create_citation_verification(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateCitationVerificationRequest>,
+) -> Result<axum::Json<ApiResponse<CitationVerificationRunDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let run = state
+        .runtime
+        .citation_verification_service()
+        .verify(CreateCitationVerification {
+            claim_citation_link_id: request.claim_citation_link_id,
+            citation_target_binding_id: request.citation_target_binding_id,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(citation_verification_run_dto(
+        run,
+    ))))
+}
+
+async fn get_citation_verification(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<CitationVerificationRunDto>>, ApiError> {
+    let run = state
+        .runtime
+        .citation_verification_service()
+        .citation_verification(&id)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(citation_verification_run_dto(
+        run,
+    ))))
+}
+
+async fn list_claim_citation_verifications(
+    State(state): State<AppState>,
+    Path(claim_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<CitationVerificationRunDto>>>, ApiError> {
+    let runs = state
+        .runtime
+        .citation_verification_service()
+        .claim_citation_verifications(&claim_id)
+        .await?
+        .into_iter()
+        .map(citation_verification_run_dto)
+        .collect();
+    Ok(axum::Json(ApiResponse::ok(runs)))
+}
+
 async fn get_research_retrieval_index(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -3283,6 +3382,97 @@ fn claim_citation_link_dto(value: nineprofs_research::ClaimCitationLink) -> Clai
         claim_id: value.claim_id.to_string(),
         citation_occurrence_id: value.citation_occurrence_id.to_string(),
         created_at_ms: value.created_at_ms,
+    }
+}
+
+fn citation_verification_run_dto(value: CitationVerificationRun) -> CitationVerificationRunDto {
+    CitationVerificationRunDto {
+        run_id: value.run_id,
+        research_case_id: value.research_case_id,
+        claim_citation_link_id: value.claim_citation_link_id,
+        citation_target_binding_id: value.citation_target_binding_id,
+        claim_id: value.claim_id,
+        citation_occurrence_id: value.citation_occurrence_id,
+        citation_target_id: value.citation_target_id,
+        source_id: value.source_id,
+        source_snapshot_id: value.source_snapshot_id,
+        extraction_id: value.extraction_id,
+        status: citation_verification_status_dto(value.status),
+        failure_code: value.failure_code,
+        created_at_ms: value.created_at_ms,
+        completed_at_ms: value.completed_at_ms,
+        result: value.result.map(citation_verification_result_dto),
+        candidates: value
+            .candidates
+            .into_iter()
+            .map(citation_verification_candidate_dto)
+            .collect(),
+        evidence: value
+            .evidence
+            .into_iter()
+            .map(citation_verification_evidence_dto)
+            .collect(),
+    }
+}
+
+fn citation_verification_candidate_dto(
+    value: nineprofs_research_verification::CitationVerificationCandidate,
+) -> CitationVerificationCandidateDto {
+    CitationVerificationCandidateDto {
+        verification_run_id: value.verification_run_id,
+        retrieval_chunk_id: value.retrieval_chunk_id,
+        research_source_id: value.research_source_id,
+        source_snapshot_id: value.source_snapshot_id,
+        extraction_id: value.extraction_id,
+        page: value.page,
+        start: value.start,
+        end: value.end,
+        excerpt_hash: value.excerpt_hash,
+        rank: value.rank,
+        retrieval_score: value.retrieval_score,
+    }
+}
+
+fn citation_verification_result_dto(
+    value: nineprofs_research_verification::CitationVerificationResult,
+) -> CitationVerificationResultDto {
+    CitationVerificationResultDto {
+        verification_run_id: value.verification_run_id,
+        overall_relation: claim_evidence_relation_dto(value.overall_relation),
+        rationale: value.rationale,
+        assessor_provider: value.assessor_provider,
+        assessor_version: value.assessor_version,
+        assessor_model_id: value.assessor_model_id,
+        assessment_contract_version: value.assessment_contract_version,
+        completed_at_ms: value.completed_at_ms,
+    }
+}
+
+fn citation_verification_evidence_dto(
+    value: nineprofs_research_verification::CitationVerificationEvidence,
+) -> CitationVerificationEvidenceDto {
+    CitationVerificationEvidenceDto {
+        verification_run_id: value.verification_run_id,
+        retrieval_chunk_id: value.retrieval_chunk_id,
+        evidence_id: value.evidence_id,
+        claim_evidence_link_id: value.claim_evidence_link_id,
+        relation: claim_evidence_relation_dto(value.relation),
+    }
+}
+
+fn citation_verification_status_dto(
+    value: nineprofs_research_verification::CitationVerificationStatus,
+) -> CitationVerificationStatusDto {
+    match value {
+        nineprofs_research_verification::CitationVerificationStatus::Running => {
+            CitationVerificationStatusDto::Running
+        }
+        nineprofs_research_verification::CitationVerificationStatus::Completed => {
+            CitationVerificationStatusDto::Completed
+        }
+        nineprofs_research_verification::CitationVerificationStatus::Failed => {
+            CitationVerificationStatusDto::Failed
+        }
     }
 }
 
@@ -3844,6 +4034,20 @@ mod research_api_tests {
         config.session_secret = Some(Arc::from("citation-secret"));
         let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
         let router = build_router(Arc::clone(&runtime));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/research/citation-verifications")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"claimCitationLinkId":"claim-link","citationTargetBindingId":"binding"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let response = router
             .clone()

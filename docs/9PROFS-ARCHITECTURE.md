@@ -1,15 +1,16 @@
 # 9Profs architecture baseline
 
 Status: canonical architecture and migration baseline for the current
-`develop` branch. Audited 2026-08-23 from repository source, manifests, tests,
+`develop` branch. Audited 2026-08-27 from repository source, manifests, tests,
 and a read-only comparison with `baseline/genoffice`.
 
 This document describes what exists, what remains GenOffice-derived, and the
 target boundaries for 9Profs. The pinned OfficeCLI sidecar is implemented for
 read-only inspection plus transactional detached creation and mutation;
-the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, and
-Phase 5C1 citation binding domain are implemented, while verification and SaaS
-services remain future work.
+the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, Phase
+5C1 citation binding domain, and Phase 5C2A citation verification orchestration
+are implemented, while citation parsing, UI, and SaaS services remain future
+work.
 
 ## Non-negotiable rules
 
@@ -904,10 +905,10 @@ loopback-only by deployment convention.
   and safe metadata only, never excerpts, claims, or source contents.
 - Research code has no dependency on Office mutation or document persistence.
 
-Still future: OCR, layout/image understanding, citation verification engine,
-manuscript/bibliography extraction, Sheets/data verification, research UI, field
-methodology bundles, and research ToolProvider exposure. Future adapters
-consume this domain; they do not replace it.
+Still future: OCR, layout/image understanding, manuscript/bibliography
+extraction, Sheets/data verification, research UI, field methodology bundles,
+and research ToolProvider exposure. Future adapters consume this domain; they do
+not replace it.
 
 #### Phase 5B1 — canonical reference-PDF ingestion (IMPLEMENTED)
 
@@ -1007,10 +1008,26 @@ retrieval. Case-wide support from another source does not validate a citation.
   `@genoffice/9profs-core` transport expose narrow create/get/list APIs. Writes
   use the trusted session-secret boundary and lifecycle events carry IDs only.
 
-Still future: citation verification engine, evidence promotion, manuscript
-and bibliography parsing, source auto-resolution, research UI, and Agent
-research tools. Dify retrieval remains an adapter and is not a citation
-identity owner.
+#### Phase 5C2A — citation verification orchestration (IMPLEMENTED)
+
+- `nineprofs-research-verification` is a provider-neutral orchestration seam. A
+  run validates the exact claim → citation occurrence → target → binding chain,
+  requires a ready PDF extraction, and uses only exact-extraction-scoped
+  retrieval.
+- Retrieval candidates are canonical local page ranges, not evidence. The
+  immutable candidate audit stores chunk/source/snapshot/extraction IDs, exact
+  Unicode range, canonical excerpt hash, rank, and score; it never stores
+  provider-returned text.
+- `CitationAssessmentProvider` returns a structured relation
+  (`supports`, `contradicts`, `contextualizes`, or `insufficient`) plus rationale
+  and selected candidate IDs. Only selected IDs are revalidated against the
+  canonical extraction, promoted through `capture_pdf_evidence`, and linked to
+  the claim through the generic `ClaimEvidenceLink` with assessment metadata.
+- Verification results, candidate audits, evidence mappings, failure codes, and
+  identifier-only lifecycle events are append-oriented and queryable by run or
+  claim. No real LLM/provider, manuscript parser, UI, or Agent tool is included.
+
+Dify retrieval remains an adapter and is not a citation identity owner.
 
 ### Phase 6 — product/SaaS layer
 

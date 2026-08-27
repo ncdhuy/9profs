@@ -10,6 +10,7 @@ export type ResearchPdfExtractionId = string
 export type ResearchEvidenceId = string
 export type ResearchClaimId = string
 export type ClaimEvidenceLinkId = string
+export type CitationVerificationRunId = string
 
 export interface AgentRequest {
   readonly input: string
@@ -624,6 +625,66 @@ export interface ClaimCitationLink {
   readonly claimId: ResearchClaimId
   readonly citationOccurrenceId: string
   readonly createdAtMs: number
+}
+
+export type CitationVerificationStatus = 'running' | 'completed' | 'failed'
+
+export interface CitationVerificationCandidate {
+  readonly verificationRunId: CitationVerificationRunId
+  readonly retrievalChunkId: string
+  readonly researchSourceId: ResearchSourceId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly extractionId: ResearchPdfExtractionId
+  readonly page: number
+  readonly start: number
+  readonly end: number
+  readonly excerptHash: string
+  readonly rank: number
+  readonly retrievalScore: number
+}
+
+export interface CitationVerificationResult {
+  readonly verificationRunId: CitationVerificationRunId
+  readonly overallRelation: ResearchClaimEvidenceRelation
+  readonly rationale: string
+  readonly assessorProvider: string
+  readonly assessorVersion: string
+  readonly assessorModelId: string | null
+  readonly assessmentContractVersion: string
+  readonly completedAtMs: number
+}
+
+export interface CitationVerificationEvidence {
+  readonly verificationRunId: CitationVerificationRunId
+  readonly retrievalChunkId: string
+  readonly evidenceId: ResearchEvidenceId
+  readonly claimEvidenceLinkId: ClaimEvidenceLinkId
+  readonly relation: ResearchClaimEvidenceRelation
+}
+
+export interface CitationVerificationRun {
+  readonly runId: CitationVerificationRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly claimCitationLinkId: string
+  readonly citationTargetBindingId: string
+  readonly claimId: ResearchClaimId
+  readonly citationOccurrenceId: string
+  readonly citationTargetId: string
+  readonly sourceId: ResearchSourceId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly extractionId: ResearchPdfExtractionId
+  readonly status: CitationVerificationStatus
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly result: CitationVerificationResult | null
+  readonly candidates: readonly CitationVerificationCandidate[]
+  readonly evidence: readonly CitationVerificationEvidence[]
+}
+
+export interface CreateCitationVerificationInput {
+  readonly claimCitationLinkId: string
+  readonly citationTargetBindingId: string
 }
 
 export interface CreateResearchCaseInput {

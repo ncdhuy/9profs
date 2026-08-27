@@ -29,6 +29,7 @@ import type {
   DocumentProposal,
   ClaimCitationLink,
   ClaimEvidenceLink,
+  CitationVerificationRun,
   CitationOccurrence,
   CitationTarget,
   CitationTargetBinding,
@@ -40,6 +41,7 @@ import type {
   CreateCitationTargetBindingInput,
   CreateCitationTargetInput,
   CreateClaimCitationLinkInput,
+  CreateCitationVerificationInput,
   CreateResearchCaseInput,
   CreateResearchClaimInput,
   CreateResearchEvidenceInput,
@@ -222,6 +224,9 @@ export interface CoreTransport {
   ): Promise<ClaimCitationLink[]>
   claimCitationLink(id: string): Promise<ClaimCitationLink>
   createClaimCitationLink(input: CreateClaimCitationLinkInput): Promise<ClaimCitationLink>
+  createCitationVerification(input: CreateCitationVerificationInput): Promise<CitationVerificationRun>
+  citationVerification(id: string): Promise<CitationVerificationRun>
+  claimCitationVerifications(claimId: string): Promise<CitationVerificationRun[]>
   websocketUrl(): string
 }
 
@@ -552,6 +557,16 @@ export function createCoreTransport(
       get<ClaimCitationLink>(`/api/research/claim-citations/${encodeURIComponent(id)}`),
     createClaimCitationLink: (input) =>
       trustedRequest<ClaimCitationLink>('/api/research/claim-citations', 'POST', input),
+    createCitationVerification: (input) =>
+      trustedRequest<CitationVerificationRun>('/api/research/citation-verifications', 'POST', input),
+    citationVerification: (id) =>
+      get<CitationVerificationRun>(
+        `/api/research/citation-verifications/${encodeURIComponent(id)}`,
+      ),
+    claimCitationVerifications: (claimId) =>
+      get<CitationVerificationRun[]>(
+        `/api/research/claims/${encodeURIComponent(claimId)}/citation-verifications`,
+      ),
     websocketUrl: () => normalizedBaseUrl.replace(/^http/, 'ws') + '/ws',
   }
 }

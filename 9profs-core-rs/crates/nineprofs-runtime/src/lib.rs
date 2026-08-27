@@ -24,6 +24,7 @@ use nineprofs_officecli::{
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
+use nineprofs_research_verification::CitationVerificationService;
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
@@ -142,6 +143,7 @@ pub struct CoreRuntime {
     officecli_runner: Arc<OfficeCliRunner>,
     research_service: Arc<ResearchService>,
     dify_service: Arc<DifyResearchService>,
+    citation_verification_service: Arc<CitationVerificationService>,
 }
 
 impl CoreRuntime {
@@ -178,6 +180,12 @@ impl CoreRuntime {
             Arc::clone(&event_bus),
             config.dify.clone(),
         )?);
+        let citation_verification_service = Arc::new(CitationVerificationService::new(
+            database.pool().clone(),
+            Arc::clone(&research_service),
+            Arc::clone(&dify_service),
+            Arc::clone(&event_bus),
+        ));
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),
@@ -269,6 +277,7 @@ impl CoreRuntime {
             officecli_runner,
             research_service,
             dify_service,
+            citation_verification_service,
         })
     }
 
@@ -360,6 +369,10 @@ impl CoreRuntime {
 
     pub fn dify_service(&self) -> Arc<DifyResearchService> {
         Arc::clone(&self.dify_service)
+    }
+
+    pub fn citation_verification_service(&self) -> Arc<CitationVerificationService> {
+        Arc::clone(&self.citation_verification_service)
     }
 
     pub async fn resolve_assistant_backend(

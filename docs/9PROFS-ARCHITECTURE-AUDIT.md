@@ -21,12 +21,12 @@ Inspected:
   `e2e/docs-presentation-parity.spec.ts`;
 - existing architecture documents and a read-only
   `baseline/genoffice..develop` comparison.
-- Phase 5A–5C1 Rust Core research domain, SQLite migrations, API DTO/routes, and
+- Phase 5A–5C2A Rust Core research domain, SQLite migrations, API DTO/routes, and
   TypeScript Core transport boundary.
 
-This audit records repository facts after Phase 5C1 implementation. It does not
-claim citation verification, manuscript/bibliography extraction, Sheets
-verification, research UI, or Agent research tools.
+This audit records repository facts after Phase 5C2A implementation. It does
+not claim manuscript/bibliography extraction, Sheets verification, research UI,
+or Agent research tools.
 
 ## Confirmed repository architecture
 
@@ -249,7 +249,7 @@ AionRS remains an execution engine, not the source of truth for tools; its
 bootstrap/default tool registry is still not enabled.
 
 Still NOT IMPLEMENTED: ACP/external CLI backends, full Extensions runtime,
-OfficeCLI resident mode, Sheets/Slides adapters, citation verification,
+OfficeCLI resident mode, Sheets/Slides adapters,
 manuscript/bibliography extraction, research UI, conversation/session
 persistence, and account/product services. Phase 4C2
 extends the Core-generated proposed ChangeSet with trusted user decision
@@ -365,9 +365,30 @@ append-oriented; a correction creates a new binding and retains history.
 `ClaimCitationLink` is a many-to-many association only. It does not create
 `ResearchEvidence`, make a support/contradiction assessment, or replace
 `ClaimEvidenceLink`. Core writes use the trusted session-secret boundary and
-emit identifier-only citation lifecycle events. No parser, retrieval call,
-verification engine, UI, or Agent tool is part of 5C1; those remain 5C2/5C3
-work.
+emit identifier-only citation lifecycle events. No parser, UI, or Agent tool is
+part of 5C1; those remain 5C2B/5C3 work.
+
+## Phase 5C2A citation verification orchestration
+
+`nineprofs-research-verification` now owns the provider-neutral verification
+orchestrator. It validates the exact claim → citation occurrence → target →
+binding chain and refuses bindings without a ready, exact PDF `ExtractionId`.
+Retrieval is delegated through the provider-neutral interface and the Dify
+adapter is called with an extraction-only scope.
+
+Candidates are immutable audit records containing only canonical identity and
+range data: retrieval chunk, source, snapshot, extraction, page, Unicode
+offsets, canonical excerpt hash, rank, and score. Canonical page text is passed
+to the assessor in memory; remote/provider text is never persisted or promoted.
+The assessor returns a structured relation and selected candidate IDs. Only
+those IDs are revalidated and promoted through the existing exact
+`capture_pdf_evidence` path, then connected to the claim with the generic
+`ClaimEvidenceLink` and explicit verification-to-evidence mapping.
+
+Runs persist `running`, `completed`, or `failed` state, typed failure codes,
+result metadata, candidate audits, and evidence mappings. Core exposes trusted
+POST creation plus read/list endpoints and identifier-only lifecycle events.
+No real model/provider, parser, UI, or Agent tool is included in this phase.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 
