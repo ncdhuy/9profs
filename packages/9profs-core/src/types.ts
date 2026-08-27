@@ -11,6 +11,8 @@ export type ResearchEvidenceId = string
 export type ResearchClaimId = string
 export type ClaimEvidenceLinkId = string
 export type CitationVerificationRunId = string
+export type ManuscriptClaimExtractionRunId = string
+export type ManuscriptClaimExtractionItemId = string
 
 export interface AgentRequest {
   readonly input: string
@@ -681,6 +683,73 @@ export interface ClaimCitationLink {
   readonly claimId: ResearchClaimId
   readonly citationOccurrenceId: string
   readonly createdAtMs: number
+}
+
+export type ManuscriptClaimExtractionStatus = 'running' | 'completed' | 'failed'
+export type ManuscriptClaimExtractionCoverageStatus =
+  'associated_with_claim' | 'no_verifiable_claim'
+
+export interface ManuscriptClaimExtractionRun {
+  readonly extractionRunId: ManuscriptClaimExtractionRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly citationSyncRunId: string
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly contextHash: ResearchContentHash
+  readonly extractorProvider: string
+  readonly extractorVersion: string
+  readonly extractorModelId: string | null
+  readonly extractionContractVersion: string
+  readonly status: ManuscriptClaimExtractionStatus
+  readonly claimCount: number
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly failureCode: string | null
+}
+
+export interface ManuscriptClaimExtractionItem {
+  readonly itemId: ManuscriptClaimExtractionItemId
+  readonly extractionRunId: ManuscriptClaimExtractionRunId
+  readonly researchClaimId: ResearchClaimId
+  readonly documentBlockId: string
+  readonly sourceStart: number
+  readonly sourceEnd: number
+  readonly sourceExcerpt: string
+  readonly sourceExcerptHash: ResearchContentHash
+  readonly ordinal: number
+  readonly claimText: string
+  readonly citationOccurrenceIds: readonly string[]
+  readonly claimCitationLinkIds: readonly string[]
+}
+
+export interface ManuscriptClaimExtractionCoverage {
+  readonly coverageId: string
+  readonly extractionRunId: ManuscriptClaimExtractionRunId
+  readonly extractionItemId: ManuscriptClaimExtractionItemId | null
+  readonly claimCitationLinkId: string | null
+  readonly citationOccurrenceId: string
+  readonly status: ManuscriptClaimExtractionCoverageStatus
+  readonly reason: string | null
+}
+
+export interface ManuscriptClaimExtractionCitationInput {
+  readonly citationOccurrenceId: string
+  readonly start: number
+  readonly end: number
+  readonly renderedText: string
+}
+
+export interface ManuscriptClaimExtractionBlockInput {
+  readonly blockId: string
+  readonly text: string
+  readonly citations: readonly ManuscriptClaimExtractionCitationInput[]
+}
+
+export interface CreateManuscriptClaimExtractionInput {
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly blocks: readonly ManuscriptClaimExtractionBlockInput[]
 }
 
 export type CitationVerificationStatus = 'running' | 'completed' | 'failed'

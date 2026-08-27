@@ -12,7 +12,10 @@ import {
 } from '../src/renderer/editor/convert'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { buildDocumentContext } from '../src/renderer/ai/protocol'
-import { buildManuscriptCitationSyncInput } from '../src/renderer/editor/manuscript-citations'
+import {
+  buildManuscriptCitationSyncInput,
+  buildManuscriptClaimExtractionInput,
+} from '../src/renderer/editor/manuscript-citations'
 
 const editors = new Set<Editor>()
 
@@ -100,6 +103,58 @@ describe('Docs inline citation atom', () => {
           targets: [
             { ordinal: 1, referenceKey: '12', citedLocator: null },
             { ordinal: 2, referenceKey: '13', citedLocator: null },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('builds claim extraction blocks from live PM text and completed sync occurrence IDs', () => {
+    const editor = editorForCitation()
+    const input = buildManuscriptClaimExtractionInput({
+      editor,
+      activeDocument: { documentId: 'doc-1', version: 7 },
+      syncRun: {
+        syncRunId: 'sync-1',
+        researchCaseId: 'case-1' as never,
+        manuscriptSourceId: 'source-1' as never,
+        documentId: 'doc-1',
+        documentVersion: 7,
+        inventoryHash: { algorithm: 'sha256', value: 'hash-1' },
+        status: 'completed',
+        occurrenceCount: 1,
+        createdAtMs: 1,
+        completedAtMs: 2,
+        failureCode: null,
+      },
+      syncOccurrences: [
+        {
+          syncOccurrenceId: 'sync-occurrence-1',
+          syncRunId: 'sync-1',
+          ordinal: 0,
+          citationOccurrenceId: 'citation-occurrence-1',
+          documentBlockId: 'b7',
+          start: 13,
+          end: 20,
+          format: 'zotero',
+        },
+      ],
+    })
+
+    expect(input).toEqual({
+      documentId: 'doc-1',
+      documentVersion: 7,
+      blocks: [
+        {
+          blockId: 'b7',
+          text: 'Drug A works [12,13] in adults.',
+          citations: [
+            {
+              citationOccurrenceId: 'citation-occurrence-1',
+              start: 13,
+              end: 20,
+              renderedText: '[12,13]',
+            },
           ],
         },
       ],

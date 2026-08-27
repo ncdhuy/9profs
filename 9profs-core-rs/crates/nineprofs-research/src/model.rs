@@ -27,6 +27,9 @@ pub const MAX_PDF_PAGES: u32 = 10_000;
 pub const MAX_PDF_PAGE_TEXT_BYTES: usize = 1024 * 1024;
 pub const MAX_PDF_EXTRACTION_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_RETRIEVAL_SCOPE_IDS: usize = 16;
+pub const MAX_CLAIM_EXTRACTION_BLOCKS: usize = 4_096;
+pub const MAX_CLAIM_EXTRACTION_CONTEXT_BYTES: usize = 512 * 1024;
+pub const MAX_CLAIM_EXTRACTION_CITATIONS_PER_BLOCK: usize = 128;
 
 #[derive(Debug, Error)]
 pub enum ResearchError {
@@ -49,6 +52,14 @@ pub enum ResearchError {
         document_id: String,
         document_version: i64,
     },
+    #[error("manuscript claim extractor is not configured")]
+    ManuscriptClaimExtractorNotConfigured,
+    #[error("manuscript claim extractor configuration is invalid: {0}")]
+    ManuscriptClaimExtractorInvalidConfiguration(String),
+    #[error("citation sync is stale for manuscript claim extraction")]
+    ManuscriptClaimExtractionStale,
+    #[error("manuscript claim extraction failed: {0}")]
+    ManuscriptClaimExtractionFailed(String),
 }
 
 macro_rules! id_type {
@@ -102,6 +113,18 @@ id_type!(
 id_type!(
     ManuscriptCitationSyncTargetId,
     "manuscript citation sync target ID"
+);
+id_type!(
+    ManuscriptClaimExtractionRunId,
+    "manuscript claim extraction run ID"
+);
+id_type!(
+    ManuscriptClaimExtractionItemId,
+    "manuscript claim extraction item ID"
+);
+id_type!(
+    ManuscriptClaimExtractionCoverageId,
+    "manuscript claim extraction coverage ID"
 );
 
 /// Provider-neutral retrieval boundary. Provider adapters translate these
@@ -528,6 +551,65 @@ pub struct ClaimCitationLink {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimExtractionStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimExtractionCoverageStatus {
+    AssociatedWithClaim,
+    NoVerifiableClaim,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionRun {
+    pub id: ManuscriptClaimExtractionRunId,
+    pub research_case_id: ResearchCaseId,
+    pub manuscript_source_id: ResearchSourceId,
+    pub citation_sync_run_id: ManuscriptCitationSyncRunId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub context_hash: ContentHash,
+    pub extractor_provider: String,
+    pub extractor_version: String,
+    pub extractor_model_id: Option<String>,
+    pub extraction_contract_version: String,
+    pub status: ManuscriptClaimExtractionStatus,
+    pub claim_count: u32,
+    pub created_at_ms: TimestampMs,
+    pub completed_at_ms: Option<TimestampMs>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionItem {
+    pub id: ManuscriptClaimExtractionItemId,
+    pub extraction_run_id: ManuscriptClaimExtractionRunId,
+    pub research_claim_id: ResearchClaimId,
+    pub document_block_id: String,
+    pub source_start: u64,
+    pub source_end: u64,
+    pub source_excerpt: String,
+    pub source_excerpt_hash: ContentHash,
+    pub ordinal: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionCoverage {
+    pub id: ManuscriptClaimExtractionCoverageId,
+    pub extraction_run_id: ManuscriptClaimExtractionRunId,
+    pub extraction_item_id: Option<ManuscriptClaimExtractionItemId>,
+    pub claim_citation_link_id: Option<ClaimCitationLinkId>,
+    pub citation_occurrence_id: CitationOccurrenceId,
+    pub status: ManuscriptClaimExtractionCoverageStatus,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClaimEvidenceRelation {
     Supports,
     Contradicts,
@@ -682,6 +764,67 @@ pub struct ManuscriptCitationSyncWrite {
     pub citation_targets: Vec<CitationTarget>,
     pub sync_occurrences: Vec<ManuscriptCitationSyncOccurrence>,
     pub sync_targets: Vec<ManuscriptCitationSyncTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionCitationInput {
+    pub citation_occurrence_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionBlockInput {
+    pub block_id: String,
+    pub text: String,
+    pub citations: Vec<ManuscriptClaimExtractionCitationInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ExtractManuscriptClaims {
+    pub citation_sync_run_id: ManuscriptCitationSyncRunId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub blocks: Vec<ManuscriptClaimExtractionBlockInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionIdentity {
+    pub provider: String,
+    pub extractor_version: String,
+    pub model_id: Option<String>,
+    pub extraction_contract_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionClaimOutput {
+    pub claim_text: String,
+    pub source_start: u64,
+    pub source_end: u64,
+    pub citation_occurrence_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionUnassociatedCitation {
+    pub citation_occurrence_id: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimExtractionOutput {
+    pub claims: Vec<ManuscriptClaimExtractionClaimOutput>,
+    #[serde(default)]
+    pub unassociated_citations: Vec<ManuscriptClaimExtractionUnassociatedCitation>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ManuscriptClaimExtractionWrite {
+    pub run: ManuscriptClaimExtractionRun,
+    pub claims: Vec<ResearchClaim>,
+    pub links: Vec<ClaimCitationLink>,
+    pub items: Vec<ManuscriptClaimExtractionItem>,
+    pub coverage: Vec<ManuscriptClaimExtractionCoverage>,
 }
 
 #[derive(Clone, Debug)]

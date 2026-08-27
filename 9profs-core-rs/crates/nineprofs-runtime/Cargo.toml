@@ -19,6 +19,7 @@ nineprofs-officecli = { path = "../nineprofs-officecli" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
 nineprofs-research = { path = "../nineprofs-research" }
 nineprofs-research-assessor = { path = "../nineprofs-research-assessor" }
+nineprofs-research-claim-extractor = { path = "../nineprofs-research-claim-extractor" }
 nineprofs-research-dify = { path = "../nineprofs-research-dify" }
 nineprofs-research-verification = { path = "../nineprofs-research-verification" }
 nineprofs-skills = { path = "../nineprofs-skills" }

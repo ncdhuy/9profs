@@ -371,6 +371,71 @@ pub struct ManuscriptCitationSyncTargetDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimExtractionStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimExtractionCoverageStatusDto {
+    AssociatedWithClaim,
+    NoVerifiableClaim,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimExtractionRunDto {
+    pub extraction_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub citation_sync_run_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub context_hash: ResearchContentHashDto,
+    pub extractor_provider: String,
+    pub extractor_version: String,
+    pub extractor_model_id: Option<String>,
+    pub extraction_contract_version: String,
+    pub status: ManuscriptClaimExtractionStatusDto,
+    pub claim_count: u32,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimExtractionItemDto {
+    pub item_id: String,
+    pub extraction_run_id: String,
+    pub research_claim_id: String,
+    pub document_block_id: String,
+    pub source_start: u64,
+    pub source_end: u64,
+    pub source_excerpt: String,
+    pub source_excerpt_hash: ResearchContentHashDto,
+    pub ordinal: u32,
+    pub claim_text: String,
+    pub citation_occurrence_ids: Vec<String>,
+    pub claim_citation_link_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimExtractionCoverageDto {
+    pub coverage_id: String,
+    pub extraction_run_id: String,
+    pub extraction_item_id: Option<String>,
+    pub claim_citation_link_id: Option<String>,
+    pub citation_occurrence_id: String,
+    pub status: ManuscriptClaimExtractionCoverageStatusDto,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationTargetBindingDto {
     pub binding_id: String,
@@ -542,6 +607,31 @@ pub struct CreateClaimCitationLinkRequest {
     pub research_case_id: String,
     pub claim_id: String,
     pub citation_occurrence_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptClaimExtractionCitationRequest {
+    pub citation_occurrence_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptClaimExtractionBlockRequest {
+    pub block_id: String,
+    pub text: String,
+    pub citations: Vec<ManuscriptClaimExtractionCitationRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptClaimExtractionRequest {
+    pub document_id: String,
+    pub document_version: i64,
+    pub blocks: Vec<ManuscriptClaimExtractionBlockRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

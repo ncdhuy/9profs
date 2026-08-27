@@ -36,6 +36,10 @@ import type {
   ManuscriptCitationSyncOccurrence,
   ManuscriptCitationSyncRun,
   ManuscriptCitationSyncTarget,
+  ManuscriptClaimExtractionItem,
+  ManuscriptClaimExtractionRun,
+  ManuscriptClaimExtractionCoverage,
+  CreateManuscriptClaimExtractionInput,
   CaptureResearchPdfEvidenceInput,
   CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
@@ -227,6 +231,14 @@ export interface CoreTransport {
   ): Promise<ManuscriptCitationSyncRun>
   manuscriptCitationSyncOccurrences(syncRunId: string): Promise<ManuscriptCitationSyncOccurrence[]>
   manuscriptCitationSyncTargets(syncOccurrenceId: string): Promise<ManuscriptCitationSyncTarget[]>
+  createManuscriptClaimExtraction(
+    syncRunId: string,
+    input: CreateManuscriptClaimExtractionInput,
+  ): Promise<ManuscriptClaimExtractionRun>
+  manuscriptClaimExtractions(syncRunId: string): Promise<ManuscriptClaimExtractionRun[]>
+  manuscriptClaimExtraction(id: string): Promise<ManuscriptClaimExtractionRun>
+  manuscriptClaimExtractionItems(id: string): Promise<ManuscriptClaimExtractionItem[]>
+  manuscriptClaimExtractionCoverage(id: string): Promise<ManuscriptClaimExtractionCoverage[]>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -567,6 +579,28 @@ export function createCoreTransport(
     manuscriptCitationSyncTargets: (syncOccurrenceId) =>
       get<ManuscriptCitationSyncTarget[]>(
         `/api/research/manuscript-citation-sync-occurrences/${encodeURIComponent(syncOccurrenceId)}/targets`,
+      ),
+    createManuscriptClaimExtraction: (syncRunId, input) =>
+      trustedRequest<ManuscriptClaimExtractionRun>(
+        `/api/research/manuscript-citation-syncs/${encodeURIComponent(syncRunId)}/claim-extractions`,
+        'POST',
+        input,
+      ),
+    manuscriptClaimExtractions: (syncRunId) =>
+      get<ManuscriptClaimExtractionRun[]>(
+        `/api/research/manuscript-citation-syncs/${encodeURIComponent(syncRunId)}/claim-extractions`,
+      ),
+    manuscriptClaimExtraction: (id) =>
+      get<ManuscriptClaimExtractionRun>(
+        `/api/research/manuscript-claim-extractions/${encodeURIComponent(id)}`,
+      ),
+    manuscriptClaimExtractionItems: (id) =>
+      get<ManuscriptClaimExtractionItem[]>(
+        `/api/research/manuscript-claim-extractions/${encodeURIComponent(id)}/items`,
+      ),
+    manuscriptClaimExtractionCoverage: (id) =>
+      get<ManuscriptClaimExtractionCoverage[]>(
+        `/api/research/manuscript-claim-extractions/${encodeURIComponent(id)}/coverage`,
       ),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(

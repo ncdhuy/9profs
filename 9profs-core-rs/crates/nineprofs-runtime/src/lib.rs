@@ -26,6 +26,9 @@ use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchR
 use nineprofs_research_assessor::{
     CitationAssessorConfig, CitationAssessorReadiness, ModelCitationAssessor,
 };
+use nineprofs_research_claim_extractor::{
+    ClaimExtractorConfig, ClaimExtractorReadiness, ModelClaimExtractionProvider,
+};
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
 use nineprofs_research_verification::{CitationAssessmentProvider, CitationVerificationService};
 use nineprofs_skills::{SkillCatalog, SkillError};
@@ -59,6 +62,8 @@ pub struct RuntimeConfig {
     pub dify: Option<DifyConfig>,
     /// Launch-scoped citation assessor configuration. Credential value is never stored.
     pub citation_assessor: CitationAssessorConfig,
+    /// Launch-scoped manuscript claim extractor configuration. Credential value is never stored.
+    pub claim_extractor: ClaimExtractorConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -73,6 +78,7 @@ impl Default for RuntimeConfig {
             session_secret: None,
             dify: None,
             citation_assessor: CitationAssessorConfig::default(),
+            claim_extractor: ClaimExtractorConfig::default(),
         }
     }
 }
@@ -97,6 +103,7 @@ impl RuntimeConfig {
         }
         config.dify = DifyConfig::from_env();
         config.citation_assessor = CitationAssessorConfig::from_env();
+        config.claim_extractor = ClaimExtractorConfig::from_env();
         if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
             config.custom_skill_roots = value
                 .split(';')
@@ -174,13 +181,20 @@ impl CoreRuntime {
             config.data_dir.join("research-artifacts"),
             database.pool().clone(),
         ));
-        let research_service = Arc::new(
-            ResearchService::new(
-                SqliteResearchRepository::new(database.pool().clone()),
-                Arc::clone(&event_bus),
-            )
-            .with_artifact_store(artifact_store),
-        );
+        let mut research_service = ResearchService::new(
+            SqliteResearchRepository::new(database.pool().clone()),
+            Arc::clone(&event_bus),
+        )
+        .with_artifact_store(artifact_store);
+        if !config.claim_extractor.provider.trim().is_empty()
+            || !config.claim_extractor.model.trim().is_empty()
+            || config.claim_extractor.base_url.is_some()
+        {
+            research_service = research_service.with_claim_extractor(Arc::new(
+                ModelClaimExtractionProvider::new(config.claim_extractor.clone()),
+            ));
+        }
+        let research_service = Arc::new(research_service);
         let dify_service = Arc::new(DifyResearchService::new(
             database.pool().clone(),
             Arc::clone(&research_service),
@@ -390,6 +404,10 @@ impl CoreRuntime {
 
     pub fn citation_assessor_readiness(&self) -> CitationAssessorReadiness {
         self.config.citation_assessor.readiness()
+    }
+
+    pub fn claim_extractor_readiness(&self) -> ClaimExtractorReadiness {
+        self.config.claim_extractor.readiness()
     }
 
     pub async fn resolve_assistant_backend(

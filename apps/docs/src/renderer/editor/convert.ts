@@ -1025,6 +1025,39 @@ export function runsToInline(runs: Run[]): PmNode[] {
 
 /** Read-only citation inventory for the live editor document. */
 export function extractDocxCitationsFromPmDoc(doc: PmNode): DocxCitationOccurrenceDescriptor[] {
+  return extractDocxCitationsFromBlocks(pmBlocksFromPmDoc(doc))
+}
+
+export interface ManuscriptClaimBlockContext {
+  readonly blockId: string
+  readonly text: string
+  readonly citations: DocxCitationOccurrenceDescriptor[]
+}
+
+/** Read-only visible block context for citation-associated claim extraction. */
+export function extractDocxClaimBlocksFromPmDoc(doc: PmNode): ManuscriptClaimBlockContext[] {
+  const blocks = pmBlocksFromPmDoc(doc)
+  const citations = extractDocxCitationsFromBlocks(blocks)
+  const citationsByBlock = new Map<string, DocxCitationOccurrenceDescriptor[]>()
+  for (const citation of citations) {
+    const list = citationsByBlock.get(citation.blockId) ?? []
+    list.push(citation)
+    citationsByBlock.set(citation.blockId, list)
+  }
+  return blocks.flatMap((block) => {
+    const blockCitations = citationsByBlock.get(block.id)
+    if (blockCitations === undefined) return []
+    return [
+      {
+        blockId: block.id,
+        text: block.runs?.map((run) => run.text).join('') ?? '',
+        citations: blockCitations,
+      },
+    ]
+  })
+}
+
+function pmBlocksFromPmDoc(doc: PmNode): Block[] {
   const blocks: Block[] = []
   const collect = (node: PmNode, path: string, inheritedDocxIndex: number | null = null): void => {
     const nodeDocxIndex =
@@ -1057,7 +1090,7 @@ export function extractDocxCitationsFromPmDoc(doc: PmNode): DocxCitationOccurren
     }
   }
   for (const [index, node] of (doc.content ?? []).entries()) collect(node, String(index))
-  return extractDocxCitationsFromBlocks(blocks)
+  return blocks
 }
 
 function runMarks(run: Run): PmMark[] {

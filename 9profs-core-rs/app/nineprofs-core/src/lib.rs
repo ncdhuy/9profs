@@ -21,15 +21,18 @@ use nineprofs_api_types::{
     CreateCitationOccurrenceRequest, CreateCitationTargetBindingRequest,
     CreateCitationTargetRequest, CreateCitationVerificationRequest, CreateClaimCitationLinkRequest,
     CreateClaimEvidenceLinkRequest, CreateDocumentAgentConversationRequest,
-    CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
-    CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
-    DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
-    ErrorResponse, EventEnvelope, HealthResponse, ManuscriptCitationFormatDto,
+    CreateDocumentAgentConversationRunRequest, CreateManuscriptClaimExtractionRequest,
+    CreateMcpServerRequest, CreateResearchCaseRequest, CreateResearchClaimRequest,
+    CreateResearchEvidenceRequest, CreateResearchSourceRequest, DocsAgentProfile,
+    DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto, ErrorResponse,
+    EventEnvelope, HealthResponse, ManuscriptCitationFormatDto,
     ManuscriptCitationSyncCitationRequest, ManuscriptCitationSyncOccurrenceDto,
     ManuscriptCitationSyncRunDto, ManuscriptCitationSyncStatusDto, ManuscriptCitationSyncTargetDto,
-    ManuscriptCitationSyncTargetRequest, McpConnectionTestDto, McpServerDto, McpToolDto,
-    McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
-    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
+    ManuscriptCitationSyncTargetRequest, ManuscriptClaimExtractionCoverageDto,
+    ManuscriptClaimExtractionCoverageStatusDto, ManuscriptClaimExtractionItemDto,
+    ManuscriptClaimExtractionRunDto, ManuscriptClaimExtractionStatusDto, McpConnectionTestDto,
+    McpServerDto, McpToolDto, McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto,
+    ResearchArtifactDto, ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
     ResearchCitationBindingMethodDto, ResearchCitationOccurrenceOriginDto,
     ResearchCitationTargetResolutionDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto,
     ResearchClaimOriginDto, ResearchContentHashDto, ResearchEvidenceDto,
@@ -58,10 +61,11 @@ use nineprofs_research::{
     CaptureSourceSnapshot, CitationBindingMethod, CitationOccurrenceOrigin, ClaimEvidenceRelation,
     ClaimOrigin, CreateCitationOccurrence, CreateCitationTarget, CreateCitationTargetBinding,
     CreateClaimCitationLink, CreateClaimEvidenceLink, CreateResearchCase, CreateResearchClaim,
-    CreateResearchEvidence, CreateResearchSource, EvidenceLocator, HashAlgorithm, ResearchCase,
-    ResearchClaim, ResearchError, ResearchEvidence, ResearchPdfExtraction, ResearchPdfExtractionId,
-    ResearchPdfPage, ResearchPdfPageBatch, ResearchRetrievalScope, ResearchSource,
-    ResearchSourceId, ResearchSourceSnapshot, SourceKind, SourceOrigin,
+    CreateResearchEvidence, CreateResearchSource, EvidenceLocator, ExtractManuscriptClaims,
+    HashAlgorithm, ManuscriptClaimExtractionBlockInput, ManuscriptClaimExtractionCitationInput,
+    ResearchCase, ResearchClaim, ResearchError, ResearchEvidence, ResearchPdfExtraction,
+    ResearchPdfExtractionId, ResearchPdfPage, ResearchPdfPageBatch, ResearchRetrievalScope,
+    ResearchSource, ResearchSourceId, ResearchSourceSnapshot, SourceKind, SourceOrigin,
 };
 use nineprofs_research_dify::{
     DifyCaseIndex, DifyError, DifyExtractionIndex, DifyIndexStatus, DifyReadiness,
@@ -1146,6 +1150,22 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             get(list_manuscript_citation_sync_targets),
         )
         .route(
+            "/api/research/manuscript-citation-syncs/{sync_run_id}/claim-extractions",
+            get(list_manuscript_claim_extractions).post(create_manuscript_claim_extraction),
+        )
+        .route(
+            "/api/research/manuscript-claim-extractions/{id}",
+            get(get_manuscript_claim_extraction),
+        )
+        .route(
+            "/api/research/manuscript-claim-extractions/{id}/items",
+            get(list_manuscript_claim_extraction_items),
+        )
+        .route(
+            "/api/research/manuscript-claim-extractions/{id}/coverage",
+            get(list_manuscript_claim_extraction_coverage),
+        )
+        .route(
             "/api/research/citation-targets/{id}",
             get(get_citation_target),
         )
@@ -1603,6 +1623,26 @@ impl IntoResponse for ApiError {
                 ResearchError::ManuscriptCitationSyncConflict { .. } => (
                     StatusCode::CONFLICT,
                     "manuscript_citation_sync_conflict",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptClaimExtractorNotConfigured => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "extractor_not_configured",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptClaimExtractorInvalidConfiguration(_) => (
+                    StatusCode::BAD_REQUEST,
+                    "invalid_configuration",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptClaimExtractionStale => (
+                    StatusCode::CONFLICT,
+                    "citation_sync_stale",
+                    error.to_string(),
+                ),
+                ResearchError::ManuscriptClaimExtractionFailed(_) => (
+                    StatusCode::BAD_GATEWAY,
+                    "claim_extraction_failed",
                     error.to_string(),
                 ),
                 ResearchError::Invalid(_) => (
@@ -2830,6 +2870,119 @@ async fn list_manuscript_citation_sync_targets(
     )))
 }
 
+async fn create_manuscript_claim_extraction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(sync_run_id): Path<String>,
+    axum::Json(request): axum::Json<CreateManuscriptClaimExtractionRequest>,
+) -> Result<axum::Json<ApiResponse<ManuscriptClaimExtractionRunDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let run = state
+        .runtime
+        .research_service()
+        .extract_manuscript_claims(ExtractManuscriptClaims {
+            citation_sync_run_id: nineprofs_research::ManuscriptCitationSyncRunId::parse(
+                sync_run_id,
+            )?,
+            document_id: request.document_id,
+            document_version: request.document_version,
+            blocks: request
+                .blocks
+                .into_iter()
+                .map(|block| ManuscriptClaimExtractionBlockInput {
+                    block_id: block.block_id,
+                    text: block.text,
+                    citations: block
+                        .citations
+                        .into_iter()
+                        .map(|citation| ManuscriptClaimExtractionCitationInput {
+                            citation_occurrence_id: citation.citation_occurrence_id,
+                            start: citation.start,
+                            end: citation.end,
+                            rendered_text: citation.rendered_text,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_claim_extraction_run_dto(run),
+    )))
+}
+
+async fn list_manuscript_claim_extractions(
+    State(state): State<AppState>,
+    Path(sync_run_id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptClaimExtractionRunDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_claim_extractions(Some(&sync_run_id))
+            .await?
+            .into_iter()
+            .map(manuscript_claim_extraction_run_dto)
+            .collect(),
+    )))
+}
+
+async fn get_manuscript_claim_extraction(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ManuscriptClaimExtractionRunDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_claim_extraction_run_dto(
+            state
+                .runtime
+                .research_service()
+                .get_manuscript_claim_extraction(&id)
+                .await?,
+        ),
+    )))
+}
+
+async fn list_manuscript_claim_extraction_items(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptClaimExtractionItemDto>>>, ApiError> {
+    let service = state.runtime.research_service();
+    let items = service.list_manuscript_claim_extraction_items(&id).await?;
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        let claim = service.get_claim(item.research_claim_id.as_str()).await?;
+        let links = service
+            .list_claim_citation_links(None, Some(item.research_claim_id.as_str()), None)
+            .await?;
+        result.push(manuscript_claim_extraction_item_dto(
+            item,
+            claim.text,
+            links
+                .iter()
+                .map(|link| link.citation_occurrence_id.to_string())
+                .collect(),
+            links.iter().map(|link| link.id.to_string()).collect(),
+        ));
+    }
+    Ok(axum::Json(ApiResponse::ok(result)))
+}
+
+async fn list_manuscript_claim_extraction_coverage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptClaimExtractionCoverageDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_claim_extraction_coverage(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_claim_extraction_coverage_dto)
+            .collect(),
+    )))
+}
+
 async fn list_citation_targets(
     State(state): State<AppState>,
     Path(occurrence_id): Path<String>,
@@ -3542,6 +3695,88 @@ fn manuscript_citation_sync_status_dto(
         nineprofs_research::ManuscriptCitationSyncStatus::Failed => {
             ManuscriptCitationSyncStatusDto::Failed
         }
+    }
+}
+
+fn manuscript_claim_extraction_run_dto(
+    value: nineprofs_research::ManuscriptClaimExtractionRun,
+) -> ManuscriptClaimExtractionRunDto {
+    ManuscriptClaimExtractionRunDto {
+        extraction_run_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        manuscript_source_id: value.manuscript_source_id.to_string(),
+        citation_sync_run_id: value.citation_sync_run_id.to_string(),
+        document_id: value.document_id,
+        document_version: value.document_version,
+        context_hash: research_content_hash_dto(value.context_hash),
+        extractor_provider: value.extractor_provider,
+        extractor_version: value.extractor_version,
+        extractor_model_id: value.extractor_model_id,
+        extraction_contract_version: value.extraction_contract_version,
+        status: manuscript_claim_extraction_status_dto(value.status),
+        claim_count: value.claim_count,
+        created_at_ms: value.created_at_ms,
+        completed_at_ms: value.completed_at_ms,
+        failure_code: value.failure_code,
+    }
+}
+
+fn manuscript_claim_extraction_item_dto(
+    value: nineprofs_research::ManuscriptClaimExtractionItem,
+    claim_text: String,
+    citation_occurrence_ids: Vec<String>,
+    claim_citation_link_ids: Vec<String>,
+) -> ManuscriptClaimExtractionItemDto {
+    ManuscriptClaimExtractionItemDto {
+        item_id: value.id.to_string(),
+        extraction_run_id: value.extraction_run_id.to_string(),
+        research_claim_id: value.research_claim_id.to_string(),
+        document_block_id: value.document_block_id,
+        source_start: value.source_start,
+        source_end: value.source_end,
+        source_excerpt: value.source_excerpt,
+        source_excerpt_hash: research_content_hash_dto(value.source_excerpt_hash),
+        ordinal: value.ordinal,
+        claim_text,
+        citation_occurrence_ids,
+        claim_citation_link_ids,
+    }
+}
+
+fn manuscript_claim_extraction_status_dto(
+    value: nineprofs_research::ManuscriptClaimExtractionStatus,
+) -> ManuscriptClaimExtractionStatusDto {
+    match value {
+        nineprofs_research::ManuscriptClaimExtractionStatus::Running => {
+            ManuscriptClaimExtractionStatusDto::Running
+        }
+        nineprofs_research::ManuscriptClaimExtractionStatus::Completed => {
+            ManuscriptClaimExtractionStatusDto::Completed
+        }
+        nineprofs_research::ManuscriptClaimExtractionStatus::Failed => {
+            ManuscriptClaimExtractionStatusDto::Failed
+        }
+    }
+}
+
+fn manuscript_claim_extraction_coverage_dto(
+    value: nineprofs_research::ManuscriptClaimExtractionCoverage,
+) -> ManuscriptClaimExtractionCoverageDto {
+    ManuscriptClaimExtractionCoverageDto {
+        coverage_id: value.id.to_string(),
+        extraction_run_id: value.extraction_run_id.to_string(),
+        extraction_item_id: value.extraction_item_id.map(|id| id.to_string()),
+        claim_citation_link_id: value.claim_citation_link_id.map(|id| id.to_string()),
+        citation_occurrence_id: value.citation_occurrence_id.to_string(),
+        status: match value.status {
+            nineprofs_research::ManuscriptClaimExtractionCoverageStatus::AssociatedWithClaim => {
+                ManuscriptClaimExtractionCoverageStatusDto::AssociatedWithClaim
+            }
+            nineprofs_research::ManuscriptClaimExtractionCoverageStatus::NoVerifiableClaim => {
+                ManuscriptClaimExtractionCoverageStatusDto::NoVerifiableClaim
+            }
+        },
+        reason: value.reason,
     }
 }
 

@@ -2326,6 +2326,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nineprofs-research-claim-extractor"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nineprofs-research",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "nineprofs-research-dify"
 version = "0.1.0"
 dependencies = [
@@ -2378,6 +2391,7 @@ dependencies = [
  "nineprofs-realtime",
  "nineprofs-research",
  "nineprofs-research-assessor",
+ "nineprofs-research-claim-extractor",
  "nineprofs-research-dify",
  "nineprofs-research-verification",
  "nineprofs-skills",

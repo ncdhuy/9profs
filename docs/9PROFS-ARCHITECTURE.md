@@ -10,9 +10,9 @@ read-only inspection plus transactional detached creation and mutation;
 the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, Phase
 5C1 citation binding domain, Phase 5C2A citation verification orchestration,
 Phase 5C2B model-backed citation assessment, Phase 5C3A inline citation
-inventory, and Phase 5C3B1 live manuscript citation synchronization are
-implemented. Citation UI, claim extraction, and SaaS services remain future
-work.
+inventory, Phase 5C3B1 live manuscript citation synchronization, and Phase
+5C3B2 atomic manuscript claim extraction are implemented. Citation UI and SaaS
+services remain future work.
 
 ## Non-negotiable rules
 
@@ -40,7 +40,7 @@ dependency order.
 Product Layer
 └─ apps/shell + packages/project-store + local settings/recent files
 
-Research Domain Layer (Phases 5A, 5B1, 5B2, 5C1, and 5C3B1 implemented)
+Research Domain Layer (Phases 5A, 5B1, 5B2, 5C1, 5C3B1, and 5C3B2 implemented)
 └─ nineprofs-research provenance, evidence, claims, citation occurrences/targets/bindings/sync
 
 AI / Agent Core
@@ -1105,9 +1105,39 @@ Dify retrieval remains an adapter and is not a citation identity owner.
   target mappings. Sync creates no target bindings, claims, claim links, or
   verification state, and lifecycle payloads contain IDs/status metadata only.
 
-Still future: 5C3B2 manuscript claim extraction, 5C3B3 source/PDF binding, and
-5C3C citation UI, Agent citation tools, plain-text recognition, and additional
-citation-manager adapters.
+#### Phase 5C3B2 — atomic manuscript claim extraction (IMPLEMENTED)
+
+- `apps/docs` exposes a read-only adapter over the live PM document. It derives
+  block text and reuses the exact Phase 5C3B1 block IDs and Unicode code-point
+  citation ranges, then joins those descriptors to the completed sync run's
+  persistent `CitationOccurrence` IDs. It does not edit PM state or DOCX XML.
+- `nineprofs-research` accepts only an exact completed sync run, document ID,
+  document version, and complete occurrence inventory. It validates every
+  block/range/rendered marker against the canonical occurrence origin, sends
+  only bounded block text plus occurrence IDs/ranges to a provider, and
+  reconstructs all source excerpts server-side from Unicode code-point ranges.
+- `nineprofs-research-claim-extractor` is a separate structured-output
+  provider boundary for OpenAI and Anthropic. Its contract allows only atomic
+  manuscript propositions, exact source ranges, and closed-set occurrence IDs;
+  no retrieval, provenance invention, correction, or verification is allowed.
+  Configuration is launch-scoped and credential-free in readiness/status
+  output; an unconfigured core still starts normally.
+- Extraction runs persist provider/version/model/contract identity and a
+  context hash in `research_manuscript_claim_extraction_runs`. The companion
+  `research_manuscript_claim_extraction_items` and
+  `research_manuscript_claim_extraction_citations` tables carry exact source
+  mappings, `ClaimCitationLink` foreign keys, excerpt hashes, deterministic
+  ordinals, and per-citation coverage. All are committed in one transaction.
+  Repeated identical requests reuse the completed run;
+  different sync contexts or extractor identities retain separate history.
+  Provider failures and invalid structured output cannot leave partial claims.
+- Core exposes trusted creation plus read-only run/item/coverage routes and
+  safe started/completed/failed lifecycle events. This phase creates no source
+  bindings, evidence, verification results, retrieval state, Dify state, Agent
+  tools, or citation UI.
+
+Still future: 5C3B3 source/PDF binding, 5C3C citation UI, Agent citation tools,
+plain-text recognition, and additional citation-manager adapters.
 
 ### Phase 6 — product/SaaS layer
 
