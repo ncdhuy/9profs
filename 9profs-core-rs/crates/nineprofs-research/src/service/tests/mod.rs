@@ -21,3 +21,4 @@ mod evidence_claims;
 mod manuscript_sync;
 mod pdf;
 mod provenance;
+mod repository_injection;

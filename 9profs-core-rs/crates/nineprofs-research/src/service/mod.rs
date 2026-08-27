@@ -19,7 +19,7 @@ mod tests;
 
 #[derive(Clone)]
 pub struct ResearchService {
-    repository: crate::SqliteResearchRepository,
+    repository: Arc<dyn ResearchRepository>,
     events: Arc<BroadcastEventBus>,
     artifact_store: Option<Arc<crate::ResearchArtifactStore>>,
     claim_extractor: Option<Arc<dyn crate::ManuscriptClaimExtractionProvider>>,
@@ -28,6 +28,13 @@ pub struct ResearchService {
 impl ResearchService {
     pub fn new(
         repository: crate::SqliteResearchRepository,
+        events: Arc<BroadcastEventBus>,
+    ) -> Self {
+        Self::with_repository(Arc::new(repository), events)
+    }
+
+    pub fn with_repository(
+        repository: Arc<dyn ResearchRepository>,
         events: Arc<BroadcastEventBus>,
     ) -> Self {
         Self {
