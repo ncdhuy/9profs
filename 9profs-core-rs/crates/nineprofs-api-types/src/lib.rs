@@ -38,8 +38,11 @@ pub use research::{
     CreateCitationTargetBindingRequest, CreateCitationTargetRequest,
     CreateCitationVerificationRequest, CreateClaimCitationLinkRequest,
     CreateClaimEvidenceLinkRequest, CreateResearchCaseRequest, CreateResearchClaimRequest,
-    CreateResearchEvidenceRequest, CreateResearchSourceRequest, ReferencePdfIngestionDto,
-    ResearchArtifactDto, ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
+    CreateResearchEvidenceRequest, CreateResearchSourceRequest, ManuscriptCitationFormatDto,
+    ManuscriptCitationSyncCitationRequest, ManuscriptCitationSyncOccurrenceDto,
+    ManuscriptCitationSyncRunDto, ManuscriptCitationSyncStatusDto, ManuscriptCitationSyncTargetDto,
+    ManuscriptCitationSyncTargetRequest, ReferencePdfIngestionDto, ResearchArtifactDto,
+    ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
     ResearchCitationBindingMethodDto, ResearchCitationOccurrenceOriginDto,
     ResearchCitationTargetResolutionDto, ResearchClaimDto, ResearchClaimEvidenceRelationDto,
     ResearchClaimOriginDto, ResearchContentHashDto, ResearchEvidenceDto,
@@ -49,7 +52,7 @@ pub use research::{
     ResearchRetrievalIndexStateDto, ResearchRetrievalIndexStatusDto, ResearchRetrievalReadinessDto,
     ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto, ResearchSourceDto,
     ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
-    RetrieveResearchRequest,
+    RetrieveResearchRequest, SyncManuscriptCitationsRequest,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

@@ -21,12 +21,12 @@ Inspected:
   `e2e/docs-presentation-parity.spec.ts`;
 - existing architecture documents and a read-only
   `baseline/genoffice..develop` comparison.
-- Phase 5A–5C3A Rust Core research domain, SQLite migrations, API DTO/routes, and
+- Phase 5A–5C3B1 Rust Core research domain, SQLite migrations, API DTO/routes, and
   TypeScript Core transport boundary.
 
-This audit records repository facts after Phase 5C3A implementation. It does
-not claim Research synchronization, claim extraction, verification UI, or
-Agent research tools.
+This audit records repository facts after Phase 5C3B1 implementation. It does
+not claim manuscript claim extraction, verification UI, or Agent research
+tools.
 
 ## Confirmed repository architecture
 
@@ -34,30 +34,30 @@ The root is a private `genoffice` workspace with `apps/*` and `packages/*`
 workspaces. Product scripts run tests and typechecks for the shared packages,
 Docs, Sheets, Shell, Slides, PDF, and Markdown.
 
-| Current area                           | Confirmed implementation                                                                                                                                                                 | Current status                                                                  |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Electron shell                         | `apps/shell/src/main/index.ts`, `tab-manager.ts`, preload and renderer UI; hosts app views/tabs                                                                                          | Implemented                                                                     |
-| Docs/DOCX                              | `apps/docs` plus `packages/docx-engine`; Tiptap/ProseMirror model, renderer pagination, AI tools, dirty/save/reparse paths                                                               | Implemented; canonical Office editor                                            |
-| Sheets/XLSX                            | Univer renderer, `apps/sheets/src/gateway/xlsx-gateway.ts`, `xlsx-package-io.ts`, Rust `native/xlsx-engine`                                                                              | Implemented; independent Office editor                                          |
-| Slides/PPTX                            | `packages/pptx-engine`, `packages/pptx-render`, `apps/slides/src/renderer/SlideCanvas.tsx`                                                                                               | Implemented; independent Office editor                                          |
-| PDF                                    | PDF.js viewer/editor UI, PDFium/PDF-lib main-process operations, `apps/pdf/src/main/save-pdf.ts`                                                                                         | Implemented; independent Office editor                                          |
-| Markdown                               | Tiptap editor, `apps/markdown/src/renderer/markdown/docText.ts`, optional `export/docxExport.ts`                                                                                         | Implemented; plain-file-first                                                   |
-| Shared AI                              | `agent-core`, `ai-provider`, `ai-search`, and app-level AI skills/tools/transports                                                                                                       | Implemented local foundation; not 9Profs Core                                   |
-| Local workspace data                   | `packages/project-store` local projects/chats/attachments                                                                                                                                | Implemented local persistence; not SaaS                                         |
-| Phase 0 contracts                      | `packages/9profs-core`, `packages/document-gateway`, and compile-checked adapter seams                                                                                                   | Implemented; contracts only                                                     |
-| Rust Core foundation                   | `9profs-core-rs/` common/API/SQLite/realtime/runtime/app crates; loopback HTTP/WebSocket bootstrap                                                                                       | Implemented; foundation only                                                    |
-| Phase 1B Assistant domain              | `nineprofs-assistant`; builtin/custom assistants, Rules, CRUD persistence, skill bindings, backend metadata reference                                                                    | Implemented                                                                     |
-| Phase 1B Skills catalog                | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary                                                                       | Implemented                                                                     |
-| Phase 2C0 Tool Runtime                 | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                                                                              | Implemented                                                                     |
-| Phase 2C1 MCP provider                 | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider                                                    | Implemented                                                                     |
-| Phase 3A OfficeCLI provider            | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, HTML-to-PNG raster boundary, artifact containment, shared registry provider, status API                      | Implemented; real DOCX/XLSX/PPTX production qualification passes                |
-| Phase 3B OfficeCLI detached mutation   | `office.create`, `office.mutate_detached`, writable eligibility, copy-on-write revision transaction, structural validation, HTML-to-PNG render gate, atomic promotion                    | Implemented; real DOCX/XLSX/PPTX create/mutation qualification passes           |
-| Phase 4A active DOCX GenOffice adapter | `packages/genoffice-adapter/`; active inspection, DocumentVersion, stale-change protection, approved command-envelope gateway, existing Docs command engine                              | Implemented; editor-side adapter and focused transaction/version tests          |
-| Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                                          | Implemented                                                                     |
-| Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                                                 | Implemented                                                                     |
-| Phase 4C2 proposal review/live commit  | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                                            | Implemented                                                                     |
-| Phase 5A–5C1 research domain           | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/claim-evidence assessments/citation occurrences/targets/bindings/claim links; Core API/transport | Implemented; verification, adapters, review, and product services remain future |
-| Research/product backend               | Account/billing backend or OfficeCLI resident mode                                                                                                                                       | Future                                                                          |
+| Current area                           | Confirmed implementation                                                                                                                                                                        | Current status                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Electron shell                         | `apps/shell/src/main/index.ts`, `tab-manager.ts`, preload and renderer UI; hosts app views/tabs                                                                                                 | Implemented                                                                                          |
+| Docs/DOCX                              | `apps/docs` plus `packages/docx-engine`; Tiptap/ProseMirror model, renderer pagination, AI tools, dirty/save/reparse paths                                                                      | Implemented; canonical Office editor                                                                 |
+| Sheets/XLSX                            | Univer renderer, `apps/sheets/src/gateway/xlsx-gateway.ts`, `xlsx-package-io.ts`, Rust `native/xlsx-engine`                                                                                     | Implemented; independent Office editor                                                               |
+| Slides/PPTX                            | `packages/pptx-engine`, `packages/pptx-render`, `apps/slides/src/renderer/SlideCanvas.tsx`                                                                                                      | Implemented; independent Office editor                                                               |
+| PDF                                    | PDF.js viewer/editor UI, PDFium/PDF-lib main-process operations, `apps/pdf/src/main/save-pdf.ts`                                                                                                | Implemented; independent Office editor                                                               |
+| Markdown                               | Tiptap editor, `apps/markdown/src/renderer/markdown/docText.ts`, optional `export/docxExport.ts`                                                                                                | Implemented; plain-file-first                                                                        |
+| Shared AI                              | `agent-core`, `ai-provider`, `ai-search`, and app-level AI skills/tools/transports                                                                                                              | Implemented local foundation; not 9Profs Core                                                        |
+| Local workspace data                   | `packages/project-store` local projects/chats/attachments                                                                                                                                       | Implemented local persistence; not SaaS                                                              |
+| Phase 0 contracts                      | `packages/9profs-core`, `packages/document-gateway`, and compile-checked adapter seams                                                                                                          | Implemented; contracts only                                                                          |
+| Rust Core foundation                   | `9profs-core-rs/` common/API/SQLite/realtime/runtime/app crates; loopback HTTP/WebSocket bootstrap                                                                                              | Implemented; foundation only                                                                         |
+| Phase 1B Assistant domain              | `nineprofs-assistant`; builtin/custom assistants, Rules, CRUD persistence, skill bindings, backend metadata reference                                                                           | Implemented                                                                                          |
+| Phase 1B Skills catalog                | `nineprofs-skills`; builtin/custom `SKILL.md` loading, deterministic precedence, extension-ready provider boundary                                                                              | Implemented                                                                                          |
+| Phase 2C0 Tool Runtime                 | `nineprofs-tools`; definitions, provider/registry, policy metadata, deny-by-default ToolSet, AionRS adapter                                                                                     | Implemented                                                                                          |
+| Phase 2C1 MCP provider                 | `nineprofs-mcp`; config/persistence, redacted lifecycle APIs, pinned AionRS MCP transport/client, discovery, shared registry provider                                                           | Implemented                                                                                          |
+| Phase 3A OfficeCLI provider            | `nineprofs-officecli`; pinned v1.0.144 sidecar, typed read-only operations, HTML-to-PNG raster boundary, artifact containment, shared registry provider, status API                             | Implemented; real DOCX/XLSX/PPTX production qualification passes                                     |
+| Phase 3B OfficeCLI detached mutation   | `office.create`, `office.mutate_detached`, writable eligibility, copy-on-write revision transaction, structural validation, HTML-to-PNG render gate, atomic promotion                           | Implemented; real DOCX/XLSX/PPTX create/mutation qualification passes                                |
+| Phase 4A active DOCX GenOffice adapter | `packages/genoffice-adapter/`; active inspection, DocumentVersion, stale-change protection, approved command-envelope gateway, existing Docs command engine                                     | Implemented; editor-side adapter and focused transaction/version tests                               |
+| Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                                                 | Implemented                                                                                          |
+| Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                                                        | Implemented                                                                                          |
+| Phase 4C2 proposal review/live commit  | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                                                   | Implemented                                                                                          |
+| Phase 5A–5C3B1 research domain         | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/citation occurrences/targets/bindings/claim links and live manuscript citation sync; Core API/transport | Implemented; claim extraction, verification UI, adapters, review, and product services remain future |
+| Research/product backend               | Account/billing backend or OfficeCLI resident mode                                                                                                                                              | Future                                                                                               |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
 `DocumentVersion` — IMPLEMENTED; stable active-session `DocumentId` —
@@ -411,8 +411,8 @@ configuration is absent or invalid; verification then returns the existing
 Implemented in this phase: production `CitationAssessmentProvider`, model-backed
 structured assessment, assessor-specific provider configuration, strict output
 validation, provider contract tests, and runtime wiring. Still future after
-5C3A: manuscript → Research synchronization, claim extraction, verification
-UI, and Agent citation tools (Phases 5C3B–5C3C).
+5C3B1: manuscript claim extraction, verification UI, and Agent citation tools
+(Phases 5C3B2–5C3C).
 
 ## Phase 5C3A inline DOCX citation model and extraction
 
@@ -438,11 +438,29 @@ created, bound, or verified by 5C3A.
 
 DOCX citation atom identity means document-format preservation. Research
 `CitationOccurrence` identity means persistent research-domain state; the two
-are not the same object. Phase 5C3B will synchronize descriptors into Research.
+are not the same object. Phase 5C3B1 synchronizes recognized live descriptors
+into Research through an explicit case/source/document/version boundary.
 
-Still future: manuscript → Research synchronization, claim extraction,
-source/PDF binding, verification UI, plain-text citation recognition, and
-EndNote/Mendeley/Citavi adapters.
+## Phase 5C3B1 live manuscript citation synchronization
+
+The Docs adapter uses the existing `extractDocxCitationsFromPmDoc` PM boundary
+and sends only recognized Word-native/Zotero inventory fields to the trusted
+Core route. The server owns inventory hashing and validates the explicit
+`ResearchCaseId`, manuscript `ResearchSourceId`, document ID, nonnegative
+document version, strict formats, ordered targets, and `start < end` Unicode
+code-point ranges.
+
+Sync runs are immutable by `(case, manuscript source, document, version)`:
+same inventory hash is idempotent, a changed hash is a typed conflict, and a
+new version retains previous runs. SQLite writes the run, Research citation
+occurrences/targets, and explicit sync occurrence/target mappings in one
+transaction. Read surfaces are bounded and expose no marker/reference data in
+lifecycle events. 5C3B1 creates no target bindings, claims, claim links, or
+verification records.
+
+Future: 5C3B2 manuscript claim extraction, 5C3B3 source/PDF binding, and 5C3C
+verification UI, Agent citation tools, plain-text recognition, and additional
+citation-manager adapters.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 

@@ -12,6 +12,7 @@ import {
 } from '../src/renderer/editor/convert'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { buildDocumentContext } from '../src/renderer/ai/protocol'
+import { buildManuscriptCitationSyncInput } from '../src/renderer/editor/manuscript-citations'
 
 const editors = new Set<Editor>()
 
@@ -76,6 +77,33 @@ describe('Docs inline citation atom', () => {
         targets: citation.targets,
       }),
     ])
+  })
+
+  it('builds the sync payload from the PM inventory with explicit document identity', () => {
+    const editor = editorForCitation()
+    expect(
+      buildManuscriptCitationSyncInput({
+        editor,
+        documentId: 'doc-1',
+        documentVersion: 7,
+      }),
+    ).toEqual({
+      documentId: 'doc-1',
+      documentVersion: 7,
+      citations: [
+        {
+          format: 'zotero',
+          renderedText: '[12,13]',
+          blockId: 'b7',
+          start: 13,
+          end: 20,
+          targets: [
+            { ordinal: 1, referenceKey: '12', citedLocator: null },
+            { ordinal: 2, referenceKey: '13', citedLocator: null },
+          ],
+        },
+      ],
+    })
   })
 
   it('uses the rendered marker in AI context and keeps the atom selectable and undoable', () => {

@@ -684,6 +684,100 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('maps manuscript citation sync with trusted writes and bounded read surfaces', async () => {
+    const requests: Array<{
+      input: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }> = []
+    const run = {
+      syncRunId: 'sync-run-1',
+      researchCaseId: 'case-1',
+      manuscriptSourceId: 'source-1',
+      documentId: 'doc-1',
+      documentVersion: 4,
+      inventoryHash: { algorithm: 'sha256', value: 'abc' },
+      status: 'completed',
+      occurrenceCount: 1,
+      createdAtMs: 1,
+      completedAtMs: 1,
+      failureCode: null,
+    }
+    const occurrence = {
+      syncOccurrenceId: 'sync-occurrence-1',
+      syncRunId: 'sync-run-1',
+      ordinal: 0,
+      citationOccurrenceId: 'citation-occurrence-1',
+      documentBlockId: 'b1',
+      start: 2,
+      end: 7,
+      format: 'zotero',
+    }
+    const target = {
+      syncTargetId: 'sync-target-1',
+      syncOccurrenceId: 'sync-occurrence-1',
+      documentTargetOrdinal: 1,
+      citationTargetId: 'citation-target-1',
+    }
+    const transport = createCoreTransport(
+      'http://127.0.0.1:39761/',
+      async (input, init) => {
+        requests.push({ input, method: init?.method, headers: init?.headers, body: init?.body })
+        const data = input.endsWith('/targets')
+          ? [target]
+          : input.endsWith('/occurrences')
+            ? [occurrence]
+            : run
+        return { ok: true, json: async () => ({ success: true, data }) }
+      },
+      { sessionSecret: 'research-secret' },
+    )
+    const input = {
+      documentId: 'doc-1',
+      documentVersion: 4,
+      citations: [
+        {
+          format: 'zotero' as const,
+          renderedText: '[1]',
+          blockId: 'b1',
+          start: 2,
+          end: 7,
+          targets: [{ ordinal: 1, referenceKey: 'ref-1', citedLocator: null }],
+        },
+      ],
+    }
+
+    await expect(transport.syncManuscriptCitations('case/1', 'source/1', input)).resolves.toEqual(
+      run,
+    )
+    await expect(transport.manuscriptCitationSync('sync/run-1')).resolves.toEqual(run)
+    await expect(transport.latestManuscriptCitationSync('case/1', 'source/1')).resolves.toEqual(run)
+    await expect(transport.manuscriptCitationSyncOccurrences('sync/run-1')).resolves.toEqual([
+      occurrence,
+    ])
+    await expect(transport.manuscriptCitationSyncTargets('sync/occurrence-1')).resolves.toEqual([
+      target,
+    ])
+
+    expect(requests[0]).toEqual({
+      input:
+        'http://127.0.0.1:39761/api/research/cases/case%2F1/manuscripts/source%2F1/citations/sync',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-nineprofs-session-secret': 'research-secret',
+      },
+      body: JSON.stringify(input),
+    })
+    expect(requests.slice(1).map(({ input: path }) => path)).toEqual([
+      'http://127.0.0.1:39761/api/research/manuscript-citation-sync-runs/sync%2Frun-1',
+      'http://127.0.0.1:39761/api/research/cases/case%2F1/manuscripts/source%2F1/citations/sync/latest',
+      'http://127.0.0.1:39761/api/research/manuscript-citation-sync-runs/sync%2Frun-1/occurrences',
+      'http://127.0.0.1:39761/api/research/manuscript-citation-sync-occurrences/sync%2Foccurrence-1/targets',
+    ])
+  })
+
   it('maps citation verification runs and keeps creation on the trusted boundary', async () => {
     const requests: Array<{
       input: string
@@ -738,8 +832,7 @@ describe('Core transport boundary', () => {
         body: undefined,
       },
       {
-        input:
-          'http://127.0.0.1:39761/api/research/claims/claim%2F1/citation-verifications',
+        input: 'http://127.0.0.1:39761/api/research/claims/claim%2F1/citation-verifications',
         method: undefined,
         headers: undefined,
         body: undefined,

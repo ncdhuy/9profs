@@ -318,6 +318,59 @@ pub struct CitationTargetDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCitationFormatDto {
+    WordNative,
+    Zotero,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCitationSyncStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCitationSyncRunDto {
+    pub sync_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub inventory_hash: ResearchContentHashDto,
+    pub status: ManuscriptCitationSyncStatusDto,
+    pub occurrence_count: u32,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCitationSyncOccurrenceDto {
+    pub sync_occurrence_id: String,
+    pub sync_run_id: String,
+    pub ordinal: u32,
+    pub citation_occurrence_id: String,
+    pub document_block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub format: ManuscriptCitationFormatDto,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCitationSyncTargetDto {
+    pub sync_target_id: String,
+    pub sync_occurrence_id: String,
+    pub document_target_ordinal: u32,
+    pub citation_target_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationTargetBindingDto {
     pub binding_id: String,
@@ -442,6 +495,34 @@ pub struct CreateCitationTargetRequest {
     pub ordinal: u32,
     pub reference_key: String,
     pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptCitationSyncTargetRequest {
+    pub ordinal: u32,
+    pub reference_key: String,
+    #[serde(default)]
+    pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptCitationSyncCitationRequest {
+    pub format: ManuscriptCitationFormatDto,
+    pub rendered_text: String,
+    pub block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub targets: Vec<ManuscriptCitationSyncTargetRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SyncManuscriptCitationsRequest {
+    pub document_id: String,
+    pub document_version: i64,
+    pub citations: Vec<ManuscriptCitationSyncCitationRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

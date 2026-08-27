@@ -33,6 +33,9 @@ import type {
   CitationOccurrence,
   CitationTarget,
   CitationTargetBinding,
+  ManuscriptCitationSyncOccurrence,
+  ManuscriptCitationSyncRun,
+  ManuscriptCitationSyncTarget,
   CaptureResearchPdfEvidenceInput,
   CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
@@ -40,6 +43,7 @@ import type {
   CreateCitationOccurrenceInput,
   CreateCitationTargetBindingInput,
   CreateCitationTargetInput,
+  SyncManuscriptCitationsInput,
   CreateClaimCitationLinkInput,
   CreateCitationVerificationInput,
   CreateResearchCaseInput,
@@ -61,6 +65,7 @@ import type {
   ResearchRetrievalIndexState,
   RetrieveResearchInput,
   ResearchSource,
+  ResearchSourceId,
   ResearchSourceSnapshot,
   ReferencePdfIngestion,
   ResearchSourceSnapshotId,
@@ -210,6 +215,18 @@ export interface CoreTransport {
     citationOccurrenceId: string,
     input: CreateCitationTargetInput,
   ): Promise<CitationTarget>
+  syncManuscriptCitations(
+    researchCaseId: ResearchCaseId,
+    manuscriptSourceId: ResearchSourceId,
+    input: SyncManuscriptCitationsInput,
+  ): Promise<ManuscriptCitationSyncRun>
+  manuscriptCitationSync(syncRunId: string): Promise<ManuscriptCitationSyncRun>
+  latestManuscriptCitationSync(
+    researchCaseId: ResearchCaseId,
+    manuscriptSourceId: ResearchSourceId,
+  ): Promise<ManuscriptCitationSyncRun>
+  manuscriptCitationSyncOccurrences(syncRunId: string): Promise<ManuscriptCitationSyncOccurrence[]>
+  manuscriptCitationSyncTargets(syncOccurrenceId: string): Promise<ManuscriptCitationSyncTarget[]>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -224,7 +241,9 @@ export interface CoreTransport {
   ): Promise<ClaimCitationLink[]>
   claimCitationLink(id: string): Promise<ClaimCitationLink>
   createClaimCitationLink(input: CreateClaimCitationLinkInput): Promise<ClaimCitationLink>
-  createCitationVerification(input: CreateCitationVerificationInput): Promise<CitationVerificationRun>
+  createCitationVerification(
+    input: CreateCitationVerificationInput,
+  ): Promise<CitationVerificationRun>
   citationVerification(id: string): Promise<CitationVerificationRun>
   claimCitationVerifications(claimId: string): Promise<CitationVerificationRun[]>
   websocketUrl(): string
@@ -527,6 +546,28 @@ export function createCoreTransport(
         'POST',
         { ...input, citationOccurrenceId },
       ),
+    syncManuscriptCitations: (researchCaseId, manuscriptSourceId, input) =>
+      trustedRequest<ManuscriptCitationSyncRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscripts/${encodeURIComponent(manuscriptSourceId)}/citations/sync`,
+        'POST',
+        input,
+      ),
+    manuscriptCitationSync: (syncRunId) =>
+      get<ManuscriptCitationSyncRun>(
+        `/api/research/manuscript-citation-sync-runs/${encodeURIComponent(syncRunId)}`,
+      ),
+    latestManuscriptCitationSync: (researchCaseId, manuscriptSourceId) =>
+      get<ManuscriptCitationSyncRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscripts/${encodeURIComponent(manuscriptSourceId)}/citations/sync/latest`,
+      ),
+    manuscriptCitationSyncOccurrences: (syncRunId) =>
+      get<ManuscriptCitationSyncOccurrence[]>(
+        `/api/research/manuscript-citation-sync-runs/${encodeURIComponent(syncRunId)}/occurrences`,
+      ),
+    manuscriptCitationSyncTargets: (syncOccurrenceId) =>
+      get<ManuscriptCitationSyncTarget[]>(
+        `/api/research/manuscript-citation-sync-occurrences/${encodeURIComponent(syncOccurrenceId)}/targets`,
+      ),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(
         `/api/research/citation-targets/${encodeURIComponent(citationTargetId)}/bindings`,
@@ -558,7 +599,11 @@ export function createCoreTransport(
     createClaimCitationLink: (input) =>
       trustedRequest<ClaimCitationLink>('/api/research/claim-citations', 'POST', input),
     createCitationVerification: (input) =>
-      trustedRequest<CitationVerificationRun>('/api/research/citation-verifications', 'POST', input),
+      trustedRequest<CitationVerificationRun>(
+        '/api/research/citation-verifications',
+        'POST',
+        input,
+      ),
     citationVerification: (id) =>
       get<CitationVerificationRun>(
         `/api/research/citation-verifications/${encodeURIComponent(id)}`,

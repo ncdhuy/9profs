@@ -606,6 +606,62 @@ export interface CitationTarget {
   readonly resolution: ResearchCitationTargetResolution
 }
 
+export type ManuscriptCitationFormat = 'word_native' | 'zotero'
+export type ManuscriptCitationSyncStatus = 'running' | 'completed' | 'failed'
+
+export interface ManuscriptCitationSyncTargetInput {
+  readonly ordinal: number
+  readonly referenceKey: string
+  readonly citedLocator?: string | null
+}
+
+export interface ManuscriptCitationSyncCitationInput {
+  readonly format: ManuscriptCitationFormat
+  readonly renderedText: string
+  readonly blockId: string
+  readonly start: number
+  readonly end: number
+  readonly targets: readonly ManuscriptCitationSyncTargetInput[]
+}
+
+export interface SyncManuscriptCitationsInput {
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly citations: readonly ManuscriptCitationSyncCitationInput[]
+}
+
+export interface ManuscriptCitationSyncRun {
+  readonly syncRunId: string
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly inventoryHash: ResearchContentHash
+  readonly status: ManuscriptCitationSyncStatus
+  readonly occurrenceCount: number
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly failureCode: string | null
+}
+
+export interface ManuscriptCitationSyncOccurrence {
+  readonly syncOccurrenceId: string
+  readonly syncRunId: string
+  readonly ordinal: number
+  readonly citationOccurrenceId: string
+  readonly documentBlockId: string
+  readonly start: number
+  readonly end: number
+  readonly format: ManuscriptCitationFormat
+}
+
+export interface ManuscriptCitationSyncTarget {
+  readonly syncTargetId: string
+  readonly syncOccurrenceId: string
+  readonly documentTargetOrdinal: number
+  readonly citationTargetId: string
+}
+
 export interface CitationTargetBinding {
   readonly bindingId: string
   readonly researchCaseId: ResearchCaseId

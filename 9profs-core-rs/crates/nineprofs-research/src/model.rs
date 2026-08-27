@@ -21,6 +21,7 @@ pub const MAX_CITATION_MARKER_BYTES: usize = 4 * 1024;
 pub const MAX_CITATION_REFERENCE_KEY_BYTES: usize = MAX_PROVENANCE_TEXT_BYTES;
 pub const MAX_CITED_LOCATOR_BYTES: usize = MAX_PROVENANCE_TEXT_BYTES;
 pub const MAX_CITATION_TARGETS_PER_OCCURRENCE: usize = 128;
+pub const MAX_MANUSCRIPT_CITATION_OCCURRENCES: usize = 4_096;
 pub const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PDF_PAGES: u32 = 10_000;
 pub const MAX_PDF_PAGE_TEXT_BYTES: usize = 1024 * 1024;
@@ -39,6 +40,15 @@ pub enum ResearchError {
     Serialization(#[from] serde_json::Error),
     #[error("research artifact storage failed: {0}")]
     Artifact(String),
+    #[error(
+        "manuscript citation sync already exists for case {research_case_id}, source {manuscript_source_id}, document {document_id}, version {document_version}"
+    )]
+    ManuscriptCitationSyncConflict {
+        research_case_id: String,
+        manuscript_source_id: String,
+        document_id: String,
+        document_version: i64,
+    },
 }
 
 macro_rules! id_type {
@@ -81,6 +91,18 @@ id_type!(CitationOccurrenceId, "citation occurrence ID");
 id_type!(CitationTargetId, "citation target ID");
 id_type!(CitationTargetBindingId, "citation target binding ID");
 id_type!(ClaimCitationLinkId, "claim-citation link ID");
+id_type!(
+    ManuscriptCitationSyncRunId,
+    "manuscript citation sync run ID"
+);
+id_type!(
+    ManuscriptCitationSyncOccurrenceId,
+    "manuscript citation sync occurrence ID"
+);
+id_type!(
+    ManuscriptCitationSyncTargetId,
+    "manuscript citation sync target ID"
+);
 
 /// Provider-neutral retrieval boundary. Provider adapters translate these
 /// canonical identities into provider-specific filters.
@@ -401,6 +423,56 @@ pub struct CitationTarget {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ManuscriptCitationFormat {
+    WordNative,
+    Zotero,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCitationSyncStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptCitationSyncRun {
+    pub id: ManuscriptCitationSyncRunId,
+    pub research_case_id: ResearchCaseId,
+    pub manuscript_source_id: ResearchSourceId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub inventory_hash: ContentHash,
+    pub status: ManuscriptCitationSyncStatus,
+    pub occurrence_count: u32,
+    pub created_at_ms: TimestampMs,
+    pub completed_at_ms: Option<TimestampMs>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptCitationSyncOccurrence {
+    pub id: ManuscriptCitationSyncOccurrenceId,
+    pub sync_run_id: ManuscriptCitationSyncRunId,
+    pub ordinal: u32,
+    pub citation_occurrence_id: CitationOccurrenceId,
+    pub document_block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub format: ManuscriptCitationFormat,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptCitationSyncTarget {
+    pub id: ManuscriptCitationSyncTargetId,
+    pub sync_occurrence_id: ManuscriptCitationSyncOccurrenceId,
+    pub document_target_ordinal: u32,
+    pub citation_target_id: CitationTargetId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CitationBindingMethod {
     Human,
     Imported,
@@ -575,6 +647,41 @@ pub struct CreateCitationTarget {
     pub ordinal: u32,
     pub reference_key: String,
     pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ManuscriptCitationSyncTargetInput {
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ManuscriptCitationSyncCitationInput {
+    pub format: ManuscriptCitationFormat,
+    pub rendered_text: String,
+    pub block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub targets: Vec<ManuscriptCitationSyncTargetInput>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SyncManuscriptCitations {
+    pub research_case_id: ResearchCaseId,
+    pub manuscript_source_id: ResearchSourceId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub citations: Vec<ManuscriptCitationSyncCitationInput>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ManuscriptCitationSyncWrite {
+    pub run: ManuscriptCitationSyncRun,
+    pub citation_occurrences: Vec<CitationOccurrence>,
+    pub citation_targets: Vec<CitationTarget>,
+    pub sync_occurrences: Vec<ManuscriptCitationSyncOccurrence>,
+    pub sync_targets: Vec<ManuscriptCitationSyncTarget>,
 }
 
 #[derive(Clone, Debug)]

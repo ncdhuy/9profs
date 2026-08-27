@@ -9,9 +9,10 @@ target boundaries for 9Profs. The pinned OfficeCLI sidecar is implemented for
 read-only inspection plus transactional detached creation and mutation;
 the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, Phase
 5C1 citation binding domain, Phase 5C2A citation verification orchestration,
-and Phase 5C2B model-backed citation assessment are implemented. Phase 5C3A
-adds the DOCX inline citation model and read-only citation inventory; research
-synchronization, UI, and SaaS services remain future work.
+Phase 5C2B model-backed citation assessment, Phase 5C3A inline citation
+inventory, and Phase 5C3B1 live manuscript citation synchronization are
+implemented. Citation UI, claim extraction, and SaaS services remain future
+work.
 
 ## Non-negotiable rules
 
@@ -39,8 +40,8 @@ dependency order.
 Product Layer
 └─ apps/shell + packages/project-store + local settings/recent files
 
-Research Domain Layer (Phases 5A, 5B1, 5B2, and 5C1 implemented)
-└─ nineprofs-research provenance, evidence, claims, citation occurrences/targets/bindings
+Research Domain Layer (Phases 5A, 5B1, 5B2, 5C1, and 5C3B1 implemented)
+└─ nineprofs-research provenance, evidence, claims, citation occurrences/targets/bindings/sync
 
 AI / Agent Core
 ├─ packages/agent-core       current loop, skills, tools, IPC transport
@@ -1077,11 +1078,36 @@ retrieval. Case-wide support from another source does not validate a citation.
   intentionally different objects; Phase 5C3B owns synchronization between
   their descriptors and Research entities.
 
-Still future: manuscript → Research synchronization, claim extraction,
-source/PDF binding, verification UI, Agent citation tools, plain-text citation
-recognition, and EndNote/Mendeley/Citavi adapters (Phases 5C3B–5C3C).
+The synchronization boundary is documented in Phase 5C3B1 below. Claim
+extraction, source/PDF binding, verification UI, Agent citation tools,
+plain-text citation recognition, and additional citation-manager adapters
+remain future.
 
 Dify retrieval remains an adapter and is not a citation identity owner.
+
+#### Phase 5C3B1 — live manuscript citation synchronization (IMPLEMENTED)
+
+- `apps/docs` builds a bounded sync input from the live PM document through
+  `extractDocxCitationsFromPmDoc`. The adapter preserves recognized Word-native
+  and Zotero markers, current block IDs, Unicode code-point ranges, target
+  order, reference keys, and cited locators. Unsupported structured managers
+  remain absent; no text/XML recovery is attempted.
+- The trusted POST sync route accepts only `documentId`, `documentVersion`, and
+  the recognized citation inventory. The server computes the inventory SHA-256
+  hash and requires an explicit `ResearchCaseId` plus a `SourceKind::Manuscript`
+  source in the route.
+- SQLite persists immutable sync runs, occurrence/target audit mappings, and
+  the corresponding Research `CitationOccurrence`/`CitationTarget` rows. The
+  identity `(case, manuscript source, document, version)` is idempotent for the
+  same hash and conflicts for a different hash; later versions retain history.
+- One sync is transactionally all-or-none. Read routes expose a run, the latest
+  completed run for a manuscript source, bounded occurrence mappings, and
+  target mappings. Sync creates no target bindings, claims, claim links, or
+  verification state, and lifecycle payloads contain IDs/status metadata only.
+
+Still future: 5C3B2 manuscript claim extraction, 5C3B3 source/PDF binding, and
+5C3C citation UI, Agent citation tools, plain-text recognition, and additional
+citation-manager adapters.
 
 ### Phase 6 — product/SaaS layer
 

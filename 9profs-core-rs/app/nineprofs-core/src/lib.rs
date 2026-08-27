@@ -24,7 +24,10 @@ use nineprofs_api_types::{
     CreateDocumentAgentConversationRunRequest, CreateMcpServerRequest, CreateResearchCaseRequest,
     CreateResearchClaimRequest, CreateResearchEvidenceRequest, CreateResearchSourceRequest,
     DocsAgentProfile, DocumentAgentConversationDto, DocumentProposalChangeDto, DocumentProposalDto,
-    ErrorResponse, EventEnvelope, HealthResponse, McpConnectionTestDto, McpServerDto, McpToolDto,
+    ErrorResponse, EventEnvelope, HealthResponse, ManuscriptCitationFormatDto,
+    ManuscriptCitationSyncCitationRequest, ManuscriptCitationSyncOccurrenceDto,
+    ManuscriptCitationSyncRunDto, ManuscriptCitationSyncStatusDto, ManuscriptCitationSyncTargetDto,
+    ManuscriptCitationSyncTargetRequest, McpConnectionTestDto, McpServerDto, McpToolDto,
     McpTransportDto, McpTransportInputDto, ReferencePdfIngestionDto, ResearchArtifactDto,
     ResearchAssessmentMethodDto, ResearchCaptureMethodDto, ResearchCaseDto,
     ResearchCitationBindingMethodDto, ResearchCitationOccurrenceOriginDto,
@@ -37,7 +40,7 @@ use nineprofs_api_types::{
     ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto, ResearchSourceDto,
     ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
     RetrieveResearchRequest, RuntimeInfo, SkillCatalogDto, SkillDto, SkillIssueDto,
-    UpdateAssistantRequest, UpdateMcpServerRequest,
+    SyncManuscriptCitationsRequest, UpdateAssistantRequest, UpdateMcpServerRequest,
 };
 use nineprofs_assistant::{Assistant, AssistantError, CreateAssistant, UpdateAssistant};
 use nineprofs_document_tools::{
@@ -1123,6 +1126,26 @@ pub fn build_router(runtime: Arc<CoreRuntime>) -> Router {
             get(list_citation_targets).post(create_citation_target),
         )
         .route(
+            "/api/research/cases/{case_id}/manuscripts/{manuscript_source_id}/citations/sync",
+            post(sync_manuscript_citations),
+        )
+        .route(
+            "/api/research/cases/{case_id}/manuscripts/{manuscript_source_id}/citations/sync/latest",
+            get(latest_manuscript_citation_sync),
+        )
+        .route(
+            "/api/research/manuscript-citation-sync-runs/{id}",
+            get(get_manuscript_citation_sync),
+        )
+        .route(
+            "/api/research/manuscript-citation-sync-runs/{id}/occurrences",
+            get(list_manuscript_citation_sync_occurrences),
+        )
+        .route(
+            "/api/research/manuscript-citation-sync-occurrences/{id}/targets",
+            get(list_manuscript_citation_sync_targets),
+        )
+        .route(
             "/api/research/citation-targets/{id}",
             get(get_citation_target),
         )
@@ -1577,6 +1600,11 @@ impl IntoResponse for ApiError {
                 ResearchError::NotFound { .. } => {
                     (StatusCode::NOT_FOUND, "not_found", error.to_string())
                 }
+                ResearchError::ManuscriptCitationSyncConflict { .. } => (
+                    StatusCode::CONFLICT,
+                    "manuscript_citation_sync_conflict",
+                    error.to_string(),
+                ),
                 ResearchError::Invalid(_) => (
                     StatusCode::BAD_REQUEST,
                     "invalid_request",
@@ -2712,6 +2740,96 @@ async fn create_citation_occurrence(
     ))))
 }
 
+async fn sync_manuscript_citations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((case_id, manuscript_source_id)): Path<(String, String)>,
+    axum::Json(request): axum::Json<SyncManuscriptCitationsRequest>,
+) -> Result<axum::Json<ApiResponse<ManuscriptCitationSyncRunDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let run = state
+        .runtime
+        .research_service()
+        .sync_manuscript_citations(nineprofs_research::SyncManuscriptCitations {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(case_id)?,
+            manuscript_source_id: nineprofs_research::ResearchSourceId::parse(
+                manuscript_source_id,
+            )?,
+            document_id: request.document_id,
+            document_version: request.document_version,
+            citations: request
+                .citations
+                .into_iter()
+                .map(manuscript_citation_sync_citation)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_citation_sync_run_dto(run),
+    )))
+}
+
+async fn latest_manuscript_citation_sync(
+    State(state): State<AppState>,
+    Path((case_id, manuscript_source_id)): Path<(String, String)>,
+) -> Result<axum::Json<ApiResponse<ManuscriptCitationSyncRunDto>>, ApiError> {
+    let run = state
+        .runtime
+        .research_service()
+        .latest_manuscript_citation_sync(&case_id, &manuscript_source_id)
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_citation_sync_run_dto(run),
+    )))
+}
+
+async fn get_manuscript_citation_sync(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ManuscriptCitationSyncRunDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_citation_sync_run_dto(
+            state
+                .runtime
+                .research_service()
+                .get_manuscript_citation_sync(&id)
+                .await?,
+        ),
+    )))
+}
+
+async fn list_manuscript_citation_sync_occurrences(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptCitationSyncOccurrenceDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_citation_sync_occurrences(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_citation_sync_occurrence_dto)
+            .collect(),
+    )))
+}
+
+async fn list_manuscript_citation_sync_targets(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptCitationSyncTargetDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_citation_sync_targets(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_citation_sync_target_dto)
+            .collect(),
+    )))
+}
+
 async fn list_citation_targets(
     State(state): State<AppState>,
     Path(occurrence_id): Path<String>,
@@ -3354,6 +3472,107 @@ fn citation_target_dto(
         cited_locator: value.cited_locator,
         resolution: citation_target_resolution_dto(resolution),
     }
+}
+
+fn manuscript_citation_sync_run_dto(
+    value: nineprofs_research::ManuscriptCitationSyncRun,
+) -> ManuscriptCitationSyncRunDto {
+    ManuscriptCitationSyncRunDto {
+        sync_run_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        manuscript_source_id: value.manuscript_source_id.to_string(),
+        document_id: value.document_id,
+        document_version: value.document_version,
+        inventory_hash: research_content_hash_dto(value.inventory_hash),
+        status: manuscript_citation_sync_status_dto(value.status),
+        occurrence_count: value.occurrence_count,
+        created_at_ms: value.created_at_ms,
+        completed_at_ms: value.completed_at_ms,
+        failure_code: value.failure_code,
+    }
+}
+
+fn manuscript_citation_sync_occurrence_dto(
+    value: nineprofs_research::ManuscriptCitationSyncOccurrence,
+) -> ManuscriptCitationSyncOccurrenceDto {
+    ManuscriptCitationSyncOccurrenceDto {
+        sync_occurrence_id: value.id.to_string(),
+        sync_run_id: value.sync_run_id.to_string(),
+        ordinal: value.ordinal,
+        citation_occurrence_id: value.citation_occurrence_id.to_string(),
+        document_block_id: value.document_block_id,
+        start: value.start,
+        end: value.end,
+        format: manuscript_citation_sync_format_dto(value.format),
+    }
+}
+
+fn manuscript_citation_sync_target_dto(
+    value: nineprofs_research::ManuscriptCitationSyncTarget,
+) -> ManuscriptCitationSyncTargetDto {
+    ManuscriptCitationSyncTargetDto {
+        sync_target_id: value.id.to_string(),
+        sync_occurrence_id: value.sync_occurrence_id.to_string(),
+        document_target_ordinal: value.document_target_ordinal,
+        citation_target_id: value.citation_target_id.to_string(),
+    }
+}
+
+fn manuscript_citation_sync_format_dto(
+    value: nineprofs_research::ManuscriptCitationFormat,
+) -> ManuscriptCitationFormatDto {
+    match value {
+        nineprofs_research::ManuscriptCitationFormat::WordNative => {
+            ManuscriptCitationFormatDto::WordNative
+        }
+        nineprofs_research::ManuscriptCitationFormat::Zotero => ManuscriptCitationFormatDto::Zotero,
+    }
+}
+
+fn manuscript_citation_sync_status_dto(
+    value: nineprofs_research::ManuscriptCitationSyncStatus,
+) -> ManuscriptCitationSyncStatusDto {
+    match value {
+        nineprofs_research::ManuscriptCitationSyncStatus::Running => {
+            ManuscriptCitationSyncStatusDto::Running
+        }
+        nineprofs_research::ManuscriptCitationSyncStatus::Completed => {
+            ManuscriptCitationSyncStatusDto::Completed
+        }
+        nineprofs_research::ManuscriptCitationSyncStatus::Failed => {
+            ManuscriptCitationSyncStatusDto::Failed
+        }
+    }
+}
+
+fn manuscript_citation_sync_citation(
+    value: ManuscriptCitationSyncCitationRequest,
+) -> Result<nineprofs_research::ManuscriptCitationSyncCitationInput, ApiError> {
+    Ok(nineprofs_research::ManuscriptCitationSyncCitationInput {
+        format: match value.format {
+            ManuscriptCitationFormatDto::WordNative => {
+                nineprofs_research::ManuscriptCitationFormat::WordNative
+            }
+            ManuscriptCitationFormatDto::Zotero => {
+                nineprofs_research::ManuscriptCitationFormat::Zotero
+            }
+        },
+        rendered_text: value.rendered_text,
+        block_id: value.block_id,
+        start: value.start,
+        end: value.end,
+        targets: value
+            .targets
+            .into_iter()
+            .map(|target: ManuscriptCitationSyncTargetRequest| {
+                nineprofs_research::ManuscriptCitationSyncTargetInput {
+                    ordinal: target.ordinal,
+                    reference_key: target.reference_key,
+                    cited_locator: target.cited_locator,
+                }
+            })
+            .collect(),
+    })
 }
 
 fn citation_target_binding_dto(
@@ -4148,6 +4367,176 @@ mod research_api_tests {
         let targets = json_body(response).await;
         assert_eq!(targets["data"].as_array().unwrap().len(), 1);
         assert_eq!(targets["data"][0]["referenceKey"], "12");
+    }
+
+    #[tokio::test]
+    async fn manuscript_citation_sync_routes_are_trusted_idempotent_and_readable() {
+        let mut config = nineprofs_runtime::RuntimeConfig::default();
+        config.session_secret = Some(Arc::from("sync-secret"));
+        let runtime = Arc::new(CoreRuntime::initialize_in_memory(config).await.unwrap());
+        let router = build_router(Arc::clone(&runtime));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/research/cases")
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(r#"{"title":"Sync API review"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let case_id = json_body(response).await["data"]["caseId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/research/sources")
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "researchCaseId": case_id,
+                            "kind": "manuscript",
+                            "label": "Draft"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let source_id = json_body(response).await["data"]["sourceId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let sync_path =
+            format!("/api/research/cases/{case_id}/manuscripts/{source_id}/citations/sync");
+        let sync_body = serde_json::json!({
+            "documentId": "doc-1",
+            "documentVersion": 3,
+            "citations": [{
+                "format": "zotero",
+                "renderedText": "[12]",
+                "blockId": "b7",
+                "start": 13,
+                "end": 17,
+                "targets": [{"ordinal": 1, "referenceKey": "12", "citedLocator": "table:0"}]
+            }]
+        });
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&sync_path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(sync_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&sync_path)
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(sync_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let first = json_body(response).await["data"].clone();
+        assert_eq!(first["status"], "completed");
+        assert_eq!(first["occurrenceCount"], 1);
+        let run_id = first["syncRunId"].as_str().unwrap().to_owned();
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&sync_path)
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(sync_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["data"]["syncRunId"], run_id);
+
+        let mut changed_body = sync_body.clone();
+        changed_body["citations"][0]["renderedText"] = serde_json::json!("[13]");
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post(&sync_path)
+                    .header("content-type", "application/json")
+                    .header(TRUSTED_DECISION_HEADER, "sync-secret")
+                    .body(Body::from(changed_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            json_body(response).await["code"],
+            "manuscript_citation_sync_conflict"
+        );
+
+        let latest_path = format!("{sync_path}/latest");
+        let response = router
+            .clone()
+            .oneshot(Request::get(latest_path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["data"]["syncRunId"], run_id);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/manuscript-citation-sync-runs/{run_id}/occurrences"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let sync_occurrence = json_body(response).await["data"][0].clone();
+        assert_eq!(sync_occurrence["start"], 13);
+        assert_eq!(sync_occurrence["end"], 17);
+        assert_eq!(sync_occurrence["format"], "zotero");
+        let sync_occurrence_id = sync_occurrence["syncOccurrenceId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let response = router
+            .oneshot(
+                Request::get(format!(
+                    "/api/research/manuscript-citation-sync-occurrences/{sync_occurrence_id}/targets"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await["data"][0]["documentTargetOrdinal"],
+            1
+        );
     }
 }
 
