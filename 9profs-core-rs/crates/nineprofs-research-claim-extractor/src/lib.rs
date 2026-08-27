@@ -12,7 +12,10 @@ use nineprofs_research::{
     ManuscriptClaimExtractionProvider, ManuscriptClaimExtractionProviderError,
     ManuscriptClaimExtractionUnassociatedCitation,
 };
-use reqwest::{Client, StatusCode};
+use nineprofs_structured_model::{
+    StructuredModelClient, StructuredModelConfig, StructuredModelConfigError,
+    StructuredModelTransportError,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -33,7 +36,6 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 1_024;
 const MAX_REQUEST_BYTES: usize = 512 * 1024;
-const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ClaimExtractorConfig {
@@ -125,32 +127,10 @@ impl ClaimExtractorConfig {
     }
 
     fn validate(&self, credential: Option<&str>) -> Result<(), ClaimExtractorConfigError> {
-        if !matches!(self.provider.as_str(), "openai" | "anthropic") {
-            return Err(ClaimExtractorConfigError::UnsupportedProvider);
-        }
-        if self.model.trim().is_empty() {
-            return Err(ClaimExtractorConfigError::MissingModel);
-        }
-        if self.api_key_env.trim().is_empty() {
-            return Err(ClaimExtractorConfigError::MissingCredentialEnvironment);
-        }
-        if credential.is_none() {
-            return Err(ClaimExtractorConfigError::MissingCredential);
-        }
-        if let Some(base_url) = &self.base_url {
-            let url = base_url
-                .parse::<reqwest::Url>()
-                .map_err(|_| ClaimExtractorConfigError::InvalidBaseUrl)?;
-            if !matches!(url.scheme(), "http" | "https") {
-                return Err(ClaimExtractorConfigError::InvalidBaseUrl);
-            }
-        }
-        if self.timeout.is_zero()
-            || self.max_response_bytes == 0
-            || self.max_output_tokens == 0
-            || self.max_response_bytes > 4 * 1024 * 1024
-            || self.max_output_tokens > 16_384
-        {
+        self.shared_config()
+            .validate(credential)
+            .map_err(map_config_error)?;
+        if self.max_response_bytes > 4 * 1024 * 1024 || self.max_output_tokens > 16_384 {
             return Err(ClaimExtractorConfigError::InvalidLimits);
         }
         Ok(())
@@ -182,6 +162,18 @@ impl ClaimExtractorConfig {
             self.readiness().status,
             ClaimExtractorReadinessStatus::Ready
         )
+    }
+
+    fn shared_config(&self) -> StructuredModelConfig {
+        StructuredModelConfig {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            api_key_env: self.api_key_env.clone(),
+            timeout: self.timeout,
+            max_response_bytes: self.max_response_bytes,
+            max_output_tokens: self.max_output_tokens,
+        }
     }
 }
 
@@ -218,7 +210,7 @@ pub enum ClaimExtractorConfigError {
 #[derive(Clone)]
 pub struct ModelClaimExtractionProvider {
     config: ClaimExtractorConfig,
-    client: Client,
+    client: StructuredModelClient,
 }
 
 impl fmt::Debug for ModelClaimExtractionProvider {
@@ -232,30 +224,12 @@ impl fmt::Debug for ModelClaimExtractionProvider {
 
 impl ModelClaimExtractionProvider {
     pub fn new(config: ClaimExtractorConfig) -> Self {
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .expect("claim extractor HTTP client configuration is valid");
+        let client = StructuredModelClient::new(config.shared_config());
         Self { config, client }
     }
 
     pub fn config(&self) -> &ClaimExtractorConfig {
         &self.config
-    }
-
-    fn endpoint(&self) -> String {
-        let base =
-            self.config
-                .base_url
-                .clone()
-                .unwrap_or_else(|| match self.config.provider.as_str() {
-                    "anthropic" => "https://api.anthropic.com/v1".to_owned(),
-                    _ => "https://api.openai.com/v1".to_owned(),
-                });
-        match self.config.provider.as_str() {
-            "anthropic" => format!("{base}/messages"),
-            _ => format!("{base}/chat/completions"),
-        }
     }
 
     fn request_body(
@@ -314,32 +288,10 @@ impl ModelClaimExtractionProvider {
             .config
             .credential()
             .ok_or(ManuscriptClaimExtractionProviderError::NotConfigured)?;
-        let mut request = self.client.post(self.endpoint()).json(&body);
-        request = match self.config.provider.as_str() {
-            "anthropic" => request
-                .header("x-api-key", credential)
-                .header("anthropic-version", ANTHROPIC_VERSION),
-            _ => request.bearer_auth(credential),
-        };
-        let mut response = request.send().await.map_err(map_request_error)?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.config.max_response_bytes as u64)
-        {
-            return Err(ManuscriptClaimExtractionProviderError::ResponseTooLarge);
-        }
-        let status = response.status();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(map_request_error)? {
-            if bytes.len().saturating_add(chunk.len()) > self.config.max_response_bytes {
-                return Err(ManuscriptClaimExtractionProviderError::ResponseTooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        if status != StatusCode::OK {
-            return Err(ManuscriptClaimExtractionProviderError::Transport);
-        }
-        Ok(bytes)
+        self.client
+            .execute_json(&body, &credential)
+            .await
+            .map_err(map_transport_error)
     }
 }
 
@@ -370,11 +322,47 @@ impl ManuscriptClaimExtractionProvider for ModelClaimExtractionProvider {
     }
 }
 
-fn map_request_error(error: reqwest::Error) -> ManuscriptClaimExtractionProviderError {
-    if error.is_timeout() {
-        ManuscriptClaimExtractionProviderError::Timeout
-    } else {
-        ManuscriptClaimExtractionProviderError::Transport
+fn map_config_error(error: StructuredModelConfigError) -> ClaimExtractorConfigError {
+    match error {
+        StructuredModelConfigError::MissingProvider
+        | StructuredModelConfigError::UnsupportedProvider => {
+            ClaimExtractorConfigError::UnsupportedProvider
+        }
+        StructuredModelConfigError::MissingModel => ClaimExtractorConfigError::MissingModel,
+        StructuredModelConfigError::MissingCredentialEnvironment => {
+            ClaimExtractorConfigError::MissingCredentialEnvironment
+        }
+        StructuredModelConfigError::MissingCredential => {
+            ClaimExtractorConfigError::MissingCredential
+        }
+        StructuredModelConfigError::InvalidBaseUrl => ClaimExtractorConfigError::InvalidBaseUrl,
+        StructuredModelConfigError::InvalidLimits => ClaimExtractorConfigError::InvalidLimits,
+    }
+}
+
+fn map_transport_error(
+    error: StructuredModelTransportError,
+) -> ManuscriptClaimExtractionProviderError {
+    match error {
+        StructuredModelTransportError::NotConfigured => {
+            ManuscriptClaimExtractionProviderError::NotConfigured
+        }
+        StructuredModelTransportError::InvalidConfiguration
+        | StructuredModelTransportError::ClientBuildFailed => {
+            ManuscriptClaimExtractionProviderError::InvalidConfiguration(
+                "claim extractor configuration is invalid".to_owned(),
+            )
+        }
+        StructuredModelTransportError::Timeout => ManuscriptClaimExtractionProviderError::Timeout,
+        StructuredModelTransportError::ResponseTooLarge => {
+            ManuscriptClaimExtractionProviderError::ResponseTooLarge
+        }
+        StructuredModelTransportError::Unauthorized
+        | StructuredModelTransportError::RateLimited
+        | StructuredModelTransportError::ProviderUnavailable
+        | StructuredModelTransportError::Transport => {
+            ManuscriptClaimExtractionProviderError::Transport
+        }
     }
 }
 
@@ -496,6 +484,97 @@ fn extraction_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        sync::{Arc, Mutex, Once},
+        time::Duration,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    const TEST_KEY_ENV: &str = "NINEPROFS_CLAIM_EXTRACTOR_TEST_KEY";
+    const TEST_KEY: &str = "claim-extractor-test-secret";
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn install_test_key() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| unsafe {
+            std::env::set_var(TEST_KEY_ENV, TEST_KEY);
+        });
+    }
+
+    fn block() -> ManuscriptClaimExtractionBlockInput {
+        ManuscriptClaimExtractionBlockInput {
+            block_id: "block-1".to_owned(),
+            text: "Treatment improved outcomes.".to_owned(),
+            citations: Vec::new(),
+        }
+    }
+
+    fn config(provider: &str, base_url: String) -> ClaimExtractorConfig {
+        install_test_key();
+        ClaimExtractorConfig::new(provider, "test-model", Some(base_url), TEST_KEY_ENV)
+    }
+
+    struct MockServer {
+        url: String,
+        request: Arc<Mutex<Option<String>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn mock_server(body: String) -> MockServer {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let request = Arc::new(Mutex::new(None));
+        let request_for_task = Arc::clone(&request);
+        let task = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut received = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            loop {
+                let Ok(count) = stream.read(&mut chunk).await else {
+                    return;
+                };
+                if count == 0 {
+                    return;
+                }
+                received.extend_from_slice(&chunk[..count]);
+                let Some(header_end) = received.windows(4).position(|value| value == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let content_length = String::from_utf8_lossy(&received[..header_end])
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("Content-Length:")
+                            .or_else(|| line.strip_prefix("content-length:"))
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or_default();
+                if received.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            *request_for_task.lock().unwrap() =
+                Some(String::from_utf8_lossy(&received).into_owned());
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        });
+        MockServer {
+            url: format!("http://{address}/custom/v1"),
+            request,
+            task,
+        }
+    }
 
     #[test]
     fn default_configuration_is_not_configured() {
@@ -512,5 +591,149 @@ mod tests {
             parse_response("openai", response),
             Err(ManuscriptClaimExtractionProviderError::InvalidStructuredOutput)
         ));
+    }
+
+    #[test]
+    fn configuration_validation_preserves_provider_and_limit_errors() {
+        assert!(matches!(
+            ClaimExtractorConfig::default().configuration_error(),
+            Some(ClaimExtractorConfigError::UnsupportedProvider)
+        ));
+        assert_eq!(
+            ClaimExtractorConfig::new("openai", "", None, TEST_KEY_ENV)
+                .configuration_error()
+                .map(|error| error.to_string()),
+            Some("model is required".to_owned())
+        );
+        assert_eq!(
+            ClaimExtractorConfig::new("openai", "test-model", None, "MISSING_KEY")
+                .configuration_error()
+                .map(|error| error.to_string()),
+            Some("credential is not configured".to_owned())
+        );
+        install_test_key();
+        assert_eq!(
+            ClaimExtractorConfig::new(
+                "openai",
+                "test-model",
+                Some("not-a-url".to_owned()),
+                TEST_KEY_ENV
+            )
+            .configuration_error()
+            .map(|error| error.to_string()),
+            Some("base URL is invalid".to_owned())
+        );
+        let mut invalid_limits =
+            ClaimExtractorConfig::new("openai", "test-model", None, TEST_KEY_ENV);
+        invalid_limits.timeout = Duration::ZERO;
+        assert!(matches!(
+            invalid_limits.configuration_error(),
+            Some(ClaimExtractorConfigError::InvalidLimits)
+        ));
+        invalid_limits.timeout = Duration::from_secs(1);
+        invalid_limits.max_response_bytes = 0;
+        assert!(matches!(
+            invalid_limits.configuration_error(),
+            Some(ClaimExtractorConfigError::InvalidLimits)
+        ));
+    }
+
+    #[test]
+    fn provider_defaults_choose_provider_specific_key_names() {
+        assert_eq!(
+            ClaimExtractorConfig::new("openai", "model", None, "").api_key_env,
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            ClaimExtractorConfig::new("anthropic", "model", None, "").api_key_env,
+            "ANTHROPIC_API_KEY"
+        );
+    }
+
+    #[test]
+    fn from_env_uses_only_claim_extractor_prefix() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = [
+            "NINEPROFS_CLAIM_EXTRACTOR_PROVIDER",
+            "NINEPROFS_CLAIM_EXTRACTOR_MODEL",
+            "NINEPROFS_CLAIM_EXTRACTOR_BASE_URL",
+            "NINEPROFS_CLAIM_EXTRACTOR_API_KEY_ENV",
+            "NINEPROFS_CITATION_ASSESSOR_PROVIDER",
+            "NINEPROFS_CITATION_ASSESSOR_MODEL",
+        ];
+        let previous = names
+            .iter()
+            .map(|name| (*name, std::env::var(name).ok()))
+            .collect::<Vec<_>>();
+        unsafe {
+            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_PROVIDER", "anthropic");
+            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_MODEL", "claim-model");
+            std::env::remove_var("NINEPROFS_CLAIM_EXTRACTOR_BASE_URL");
+            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_API_KEY_ENV", TEST_KEY_ENV);
+            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_PROVIDER", "openai");
+            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_MODEL", "citation-model");
+        }
+        let config = ClaimExtractorConfig::from_env();
+        for (name, value) in previous {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.model, "claim-model");
+        assert_eq!(config.api_key_env, TEST_KEY_ENV);
+    }
+
+    #[tokio::test]
+    async fn openai_contract_uses_shared_transport_and_task_schema() {
+        let response = r#"{"choices":[{"message":{"content":"{\"claims\":[],\"unassociatedCitations\":[]}"}}]}"#;
+        let server = mock_server(response.to_owned()).await;
+        let provider = ModelClaimExtractionProvider::new(config("openai", server.url.clone()));
+        let result = provider.extract(block()).await.unwrap();
+        assert!(result.claims.is_empty());
+        server.task.await.unwrap();
+        let request = server.request.lock().unwrap().clone().unwrap();
+        let request_lower = request.to_ascii_lowercase();
+        assert!(request_lower.starts_with("post /custom/v1/chat/completions "));
+        assert!(request_lower.contains("authorization: bearer "));
+        assert!(request.contains("\"model\":\"test-model\""));
+        assert!(request.contains("\"json_schema\""));
+        assert!(request.contains("Use ONLY the supplied manuscript block text"));
+    }
+
+    #[tokio::test]
+    async fn anthropic_contract_uses_shared_transport_and_task_tool() {
+        let response = r#"{"content":[{"type":"tool_use","name":"extract_manuscript_claims","input":{"claims":[],"unassociatedCitations":[]}}]}"#;
+        let server = mock_server(response.to_owned()).await;
+        let provider = ModelClaimExtractionProvider::new(config("anthropic", server.url.clone()));
+        let result = provider.extract(block()).await.unwrap();
+        assert!(result.claims.is_empty());
+        server.task.await.unwrap();
+        let request = server.request.lock().unwrap().clone().unwrap();
+        let request_lower = request.to_ascii_lowercase();
+        assert!(request_lower.starts_with("post /custom/v1/messages "));
+        assert!(request_lower.contains("x-api-key: "));
+        assert!(request_lower.contains("anthropic-version: 2023-06-01"));
+        assert!(!request_lower.contains("authorization:"));
+        assert!(request.contains("\"model\":\"test-model\""));
+        assert!(request.contains("\"name\":\"extract_manuscript_claims\""));
+        assert!(request.contains("Use ONLY the supplied manuscript block text"));
+    }
+
+    #[tokio::test]
+    async fn response_size_bound_maps_to_existing_claim_error() {
+        let response = r#"{"choices":[{"message":{"content":"{}"}}]}"#;
+        let server = mock_server(response.to_owned()).await;
+        let mut extractor_config = config("openai", server.url.clone());
+        extractor_config.max_response_bytes = 8;
+        let provider = ModelClaimExtractionProvider::new(extractor_config);
+        assert!(matches!(
+            provider.extract(block()).await,
+            Err(ManuscriptClaimExtractionProviderError::ResponseTooLarge)
+        ));
+        server.task.await.unwrap();
     }
 }

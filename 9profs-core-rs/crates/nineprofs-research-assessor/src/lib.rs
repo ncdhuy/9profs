@@ -12,7 +12,10 @@ use nineprofs_research_verification::{
     CitationAssessment, CitationAssessmentInput, CitationAssessmentProvider,
     CitationAssessmentProviderError, MAX_TOP_K, SelectedCitationCandidate,
 };
-use reqwest::{Client, StatusCode};
+use nineprofs_structured_model::{
+    StructuredModelClient, StructuredModelConfig, StructuredModelConfigError,
+    StructuredModelTransportError,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -36,7 +39,6 @@ const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 512;
 const MAX_CANDIDATE_EXCERPT_BYTES: usize = 16 * 1024;
 const MAX_TOTAL_EXCERPT_BYTES: usize = 128 * 1024;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct CitationAssessorConfig {
@@ -129,30 +131,10 @@ impl CitationAssessorConfig {
     }
 
     pub fn validate(&self, credential: Option<&str>) -> Result<(), CitationAssessorConfigError> {
-        if self.provider.trim().is_empty() {
-            return Err(CitationAssessorConfigError::MissingProvider);
-        }
-        if !matches!(self.provider.as_str(), "openai" | "anthropic") {
-            return Err(CitationAssessorConfigError::UnsupportedProvider(
-                self.provider.clone(),
-            ));
-        }
-        if self.model.trim().is_empty() {
-            return Err(CitationAssessorConfigError::MissingModel);
-        }
-        if self.api_key_env.trim().is_empty() {
-            return Err(CitationAssessorConfigError::MissingCredentialEnvironment);
-        }
-        if self
-            .base_url
-            .as_deref()
-            .is_some_and(|url| !is_valid_base_url(url))
-        {
-            return Err(CitationAssessorConfigError::InvalidBaseUrl);
-        }
-        if self.timeout.is_zero() || self.max_response_bytes == 0 || self.max_output_tokens == 0 {
-            return Err(CitationAssessorConfigError::InvalidLimits);
-        }
+        self.shared_config()
+            .validate(Some("validation-placeholder"))
+            .map(|_| ())
+            .map_err(|error| map_config_error(error, &self.provider))?;
         if credential.is_none_or(|value| value.trim().is_empty()) {
             return Err(CitationAssessorConfigError::MissingCredential);
         }
@@ -197,21 +179,16 @@ impl CitationAssessorConfig {
         }
     }
 
-    fn base_url(&self) -> &str {
-        self.base_url
-            .as_deref()
-            .unwrap_or(match self.provider.as_str() {
-                "anthropic" => "https://api.anthropic.com/v1",
-                _ => "https://api.openai.com/v1",
-            })
-    }
-
-    fn endpoint_url(&self) -> String {
-        let endpoint = match self.provider.as_str() {
-            "anthropic" => "messages",
-            _ => "chat/completions",
-        };
-        format!("{}/{endpoint}", self.base_url().trim_end_matches('/'))
+    fn shared_config(&self) -> StructuredModelConfig {
+        StructuredModelConfig {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            api_key_env: self.api_key_env.clone(),
+            timeout: self.timeout,
+            max_response_bytes: self.max_response_bytes,
+            max_output_tokens: self.max_output_tokens,
+        }
     }
 }
 
@@ -279,7 +256,7 @@ pub enum CitationAssessorError {
 #[derive(Clone)]
 pub struct ModelCitationAssessor {
     config: CitationAssessorConfig,
-    client: Client,
+    client: StructuredModelClient,
 }
 
 impl fmt::Debug for ModelCitationAssessor {
@@ -293,10 +270,7 @@ impl fmt::Debug for ModelCitationAssessor {
 
 impl ModelCitationAssessor {
     pub fn new(config: CitationAssessorConfig) -> Self {
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = StructuredModelClient::new(config.shared_config());
         Self { config, client }
     }
 
@@ -374,36 +348,10 @@ impl ModelCitationAssessor {
     }
 
     async fn send(&self, body: Value, credential: &str) -> Result<Vec<u8>, CitationAssessorError> {
-        let request = self
-            .client
-            .post(self.config.endpoint_url())
-            .header(reqwest::header::CONTENT_TYPE, "application/json");
-        let request = match self.config.provider.as_str() {
-            "anthropic" => request
-                .header("x-api-key", credential)
-                .header("anthropic-version", ANTHROPIC_VERSION),
-            _ => request.bearer_auth(credential),
-        };
-        let response = request
-            .json(&body)
-            .send()
+        self.client
+            .execute_json(&body, credential)
             .await
-            .map_err(map_request_error)?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.config.max_response_bytes as u64)
-        {
-            return Err(CitationAssessorError::ResponseTooLarge);
-        }
-        let status = response.status();
-        let bytes = response.bytes().await.map_err(map_request_error)?;
-        if bytes.len() > self.config.max_response_bytes {
-            return Err(CitationAssessorError::ResponseTooLarge);
-        }
-        if !status.is_success() {
-            return Err(map_status(status));
-        }
-        Ok(bytes.to_vec())
+            .map_err(map_transport_error)
     }
 }
 
@@ -733,37 +681,41 @@ fn assessment_schema() -> Value {
     })
 }
 
-fn map_request_error(error: reqwest::Error) -> CitationAssessorError {
-    if error.is_timeout() {
-        CitationAssessorError::Timeout
-    } else if error.is_connect() {
-        CitationAssessorError::ProviderUnavailable
-    } else {
-        CitationAssessorError::ProviderUnavailable
+fn map_config_error(
+    error: StructuredModelConfigError,
+    provider: &str,
+) -> CitationAssessorConfigError {
+    match error {
+        StructuredModelConfigError::MissingProvider => CitationAssessorConfigError::MissingProvider,
+        StructuredModelConfigError::UnsupportedProvider => {
+            CitationAssessorConfigError::UnsupportedProvider(provider.to_owned())
+        }
+        StructuredModelConfigError::MissingModel => CitationAssessorConfigError::MissingModel,
+        StructuredModelConfigError::MissingCredentialEnvironment => {
+            CitationAssessorConfigError::MissingCredentialEnvironment
+        }
+        StructuredModelConfigError::MissingCredential => {
+            CitationAssessorConfigError::MissingCredential
+        }
+        StructuredModelConfigError::InvalidBaseUrl => CitationAssessorConfigError::InvalidBaseUrl,
+        StructuredModelConfigError::InvalidLimits => CitationAssessorConfigError::InvalidLimits,
     }
 }
 
-fn map_status(status: StatusCode) -> CitationAssessorError {
-    match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => CitationAssessorError::Unauthorized,
-        StatusCode::TOO_MANY_REQUESTS => CitationAssessorError::RateLimited,
-        StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => CitationAssessorError::Timeout,
-        _ => CitationAssessorError::ProviderUnavailable,
+fn map_transport_error(error: StructuredModelTransportError) -> CitationAssessorError {
+    match error {
+        StructuredModelTransportError::NotConfigured => CitationAssessorError::NotConfigured,
+        StructuredModelTransportError::InvalidConfiguration
+        | StructuredModelTransportError::ClientBuildFailed => {
+            CitationAssessorError::InvalidConfiguration
+        }
+        StructuredModelTransportError::Timeout => CitationAssessorError::Timeout,
+        StructuredModelTransportError::Unauthorized => CitationAssessorError::Unauthorized,
+        StructuredModelTransportError::RateLimited => CitationAssessorError::RateLimited,
+        StructuredModelTransportError::ProviderUnavailable
+        | StructuredModelTransportError::Transport => CitationAssessorError::ProviderUnavailable,
+        StructuredModelTransportError::ResponseTooLarge => CitationAssessorError::ResponseTooLarge,
     }
-}
-
-fn is_valid_base_url(value: &str) -> bool {
-    let Some((scheme, remainder)) = value.split_once("://") else {
-        return false;
-    };
-    if !matches!(scheme, "http" | "https") || remainder.is_empty() {
-        return false;
-    }
-    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
-    !authority.is_empty()
-        && !authority.starts_with(':')
-        && !authority.ends_with(':')
-        && !authority.chars().any(char::is_whitespace)
 }
 
 #[cfg(test)]
@@ -785,7 +737,7 @@ mod tests {
     };
     use std::{
         collections::BTreeMap,
-        sync::{Arc, Once},
+        sync::{Arc, Mutex, Once},
         time::Duration,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -793,6 +745,7 @@ mod tests {
 
     const TEST_KEY_ENV: &str = "NINEPROFS_CITATION_ASSESSOR_TEST_KEY";
     const TEST_KEY: &str = "citation-assessor-test-secret";
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn install_test_key() {
         static ONCE: Once = Once::new();
@@ -1189,6 +1142,94 @@ mod tests {
     }
 
     #[test]
+    fn configuration_validation_preserves_provider_and_limit_errors() {
+        assert_eq!(
+            CitationAssessorConfig::default().configuration_error(),
+            Some(CitationAssessorConfigError::MissingProvider)
+        );
+        assert!(matches!(
+            CitationAssessorConfig::new("unsupported", "test-model", None, TEST_KEY_ENV,)
+                .configuration_error(),
+            Some(CitationAssessorConfigError::UnsupportedProvider(_))
+        ));
+        assert_eq!(
+            CitationAssessorConfig::new("openai", "", None, TEST_KEY_ENV).configuration_error(),
+            Some(CitationAssessorConfigError::MissingModel)
+        );
+        install_test_key();
+        assert_eq!(
+            CitationAssessorConfig::new("openai", "test-model", None, "MISSING_KEY")
+                .configuration_error(),
+            Some(CitationAssessorConfigError::MissingCredential)
+        );
+        assert_eq!(
+            config("openai", "not-a-url".to_owned()).configuration_error(),
+            Some(CitationAssessorConfigError::InvalidBaseUrl)
+        );
+        let mut invalid_limits = config("openai", "http://127.0.0.1".to_owned());
+        invalid_limits.timeout = Duration::ZERO;
+        assert_eq!(
+            invalid_limits.configuration_error(),
+            Some(CitationAssessorConfigError::InvalidLimits)
+        );
+        invalid_limits.timeout = Duration::from_secs(1);
+        invalid_limits.max_response_bytes = 0;
+        assert_eq!(
+            invalid_limits.configuration_error(),
+            Some(CitationAssessorConfigError::InvalidLimits)
+        );
+    }
+
+    #[test]
+    fn provider_defaults_choose_provider_specific_key_names() {
+        assert_eq!(
+            CitationAssessorConfig::new("openai", "model", None, "").api_key_env,
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            CitationAssessorConfig::new("anthropic", "model", None, "").api_key_env,
+            "ANTHROPIC_API_KEY"
+        );
+    }
+
+    #[test]
+    fn from_env_uses_only_citation_assessor_prefix() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = [
+            "NINEPROFS_CITATION_ASSESSOR_PROVIDER",
+            "NINEPROFS_CITATION_ASSESSOR_MODEL",
+            "NINEPROFS_CITATION_ASSESSOR_BASE_URL",
+            "NINEPROFS_CITATION_ASSESSOR_API_KEY_ENV",
+            "NINEPROFS_CLAIM_EXTRACTOR_PROVIDER",
+            "NINEPROFS_CLAIM_EXTRACTOR_MODEL",
+        ];
+        let previous = names
+            .iter()
+            .map(|name| (*name, std::env::var(name).ok()))
+            .collect::<Vec<_>>();
+        unsafe {
+            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_PROVIDER", "openai");
+            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_MODEL", "citation-model");
+            std::env::remove_var("NINEPROFS_CITATION_ASSESSOR_BASE_URL");
+            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_API_KEY_ENV", TEST_KEY_ENV);
+            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_PROVIDER", "anthropic");
+            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_MODEL", "claim-model");
+        }
+        let config = CitationAssessorConfig::from_env();
+        for (name, value) in previous {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "citation-model");
+        assert_eq!(config.api_key_env, TEST_KEY_ENV);
+    }
+
+    #[test]
     fn strict_parser_rejects_unknown_fields_relations_and_candidates() {
         let extra = r#"{"overallRelation":"supports","rationale":"x","selectedCandidates":[],"evidenceId":"fake"}"#;
         assert!(matches!(
@@ -1283,8 +1324,9 @@ mod tests {
     #[tokio::test]
     async fn response_size_limit_rejects_before_parsing() {
         let server = mock_server("{}".repeat(32)).await;
-        let mut assessor = ModelCitationAssessor::new(config("openai", server.url.clone()));
-        assessor.config.max_response_bytes = 8;
+        let mut assessor_config = config("openai", server.url.clone());
+        assessor_config.max_response_bytes = 8;
+        let assessor = ModelCitationAssessor::new(assessor_config);
         assert!(matches!(
             assessor.assess_model(input()).await,
             Err(CitationAssessorError::ResponseTooLarge)

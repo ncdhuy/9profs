@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 nineprofs-research = { path = "../nineprofs-research" }
-reqwest.workspace = true
+nineprofs-structured-model = { path = "../nineprofs-structured-model" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
