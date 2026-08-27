@@ -9,8 +9,9 @@ target boundaries for 9Profs. The pinned OfficeCLI sidecar is implemented for
 read-only inspection plus transactional detached creation and mutation;
 the Phase 5B1 reference-PDF ingestion seam, Phase 5B2 scoped retrieval, Phase
 5C1 citation binding domain, Phase 5C2A citation verification orchestration,
-and Phase 5C2B model-backed citation assessment are implemented, while
-citation parsing, UI, and SaaS services remain future work.
+and Phase 5C2B model-backed citation assessment are implemented. Phase 5C3A
+adds the DOCX inline citation model and read-only citation inventory; research
+synchronization, UI, and SaaS services remain future work.
 
 ## Non-negotiable rules
 
@@ -1051,8 +1052,34 @@ retrieval. Case-wide support from another source does not validate a citation.
   `assessor_not_configured` result; readiness is exposed internally without
   provider secrets.
 
-Still future: manuscript citation parsing, bibliography resolution, verification
-UI, and Agent citation tools (Phase 5C3).
+#### Phase 5C3A — inline DOCX citation model and extraction (IMPLEMENTED)
+
+- `packages/docx-engine` owns the document-format citation seam. Supported
+  structured fields are Word-native `CITATION <Tag>` and Zotero
+  `ADDIN ZOTERO_ITEM CSL_CITATION`; grouped Zotero `citationItems` become
+  ordered targets with bounded metadata. EndNote, Mendeley, and Citavi remain
+  protected for future adapters.
+- A supported field is represented as one atomic `Run.citation` and one
+  `docxCitation` Tiptap/ProseMirror inline atom. The surrounding paragraph is
+  editable; the atom is selectable and all-or-nothing on deletion. Its
+  preserved field span carries the exact imported field/SDT XML needed for
+  faithful save.
+- Word bibliography `customXml/b:Sources` support remains owned by
+  `parseSourcesXml`, `ParsedDoc.sources`, and `buildSourcesXml`. A matching
+  native tag may enrich the read-only document descriptor with title, author,
+  and year, but it never creates or binds a Research identity.
+- `extractDocxCitations` and the Docs PM adapter expose a read-only inventory
+  with stable current block identity, visible rendered text, ordered targets,
+  and Unicode code-point offsets. AI plain-text context includes only the
+  rendered marker, never field instructions or Zotero JSON.
+- A DOCX citation atom is document-format identity/preservation. A Research
+  `CitationOccurrence` is persistent research-domain identity. They are
+  intentionally different objects; Phase 5C3B owns synchronization between
+  their descriptors and Research entities.
+
+Still future: manuscript → Research synchronization, claim extraction,
+source/PDF binding, verification UI, Agent citation tools, plain-text citation
+recognition, and EndNote/Mendeley/Citavi adapters (Phases 5C3B–5C3C).
 
 Dify retrieval remains an adapter and is not a citation identity owner.
 

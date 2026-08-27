@@ -10,6 +10,8 @@ export interface RevisionInfo {
 /** A styled text run inside a paragraph-like block. */
 export interface Run {
   text: string
+  /** Supported Word/Zotero citation field, kept as one editable-safe atomic run. */
+  citation?: import('./citations').DocxCitation
   /**
    * Original <w:rPr> slice (serialized from the parse tree). Written back via
    * mergeRPrModel when the run is rebuilt: unmodeled properties (caps/vanish/dstrike/

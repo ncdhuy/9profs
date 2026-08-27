@@ -21,12 +21,12 @@ Inspected:
   `e2e/docs-presentation-parity.spec.ts`;
 - existing architecture documents and a read-only
   `baseline/genoffice..develop` comparison.
-- Phase 5A–5C2B Rust Core research domain, SQLite migrations, API DTO/routes, and
+- Phase 5A–5C3A Rust Core research domain, SQLite migrations, API DTO/routes, and
   TypeScript Core transport boundary.
 
-This audit records repository facts after Phase 5C2B implementation. It does
-not claim manuscript/bibliography extraction, Sheets verification, research UI,
-or Agent research tools.
+This audit records repository facts after Phase 5C3A implementation. It does
+not claim Research synchronization, claim extraction, verification UI, or
+Agent research tools.
 
 ## Confirmed repository architecture
 
@@ -410,9 +410,39 @@ configuration is absent or invalid; verification then returns the existing
 
 Implemented in this phase: production `CitationAssessmentProvider`, model-backed
 structured assessment, assessor-specific provider configuration, strict output
-validation, provider contract tests, and runtime wiring. Still future: manuscript
-citation parsing, bibliography resolution, verification UI, and Agent citation
-tools (Phase 5C3).
+validation, provider contract tests, and runtime wiring. Still future after
+5C3A: manuscript → Research synchronization, claim extraction, verification
+UI, and Agent citation tools (Phases 5C3B–5C3C).
+
+## Phase 5C3A inline DOCX citation model and extraction
+
+`packages/docx-engine/src/citations.ts` now provides the transport-neutral
+document-layer citation representation and bounded parsers for Word-native
+`CITATION <Tag>` fields and Zotero `CSL_CITATION` JSON. Word instructions are
+reconstructed across split `w:instrText` runs. Zotero grouped items remain in
+source order and prefer each valid item ID as the stable document reference
+key. Unsupported managers and malformed/unbalanced fields stay on the
+protected passthrough path.
+
+Supported fields are one atomic `Run.citation` and one `docxCitation` inline
+atom in Docs. The atom uses the cached rendered result for display and plain
+text context, while its exact field span (including a safe inline SDT shell)
+is emitted unchanged on paragraph regeneration. Ordinary text before and
+after it remains editable. Inventory extraction reports the current block ID,
+visible-text start/end offsets in Unicode code points, and ordered targets.
+
+The existing Word bibliography seam remains unchanged: `parseSourcesXml`,
+`ParsedDoc.sources`, and `buildSourcesXml` still own `customXml/b:Sources`.
+Native source metadata is read-only enrichment only. No Research entity is
+created, bound, or verified by 5C3A.
+
+DOCX citation atom identity means document-format preservation. Research
+`CitationOccurrence` identity means persistent research-domain state; the two
+are not the same object. Phase 5C3B will synchronize descriptors into Research.
+
+Still future: manuscript → Research synchronization, claim extraction,
+source/PDF binding, verification UI, plain-text citation recognition, and
+EndNote/Mendeley/Citavi adapters.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 

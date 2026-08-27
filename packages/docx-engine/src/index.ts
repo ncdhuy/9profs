@@ -95,6 +95,20 @@ export {
   stripInkRuns,
 } from './ink'
 export { bibliographyLine, citationText, parseSourcesXml } from './sources'
+export {
+  DOCX_CITATION_LIMITS,
+  citationFieldSpans,
+  extractDocxCitations,
+  parseCitationInstruction,
+  parseDocxCitationField,
+  type DocxCitation,
+  type DocxCitationFieldScan,
+  type DocxCitationFieldSpan,
+  type DocxCitationFormat,
+  type DocxCitationOccurrenceDescriptor,
+  type DocxCitationSourceMetadata,
+  type DocxCitationTarget,
+} from './citations'
 export { readThemeColors, readThemeFonts } from './theme'
 export { hashProtectionPassword, verifyProtectionPassword } from './protection'
 export { decodeSymbolChar, decodeSymbolText, isSymbolFont, toSymbolPua } from './symbol-fonts'

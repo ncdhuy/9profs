@@ -47,6 +47,7 @@ import {
   type ChartDisplay,
   type DiagramDisplay,
   type DocDefaults,
+  type DocxCitationFormat,
   type FieldDisplay,
   type FormulaDisplay,
   type NewChart,
@@ -516,6 +517,61 @@ export const DocDocument = Node.create({
 export const DocText = Node.create({
   name: 'text',
   group: 'inline',
+})
+
+/**
+ * Imported Word/Zotero citation field. The atom owns the exact field span;
+ * only the surrounding paragraph text remains directly editable.
+ */
+export const DocxCitation = Node.create({
+  name: 'docxCitation',
+  inline: true,
+  group: 'inline',
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      format: { default: 'WordNative' as DocxCitationFormat },
+      renderedText: { default: '' },
+      instruction: { default: '' },
+      targets: { default: '[]' },
+      originalXml: { default: '' },
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'span[data-docx-citation]',
+        getAttrs: (element) => {
+          const el = element as HTMLElement
+          return {
+            format: el.getAttribute('data-citation-format') ?? 'WordNative',
+            renderedText: el.textContent ?? '',
+            instruction: el.getAttribute('data-citation-instruction') ?? '',
+            targets: el.getAttribute('data-citation-targets') ?? '[]',
+            originalXml: el.getAttribute('data-citation-xml') ?? '',
+          }
+        },
+      },
+    ]
+  },
+  renderText({ node }) {
+    return String(node.attrs.renderedText ?? '')
+  },
+  renderHTML({ node }) {
+    return [
+      'span',
+      {
+        'data-docx-citation': '1',
+        'data-citation-format': String(node.attrs.format ?? 'WordNative'),
+        'data-citation-instruction': String(node.attrs.instruction ?? ''),
+        'data-citation-targets': String(node.attrs.targets ?? '[]'),
+        'data-citation-xml': String(node.attrs.originalXml ?? ''),
+        class: 'docx-citation',
+      },
+      String(node.attrs.renderedText ?? ''),
+    ]
+  },
 })
 
 /** Footnote / endnote reference marker: an atomic superscript number. */
@@ -3451,6 +3507,7 @@ const textboxSubExtensions = [
   Node.create({ name: 'doc', topNode: true, content: 'block+' }),
   DocText,
   DocHardBreak,
+  DocxCitation,
   TextboxParagraph,
   InactiveSelectionExtension,
   BoldMark,
@@ -3478,6 +3535,7 @@ export const editorExtensions = [
   DocDocument,
   DocText,
   DocHardBreak,
+  DocxCitation,
   DocNoteRef,
   DocXeMark,
   DocRuby,

@@ -185,13 +185,31 @@ const hasDelMark = (node: ProseMirrorNode) => node.marks.some((m) => m.type.name
 export function liveText(node: ProseMirrorNode): string {
   if ((node.attrs?.blockRevision as { kind?: string } | null)?.kind === 'del') return ''
   let out = ''
-  const walk = (child: ProseMirrorNode): void => {
+  const walk = (
+    child: ProseMirrorNode,
+    parent: ProseMirrorNode,
+    pos: number,
+    index: number,
+  ): void => {
     if (hasDelMark(child)) return
     if (child.isText) out += child.text ?? ''
-    else if (child.isLeaf) out += child.type.spec.leafText?.(child) ?? ''
-    else child.forEach(walk)
+    else if (child.isLeaf) {
+      const spec = child.type.spec as typeof child.type.spec & {
+        leafText?: (leaf: ProseMirrorNode) => string
+        toText?: (props: {
+          node: ProseMirrorNode
+          pos: number
+          parent: ProseMirrorNode
+          index: number
+        }) => string
+      }
+      out += spec.toText?.({ node: child, pos, parent, index }) ?? spec.leafText?.(child) ?? ''
+    } else
+      child.forEach((grandchild, childPos, childIndex) =>
+        walk(grandchild, child, childPos, childIndex),
+      )
   }
-  node.forEach(walk)
+  node.forEach((child, pos, index) => walk(child, node, pos, index))
   return out
 }
 

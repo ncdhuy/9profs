@@ -1983,6 +1983,9 @@ function runsXml(runs: Run[], allocate: ((href: string) => string) | null): stri
  * express: footnote/endnote reference markers and trailing XE index fields.
  */
 function runFragmentXml(run: Run, insideLink: boolean): string {
+  // Supported citations are atomic document-format payloads. Emit their exact
+  // imported span; surrounding prose may be regenerated independently.
+  if (run.citation) return run.citation.originalXml
   // atomic inline formula: the stored <m:oMath> fragment is already valid
   // paragraph content (patch.ts adds the xmlns:m declaration when missing)
   if (run.math) return run.math.omml

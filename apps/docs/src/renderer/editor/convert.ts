@@ -22,6 +22,11 @@ import {
   type ChartDisplay,
   type ChartPatch,
   type ChartSeriesPatch,
+  DOCX_CITATION_LIMITS,
+  extractDocxCitations as extractDocxCitationsFromBlocks,
+  type DocxCitation,
+  type DocxCitationFormat,
+  type DocxCitationOccurrenceDescriptor,
   type FieldDisplay,
   type FieldTextPatch,
   type FormulaDisplay,
@@ -939,6 +944,19 @@ function charScaleEm(text: string, scalePct: number): number {
 export function runsToInline(runs: Run[]): PmNode[] {
   const nodes: PmNode[] = []
   for (const run of runs) {
+    if (run.citation) {
+      nodes.push({
+        type: 'docxCitation',
+        attrs: {
+          format: run.citation.format,
+          renderedText: run.citation.renderedText,
+          instruction: run.citation.instruction,
+          targets: JSON.stringify(run.citation.targets),
+          originalXml: run.citation.originalXml,
+        },
+      })
+      continue
+    }
     if (run.math) {
       nodes.push({
         type: 'docInlineMath',
@@ -1003,6 +1021,43 @@ export function runsToInline(runs: Run[]): PmNode[] {
     }
   }
   return nodes
+}
+
+/** Read-only citation inventory for the live editor document. */
+export function extractDocxCitationsFromPmDoc(doc: PmNode): DocxCitationOccurrenceDescriptor[] {
+  const blocks: Block[] = []
+  const collect = (node: PmNode, path: string, inheritedDocxIndex: number | null = null): void => {
+    const nodeDocxIndex =
+      typeof node.attrs?.docxIndex === 'number' && Number.isInteger(node.attrs.docxIndex)
+        ? node.attrs.docxIndex
+        : inheritedDocxIndex
+    if (['docParagraph', 'docHeading', 'docListItem'].includes(node.type)) {
+      const docxIndex = nodeDocxIndex
+      const nestedPath = path.includes('.')
+      blocks.push({
+        id:
+          docxIndex === null
+            ? `pm-block-${path}`
+            : nestedPath
+              ? `b${docxIndex}:pm-block-${path}`
+              : `b${docxIndex}`,
+        type:
+          node.type === 'docHeading'
+            ? 'heading'
+            : node.type === 'docListItem'
+              ? 'listItem'
+              : 'paragraph',
+        docxIndex,
+        originalXml: null,
+        runs: inlineToRuns(node.content ?? []),
+      })
+    }
+    for (const [index, child] of (node.content ?? []).entries()) {
+      collect(child, `${path}.${index}`, nodeDocxIndex)
+    }
+  }
+  for (const [index, node] of (doc.content ?? []).entries()) collect(node, String(index))
+  return extractDocxCitationsFromBlocks(blocks)
 }
 
 function runMarks(run: Run): PmMark[] {
@@ -2149,7 +2204,13 @@ export function inlineToRuns(content: PmNode[]): Run[] {
       const ch = node.attrs?.pageBreak ? '\f' : node.attrs?.colBreak ? '\v' : '\n'
       const prev = runs[runs.length - 1]
       const prevAtomic =
-        prev && (prev.noteRef || prev.xeTerm !== undefined || prev.math || prev.ruby || prev.image)
+        prev &&
+        (prev.noteRef ||
+          prev.xeTerm !== undefined ||
+          prev.math ||
+          prev.ruby ||
+          prev.image ||
+          prev.citation)
       if (prev && !prevAtomic) prev.text += ch
       else runs.push({ text: ch })
       continue
@@ -2161,6 +2222,35 @@ export function inlineToRuns(content: PmNode[]): Run[] {
           kind: (node.attrs?.kind as 'footnote' | 'endnote') ?? 'footnote',
           id: String(node.attrs?.id ?? ''),
         },
+      })
+      continue
+    }
+    if (node.type === 'docxCitation') {
+      const format = String(node.attrs?.format ?? '') as DocxCitationFormat
+      const renderedText = String(node.attrs?.renderedText ?? '')
+      const instruction = String(node.attrs?.instruction ?? '')
+      const originalXml = String(node.attrs?.originalXml ?? '')
+      let targets: DocxCitation['targets']
+      try {
+        const parsed = JSON.parse(String(node.attrs?.targets ?? '[]'))
+        if (!isBoundedCitationTargets(parsed)) continue
+        targets = parsed
+      } catch {
+        continue
+      }
+      if (
+        (format !== 'WordNative' && format !== 'Zotero') ||
+        !renderedText ||
+        !instruction ||
+        !originalXml ||
+        renderedText.length > DOCX_CITATION_LIMITS.string ||
+        instruction.length > DOCX_CITATION_LIMITS.instruction ||
+        originalXml.length > DOCX_CITATION_LIMITS.fieldXml
+      )
+        continue
+      runs.push({
+        text: renderedText,
+        citation: { format, renderedText, instruction, targets, originalXml },
       })
       continue
     }
@@ -2260,6 +2350,48 @@ export function inlineToRuns(content: PmNode[]): Run[] {
   return mergeRuns(runs)
 }
 
+function isBoundedCitationTargets(value: unknown): value is DocxCitation['targets'] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > DOCX_CITATION_LIMITS.targets) {
+    return false
+  }
+  const bounded = (item: unknown, allowEmpty = false): item is string =>
+    typeof item === 'string' &&
+    item.length <= DOCX_CITATION_LIMITS.string &&
+    (allowEmpty || item.length > 0)
+  return value.every((target, index) => {
+    if (!target || typeof target !== 'object' || Array.isArray(target)) return false
+    const item = target as Record<string, unknown>
+    if (!Number.isSafeInteger(item.ordinal) || item.ordinal !== index + 1) return false
+    if (!bounded(item.referenceKey)) return false
+    if (item.itemId !== undefined && !bounded(item.itemId)) return false
+    for (const key of ['citedLocator', 'citedLabel', 'prefix', 'suffix']) {
+      if (item[key] !== undefined && !bounded(item[key], true)) return false
+    }
+    if (item.suppressAuthor !== undefined && typeof item.suppressAuthor !== 'boolean') {
+      return false
+    }
+    if (item.uris !== undefined) {
+      if (!Array.isArray(item.uris) || item.uris.length > DOCX_CITATION_LIMITS.uris) return false
+      if (!item.uris.every((uri) => bounded(uri))) return false
+    }
+    if (item.source !== undefined) {
+      if (!item.source || typeof item.source !== 'object' || Array.isArray(item.source)) {
+        return false
+      }
+      const source = item.source as Record<string, unknown>
+      if (
+        !bounded(source.tag) ||
+        !bounded(source.title, true) ||
+        !bounded(source.author, true) ||
+        !bounded(source.year, true)
+      ) {
+        return false
+      }
+    }
+    return true
+  })
+}
+
 function mergeRuns(runs: Run[]): Run[] {
   const merged: Run[] = []
   for (const run of runs) {
@@ -2273,12 +2405,14 @@ function mergeRuns(runs: Run[]): Run[] {
       run.math ||
       run.ruby ||
       run.image ||
+      run.citation ||
       prev?.noteRef ||
       prev?.xeTerm !== undefined ||
       prev?.instrField !== undefined ||
       prev?.math ||
       prev?.ruby ||
-      prev?.image
+      prev?.image ||
+      prev?.citation
     if (prev && !atomic && runStyleKey(prev) === runStyleKey(run)) prev.text += run.text
     else merged.push({ ...run })
   }
@@ -2311,6 +2445,7 @@ function runStyleKey(run: Run): string {
     run.fldBeginXml ?? null,
     run.math?.omml ?? null,
     run.ruby?.xml ?? null,
+    run.citation?.originalXml ?? null,
   ])
 }
 

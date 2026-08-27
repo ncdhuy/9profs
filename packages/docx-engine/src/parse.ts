@@ -10,6 +10,7 @@ import { NOTE_PART_PATH, parseNotesXml } from './notes'
 import { scanBody, type BodyElement } from './scan'
 import { sectionSettingsFromXml, xmlFlagOn } from './section'
 import { findSourcesPart, parseSourcesXml } from './sources'
+import { citationFieldSpans, parseDocxCitationField, type DocxCitationFieldSpan } from './citations'
 import { decodeSymbolChar, decodeSymbolText } from './symbol-fonts'
 import { THEME_PART_PATH, readThemeColors, readThemeFonts, resolveThemeColor } from './theme'
 import { PAGE_MARK, TOTAL_PAGES_MARK } from './types'
@@ -255,6 +256,7 @@ export async function parseDocx(bytes: Uint8Array): Promise<ParsedDoc & { extras
     numbering,
     chartParts,
     noteNumbers,
+    sources,
     themeColors: theme.colors,
     themeFonts: theme.fonts,
     mediaByRid,
@@ -432,6 +434,8 @@ interface BuildContext {
   chartParts: Record<string, string>
   /** "footnote:<id>" / "endnote:<id>" -> display number */
   noteNumbers: Map<string, number>
+  /** read-only Word bibliography metadata for native citation enrichment */
+  sources: SourceInfo[]
   /** live palette for w:themeColor resolution, null when the doc has no theme */
   themeColors?: ThemeColors | null
   /** theme font scheme for w:asciiTheme/... resolution */
@@ -840,9 +844,9 @@ async function buildBlock(
         ...(await oleDisplay(detect, ctx)),
       }
     }
-    // XE (index entry) fields are invisible markers; a paragraph whose only
-    // fields are XE stays editable (extractRuns round-trips the markers).
-    if (!onlyXeFields(detect)) {
+    // Known inline fields (including supported citations) stay editable;
+    // unsupported or malformed fields remain protected by passthrough.
+    if (!onlyEditableInlineFields(fieldDetect, ctx.sources)) {
       const pStyle = /<w:pStyle w:val="([^"]+)"/.exec(xml)?.[1]
       return {
         ...base,
@@ -1268,12 +1272,14 @@ function buildTextParagraph(
   const mathXml = stripTextboxes(
     xml.includes('<mc:Fallback') ? xml.replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>/g, '') : xml,
   )
+  const citationFields = citationFieldSpans(stripTextboxes(xml)).fields
   const runs = extractRuns(
     pNode,
     ctx,
     ommlFragmentsOf(mathXml),
     rubyFragmentsOf(mathXml),
     withImages,
+    citationFields,
   )
   if (runs.length === 0) {
     const emptySz = emptyParaSizeHalfPoints(pNode, pPr)
@@ -2983,13 +2989,18 @@ function onlyOleFields(xml: string): boolean {
   )
 }
 
-function onlyXeFields(xml: string): boolean {
+function onlyEditableInlineFields(xml: string, sources: readonly SourceInfo[]): boolean {
   if (xml.includes('<w:fldSimple')) return false
-  const instrs = xml.match(/<w:instrText[^>]*>[\s\S]*?<\/w:instrText>/g) ?? []
-  if (instrs.length === 0) return false
+  const scan = citationFieldSpans(xml)
+  if (!scan.balanced || scan.oversized || scan.fields.length === 0) return false
   let checkboxInstrs = 0
-  const ok = instrs.every((fragment) => {
-    const text = decodeEntities(fragment.replace(/<[^>]+>/g, ''))
+  const ok = scan.fields.every((field) => {
+    const text = field.instruction
+    const citation = parseDocxCitationField(field, sources)
+    if (citation?.format === 'WordNative' || citation?.format === 'Zotero') {
+      return field.safe
+    }
+    if (citation?.format === 'UnknownStructured') return false
     if (/^\s*FORMCHECKBOX\s*$/.test(text)) {
       checkboxInstrs++
       return true
@@ -3067,6 +3078,7 @@ function extractRuns(
   mathFragments: string[] = [],
   rubyFragments: string[] = [],
   withImages = false,
+  citationFields: DocxCitationFieldSpan[] = [],
 ): Run[] {
   const runs: Run[] = []
   let mathIndex = 0
@@ -3100,6 +3112,7 @@ function extractRuns(
   let fieldCached = ''
   let fieldCachedRuns: Run[] = []
   let fieldBeginRun: XNode | null = null
+  let citationIndex = 0
   // reference-only comments (bare w:commentReference, LibreOffice style) anchor
   // on the nearest run; refs seen before any run attach to the next one
   let pendingRefIds: string[] = []
@@ -3137,7 +3150,11 @@ function extractRuns(
           const xe = /^\s*XE\s+(?:"([^"]*)"|(\S+))/.exec(fieldInstr)
           const ref = /^\s*REF\s+(?:"([^"]+)"|([^\s\\]+))/.exec(fieldInstr)
           const hyper = convertibleHyperlink(fieldInstr)
-          if (xe) pushRun({ text: '', xeTerm: xe[1] ?? xe[2] }, rev)
+          const citationField = citationFields[citationIndex++]
+          const citation = citationField ? parseDocxCitationField(citationField, ctx.sources) : null
+          if (citation?.format === 'WordNative' || citation?.format === 'Zotero') {
+            pushRun({ text: fieldCached || citation.renderedText, citation }, rev)
+          } else if (xe) pushRun({ text: '', xeTerm: xe[1] ?? xe[2] }, rev)
           else if (ref) {
             const name = ref[1] ?? ref[2]
             pushRun({ text: fieldCached || name, refField: name, refInstr: fieldInstr }, rev)
@@ -3606,6 +3623,7 @@ function sameStyle(a: Run, b: Run): boolean {
   if (a.math || b.math) return false
   if (a.ruby || b.ruby) return false
   if (a.image || b.image) return false
+  if (a.citation || b.citation) return false
   return (
     (a.rawRPr ?? '') === (b.rawRPr ?? '') &&
     a.styleId === b.styleId &&
