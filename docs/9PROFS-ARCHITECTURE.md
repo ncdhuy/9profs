@@ -534,14 +534,16 @@ For original audit evidence and phase-specific rationale, see
 [DOCX-PRESENTATION-V2.md](DOCX-PRESENTATION-V2.md), and
 [DOCX-V2-REFERENCE-MAP.md](DOCX-V2-REFERENCE-MAP.md).
 
-## Future roadmap
+## Current research roadmap
 
-The following items are not current implementation claims.
+- 5C3C1 (CURRENT): Core-owned manuscript citation review workflow and read
+  model. The Docs renderer supplies live citation and manuscript-block
+  observations; Core/Research orchestrates citation sync, reference catalog,
+  resolution, claim extraction, projection, and verification.
 
-### Later established roadmap
+### Next/future
 
-- 5C3C1: Core-owned manuscript citation review workflow and read model.
-- 5C3C2: Docs citation review UI.
+- 5C3C2 (NEXT/FUTURE): Docs citation review UI.
 - 5D: whole-manuscript Research review.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.

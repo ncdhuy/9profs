@@ -4,9 +4,13 @@ import { createCoreTransport } from '../src/transport'
 
 describe('Core transport boundary', () => {
   it('maps manuscript citation review start and read-model endpoints', async () => {
-    const requests: Array<{ input: string; method?: string }> = []
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
     const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
-      requests.push({ input, method: init?.method })
+      requests.push({
+        input,
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      })
       return { ok: true, json: async () => ({ success: true, data: [] }) }
     })
 
@@ -14,24 +18,86 @@ describe('Core transport boundary', () => {
       manuscriptSourceId: 'source-1',
       documentId: 'doc-1',
       documentVersion: 3,
-      citationSyncRunId: 'sync-1',
-      referenceCatalogRunId: 'catalog-1',
-      referenceResolutionRunId: 'resolution-1',
-      claimExtractionRunId: 'claims-1',
+      citations: [
+        {
+          format: 'zotero',
+          renderedText: '(source)',
+          blockId: 'block-1',
+          start: 6,
+          end: 14,
+          targets: [
+            {
+              ordinal: 0,
+              referenceKey: 'source-key',
+              citedLocator: null,
+              zotero: { itemId: 'item-1', uris: [] },
+            },
+          ],
+        },
+      ],
+      blocks: [
+        {
+          blockId: 'block-1',
+          text: 'Claim (source)',
+          citations: [{ start: 6, end: 14, renderedText: '(source)' }],
+        },
+      ],
     })
     await transport.manuscriptCitationReview('review-1')
     await transport.manuscriptCitationReviewItems('review-1')
+
+    const startBody = JSON.parse(requests[0].body ?? '{}') as Record<string, unknown>
+    expect(startBody).toMatchObject({
+      manuscriptSourceId: 'source-1',
+      documentId: 'doc-1',
+      documentVersion: 3,
+    })
+    expect(startBody).not.toHaveProperty('citationSyncRunId')
+    expect(startBody).not.toHaveProperty('referenceCatalogRunId')
+    expect(startBody).not.toHaveProperty('referenceResolutionRunId')
+    expect(startBody).not.toHaveProperty('claimExtractionRunId')
 
     expect(requests).toEqual([
       {
         input: 'http://127.0.0.1:39761/api/research/cases/case-1/manuscript-citation-reviews',
         method: 'POST',
+        body: JSON.stringify({
+          manuscriptSourceId: 'source-1',
+          documentId: 'doc-1',
+          documentVersion: 3,
+          citations: [
+            {
+              format: 'zotero',
+              renderedText: '(source)',
+              blockId: 'block-1',
+              start: 6,
+              end: 14,
+              targets: [
+                {
+                  ordinal: 0,
+                  referenceKey: 'source-key',
+                  citedLocator: null,
+                  zotero: { itemId: 'item-1', uris: [] },
+                },
+              ],
+            },
+          ],
+          blocks: [
+            {
+              blockId: 'block-1',
+              text: 'Claim (source)',
+              citations: [{ start: 6, end: 14, renderedText: '(source)' }],
+            },
+          ],
+        }),
       },
       {
         input: 'http://127.0.0.1:39761/api/research/manuscript-citation-reviews/review-1',
+        body: undefined,
       },
       {
         input: 'http://127.0.0.1:39761/api/research/manuscript-citation-reviews/review-1/items',
+        body: undefined,
       },
     ])
   })

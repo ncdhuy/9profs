@@ -2363,6 +2363,7 @@ dependencies = [
  "async-trait",
  "nineprofs-api-types",
  "nineprofs-common",
+ "nineprofs-db",
  "nineprofs-realtime",
  "nineprofs-research",
  "nineprofs-research-dify",

@@ -5,9 +5,14 @@ use nineprofs_api_types::EventEnvelope;
 use nineprofs_common::now_ms;
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{
-    CitationBindingMethod, ClaimEvidenceRelation, EvidenceLocator,
-    ManuscriptClaimExtractionCoverageStatus, ManuscriptReferenceResolutionOutcome, ResearchError,
-    ResearchService, SourceKind,
+    CitationBindingMethod, ClaimEvidenceRelation, EvidenceLocator, ExtractManuscriptClaims,
+    ManuscriptCitationFormat, ManuscriptCitationSyncCitationInput,
+    ManuscriptCitationSyncTargetInput, ManuscriptClaimExtractionBlockInput,
+    ManuscriptClaimExtractionCitationInput, ManuscriptClaimExtractionCoverageStatus,
+    ManuscriptReferenceCatalogCitationInput, ManuscriptReferenceCatalogTargetInput,
+    ManuscriptReferenceCatalogWordSourceInput, ManuscriptReferenceCatalogZoteroInput,
+    ManuscriptReferenceResolutionOutcome, ResearchError, ResearchService, SourceKind,
+    SyncManuscriptCitations, SyncManuscriptReferenceCatalog,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -48,10 +53,69 @@ pub struct StartManuscriptCitationReview {
     pub manuscript_source_id: String,
     pub document_id: String,
     pub document_version: i64,
-    pub citation_sync_run_id: String,
-    pub reference_catalog_run_id: String,
-    pub reference_resolution_run_id: String,
-    pub claim_extraction_run_id: String,
+    pub citations: Vec<CitationReviewCitationInput>,
+    pub blocks: Vec<CitationReviewBlockInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewCitationInput {
+    pub format: ManuscriptCitationFormat,
+    pub rendered_text: String,
+    pub block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub targets: Vec<CitationReviewTargetInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewTargetInput {
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+    pub word_source: Option<ManuscriptReferenceCatalogWordSourceInput>,
+    pub zotero: Option<ManuscriptReferenceCatalogZoteroInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewBlockInput {
+    pub block_id: String,
+    pub text: String,
+    pub citations: Vec<CitationReviewBlockCitationInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewBlockCitationInput {
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug)]
+struct MappedCitation {
+    occurrence_id: String,
+    observation: CitationReviewCitationInput,
+    target_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+enum BindingAssessment {
+    Missing,
+    Valid {
+        binding: nineprofs_research::CitationTargetBinding,
+        verification_ready: bool,
+    },
+    Invalid,
+}
+
+#[derive(Default)]
+struct BindingProjection {
+    by_target: BTreeMap<String, nineprofs_research::CitationTargetBinding>,
+    verification_ready: BTreeSet<String>,
+    conflicts: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -367,21 +431,55 @@ impl CitationReviewService {
         &self,
         input: &StartManuscriptCitationReview,
     ) -> Result<nineprofs_research::ManuscriptCitationSyncRun, CitationReviewError> {
-        let run = self
+        let research_case_id =
+            nineprofs_research::ResearchCaseId::parse(input.research_case_id.clone())?;
+        let manuscript_source_id =
+            nineprofs_research::ResearchSourceId::parse(input.manuscript_source_id.clone())?;
+        match self
             .research
-            .get_manuscript_citation_sync(&input.citation_sync_run_id)
-            .await?;
-        if run.status != nineprofs_research::ManuscriptCitationSyncStatus::Completed
-            || run.research_case_id.to_string() != input.research_case_id
-            || run.manuscript_source_id.to_string() != input.manuscript_source_id
-            || run.document_id != input.document_id
-            || run.document_version != input.document_version
+            .latest_manuscript_citation_sync(&input.research_case_id, &input.manuscript_source_id)
+            .await
         {
-            return Err(CitationReviewError::Invalid(
-                "citation sync run is not the requested completed manuscript version".into(),
-            ));
+            Ok(existing) => {
+                if existing.document_id == input.document_id
+                    && existing.document_version == input.document_version
+                {
+                    self.map_live_citations(input, &existing).await?;
+                    return Ok(existing);
+                }
+            }
+            Err(ResearchError::NotFound { .. }) => {}
+            Err(error) => return Err(error.into()),
         }
-        Ok(run)
+        Ok(self
+            .research
+            .sync_manuscript_citations(SyncManuscriptCitations {
+                research_case_id,
+                manuscript_source_id,
+                document_id: input.document_id.clone(),
+                document_version: input.document_version,
+                citations: input
+                    .citations
+                    .iter()
+                    .map(|citation| ManuscriptCitationSyncCitationInput {
+                        format: citation.format.clone(),
+                        rendered_text: citation.rendered_text.clone(),
+                        block_id: citation.block_id.clone(),
+                        start: citation.start,
+                        end: citation.end,
+                        targets: citation
+                            .targets
+                            .iter()
+                            .map(|target| ManuscriptCitationSyncTargetInput {
+                                ordinal: target.ordinal,
+                                reference_key: target.reference_key.clone(),
+                                cited_locator: target.cited_locator.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .await?)
     }
 
     async fn stage_catalog(
@@ -389,42 +487,51 @@ impl CitationReviewService {
         input: &StartManuscriptCitationReview,
         sync: &nineprofs_research::ManuscriptCitationSyncRun,
     ) -> Result<nineprofs_research::ManuscriptReferenceCatalogRun, CitationReviewError> {
-        let run = self
+        let mapped = self.map_live_citations(input, sync).await?;
+        Ok(self
             .research
-            .get_manuscript_reference_catalog(&input.reference_catalog_run_id)
-            .await?;
-        if run.status != nineprofs_research::ManuscriptReferenceCatalogStatus::Completed
-            || run.research_case_id.to_string() != input.research_case_id
-            || run.manuscript_source_id.to_string() != input.manuscript_source_id
-            || run.citation_sync_run_id != sync.id
-            || run.document_id != input.document_id
-            || run.document_version != input.document_version
-        {
-            return Err(CitationReviewError::Invalid(
-                "reference catalog run is not the requested completed manuscript version".into(),
-            ));
-        }
-        Ok(run)
+            .sync_manuscript_reference_catalog(SyncManuscriptReferenceCatalog {
+                citation_sync_run_id: sync.id.clone(),
+                document_id: input.document_id.clone(),
+                document_version: input.document_version,
+                citations: mapped
+                    .iter()
+                    .map(|citation| ManuscriptReferenceCatalogCitationInput {
+                        citation_occurrence_id: citation.occurrence_id.clone(),
+                        block_id: citation.observation.block_id.clone(),
+                        start: citation.observation.start,
+                        end: citation.observation.end,
+                        format: citation.observation.format.clone(),
+                        targets: citation
+                            .observation
+                            .targets
+                            .iter()
+                            .zip(&citation.target_ids)
+                            .map(
+                                |(target, target_id)| ManuscriptReferenceCatalogTargetInput {
+                                    citation_target_id: target_id.clone(),
+                                    ordinal: target.ordinal,
+                                    reference_key: target.reference_key.clone(),
+                                    word_source: target.word_source.clone(),
+                                    zotero: target.zotero.clone(),
+                                },
+                            )
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .await?)
     }
 
     async fn stage_resolution(
         &self,
-        input: &StartManuscriptCitationReview,
+        _input: &StartManuscriptCitationReview,
         catalog: &nineprofs_research::ManuscriptReferenceCatalogRun,
     ) -> Result<nineprofs_research::ManuscriptReferenceResolutionRun, CitationReviewError> {
-        let run = self
+        Ok(self
             .research
-            .get_manuscript_reference_resolution(&input.reference_resolution_run_id)
-            .await?;
-        if run.status != nineprofs_research::ManuscriptReferenceResolutionStatus::Completed
-            || run.research_case_id.to_string() != input.research_case_id
-            || run.catalog_run_id != catalog.id
-        {
-            return Err(CitationReviewError::Invalid(
-                "reference resolution run is not the requested completed catalog".into(),
-            ));
-        }
-        Ok(run)
+            .resolve_manuscript_references(&catalog.id.to_string())
+            .await?)
     }
 
     async fn stage_extraction(
@@ -432,22 +539,342 @@ impl CitationReviewService {
         input: &StartManuscriptCitationReview,
         sync: &nineprofs_research::ManuscriptCitationSyncRun,
     ) -> Result<nineprofs_research::ManuscriptClaimExtractionRun, CitationReviewError> {
-        let run = self
+        let mapped = self.map_live_citations(input, sync).await?;
+        let mut occurrence_by_position = BTreeMap::new();
+        for citation in mapped {
+            let key = (
+                citation.observation.block_id.clone(),
+                citation.observation.start,
+                citation.observation.end,
+            );
+            if occurrence_by_position
+                .insert(
+                    key,
+                    (citation.occurrence_id, citation.observation.rendered_text),
+                )
+                .is_some()
+            {
+                return Err(CitationReviewError::Invalid(
+                    "citation observations contain a duplicate document range".into(),
+                ));
+            }
+        }
+        let blocks = input
+            .blocks
+            .iter()
+            .map(|block| {
+                let citations = block
+                    .citations
+                    .iter()
+                    .map(|citation| {
+                        let key = (block.block_id.clone(), citation.start, citation.end);
+                        let (citation_occurrence_id, rendered_text) = occurrence_by_position
+                            .get(&key)
+                            .ok_or_else(|| {
+                                CitationReviewError::Invalid(
+                                    "claim extraction citation is absent from the pinned citation sync".into(),
+                                )
+                            })?;
+                        if rendered_text != &citation.rendered_text {
+                            return Err(CitationReviewError::Invalid(
+                                "claim extraction citation text does not match the citation observation".into(),
+                            ));
+                        }
+                        Ok(ManuscriptClaimExtractionCitationInput {
+                            citation_occurrence_id: citation_occurrence_id.clone(),
+                            start: citation.start,
+                            end: citation.end,
+                            rendered_text: citation.rendered_text.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, CitationReviewError>>()?;
+                Ok(ManuscriptClaimExtractionBlockInput {
+                    block_id: block.block_id.clone(),
+                    text: block.text.clone(),
+                    citations,
+                })
+            })
+            .collect::<Result<Vec<_>, CitationReviewError>>()?;
+        Ok(self
             .research
-            .get_manuscript_claim_extraction(&input.claim_extraction_run_id)
+            .extract_manuscript_claims(ExtractManuscriptClaims {
+                citation_sync_run_id: sync.id.clone(),
+                document_id: input.document_id.clone(),
+                document_version: input.document_version,
+                blocks,
+            })
+            .await?)
+    }
+
+    async fn map_live_citations(
+        &self,
+        input: &StartManuscriptCitationReview,
+        sync: &nineprofs_research::ManuscriptCitationSyncRun,
+    ) -> Result<Vec<MappedCitation>, CitationReviewError> {
+        let mut persisted = self
+            .research
+            .list_manuscript_citation_sync_occurrences(&sync.id.to_string())
             .await?;
-        if run.status != nineprofs_research::ManuscriptClaimExtractionStatus::Completed
-            || run.research_case_id.to_string() != input.research_case_id
-            || run.manuscript_source_id.to_string() != input.manuscript_source_id
-            || run.citation_sync_run_id != sync.id
-            || run.document_id != input.document_id
-            || run.document_version != input.document_version
+        persisted.sort_by_key(|occurrence| occurrence.ordinal);
+        if persisted.len() != input.citations.len()
+            || persisted
+                .iter()
+                .enumerate()
+                .any(|(ordinal, occurrence)| occurrence.ordinal != ordinal as u32)
         {
             return Err(CitationReviewError::Invalid(
-                "claim extraction run is not the requested completed manuscript version".into(),
+                "citation sync occurrence ordering does not match live document observations"
+                    .into(),
             ));
         }
-        Ok(run)
+        let mut mapped = Vec::with_capacity(input.citations.len());
+        for (observation, occurrence) in input.citations.iter().zip(persisted) {
+            if occurrence.document_block_id != observation.block_id
+                || occurrence.start != observation.start
+                || occurrence.end != observation.end
+                || occurrence.format != observation.format
+            {
+                return Err(CitationReviewError::Invalid(
+                    "citation sync occurrence does not match live document observations".into(),
+                ));
+            }
+            let occurrence_id = occurrence.citation_occurrence_id.to_string();
+            let persisted_citation = self
+                .research
+                .get_citation_occurrence(&occurrence_id)
+                .await?;
+            if persisted_citation.rendered_text != observation.rendered_text {
+                return Err(CitationReviewError::Invalid(
+                    "citation occurrence text does not match live document observations".into(),
+                ));
+            }
+            let mut persisted_targets = self.research.list_citation_targets(&occurrence_id).await?;
+            persisted_targets.sort_by_key(|target| target.ordinal);
+            if persisted_targets.len() != observation.targets.len()
+                || persisted_targets
+                    .iter()
+                    .enumerate()
+                    .any(|(ordinal, target)| target.ordinal != ordinal as u32)
+            {
+                return Err(CitationReviewError::Invalid(
+                    "citation sync target ordering does not match live document observations"
+                        .into(),
+                ));
+            }
+            let mut target_ids = Vec::with_capacity(observation.targets.len());
+            for (target, persisted_target) in observation.targets.iter().zip(persisted_targets) {
+                if target.ordinal != persisted_target.ordinal
+                    || target.reference_key != persisted_target.reference_key
+                    || target.cited_locator != persisted_target.cited_locator
+                {
+                    return Err(CitationReviewError::Invalid(
+                        "citation sync target does not match live document observations".into(),
+                    ));
+                }
+                target_ids.push(persisted_target.id.to_string());
+            }
+            mapped.push(MappedCitation {
+                occurrence_id,
+                observation: observation.clone(),
+                target_ids,
+            });
+        }
+        Ok(mapped)
+    }
+
+    async fn project_current_bindings(
+        &self,
+        input: &StartManuscriptCitationReview,
+        mapping_by_target: &BTreeMap<String, String>,
+        resolution_by_entry: &BTreeMap<
+            String,
+            nineprofs_research::ManuscriptReferenceResolutionEntry,
+        >,
+    ) -> Result<BindingProjection, CitationReviewError> {
+        let mut projection = BindingProjection::default();
+        for (entry_id, resolution_entry) in resolution_by_entry {
+            let target_ids = mapping_by_target
+                .iter()
+                .filter(|(_, mapped_entry_id)| mapped_entry_id == &entry_id)
+                .map(|(target_id, _)| target_id.clone())
+                .collect::<Vec<_>>();
+            if target_ids.is_empty() {
+                continue;
+            }
+            let mut assessments = Vec::with_capacity(target_ids.len());
+            for target_id in &target_ids {
+                assessments.push((
+                    target_id.clone(),
+                    self.authoritative_binding(input, target_id).await?,
+                ));
+            }
+
+            match resolution_entry.outcome {
+                ManuscriptReferenceResolutionOutcome::ResolvedExact
+                | ManuscriptReferenceResolutionOutcome::AlreadyBound => {
+                    let valid = assessments.iter().all(|(_, assessment)| {
+                        matches!(assessment, BindingAssessment::Valid { .. })
+                    });
+                    let matches_resolution = assessments.iter().all(|(_, assessment)| {
+                        matches!(
+                            assessment,
+                            BindingAssessment::Valid { binding, .. }
+                                if binding_matches_resolution(binding, resolution_entry)
+                        )
+                    });
+                    if !valid || !matches_resolution {
+                        projection.conflicts.extend(target_ids);
+                    } else {
+                        for (target_id, assessment) in assessments {
+                            if let BindingAssessment::Valid {
+                                binding,
+                                verification_ready,
+                            } = assessment
+                            {
+                                if verification_ready {
+                                    projection.verification_ready.insert(target_id.clone());
+                                }
+                                projection.by_target.insert(target_id, binding);
+                            }
+                        }
+                    }
+                }
+                ManuscriptReferenceResolutionOutcome::CandidateRequiresConfirmation
+                | ManuscriptReferenceResolutionOutcome::AmbiguousSource
+                | ManuscriptReferenceResolutionOutcome::AmbiguousSnapshotOrExtraction
+                | ManuscriptReferenceResolutionOutcome::SourceMatchedButNotVerificationReady => {
+                    if assessments
+                        .iter()
+                        .all(|(_, assessment)| matches!(assessment, BindingAssessment::Missing))
+                    {
+                        continue;
+                    }
+                    let candidates = self
+                        .research
+                        .list_manuscript_reference_resolution_candidates(
+                            &resolution_entry.id.to_string(),
+                        )
+                        .await?;
+                    let matching_candidates = candidates
+                        .iter()
+                        .filter(|candidate| {
+                            assessments.iter().all(|(_, assessment)| {
+                                matches!(
+                                    assessment,
+                                    BindingAssessment::Valid { binding, .. }
+                                        if binding.method == CitationBindingMethod::Human
+                                            && binding_matches_candidate(binding, candidate)
+                                )
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    let consistent = assessments
+                        .iter()
+                        .map(|(_, assessment)| match assessment {
+                            BindingAssessment::Valid { binding, .. } => Some(binding_key(binding)),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if matching_candidates.len() != 1
+                        || consistent.iter().any(Option::is_none)
+                        || consistent.windows(2).any(|pair| pair[0] != pair[1])
+                    {
+                        projection.conflicts.extend(target_ids);
+                    } else {
+                        for (target_id, assessment) in assessments {
+                            if let BindingAssessment::Valid {
+                                binding,
+                                verification_ready,
+                            } = assessment
+                            {
+                                if verification_ready {
+                                    projection.verification_ready.insert(target_id.clone());
+                                }
+                                projection.by_target.insert(target_id, binding);
+                            }
+                        }
+                    }
+                }
+                ManuscriptReferenceResolutionOutcome::Unresolved
+                | ManuscriptReferenceResolutionOutcome::ConflictWithExistingBinding
+                | ManuscriptReferenceResolutionOutcome::Failed => {
+                    if !assessments
+                        .iter()
+                        .all(|(_, assessment)| matches!(assessment, BindingAssessment::Missing))
+                    {
+                        projection.conflicts.extend(target_ids);
+                    }
+                }
+            }
+        }
+        Ok(projection)
+    }
+
+    async fn authoritative_binding(
+        &self,
+        input: &StartManuscriptCitationReview,
+        target_id: &str,
+    ) -> Result<BindingAssessment, CitationReviewError> {
+        let mut bindings = self
+            .research
+            .list_citation_target_bindings(target_id)
+            .await?;
+        let Some(binding) = bindings.pop() else {
+            return Ok(BindingAssessment::Missing);
+        };
+        if binding.research_case_id.to_string() != input.research_case_id
+            || binding.citation_target_id.to_string() != target_id
+        {
+            return Ok(BindingAssessment::Invalid);
+        }
+        let source = match self
+            .research
+            .get_source(&binding.source_id.to_string())
+            .await
+        {
+            Ok(source) => source,
+            Err(ResearchError::NotFound { .. }) => return Ok(BindingAssessment::Invalid),
+            Err(error) => return Err(error.into()),
+        };
+        if source.research_case_id.to_string() != input.research_case_id
+            || source.kind != SourceKind::ReferencePdf
+        {
+            return Ok(BindingAssessment::Invalid);
+        }
+        if let Some(snapshot_id) = &binding.source_snapshot_id {
+            let snapshot = match self.research.get_snapshot(&snapshot_id.to_string()).await {
+                Ok(snapshot) => snapshot,
+                Err(ResearchError::NotFound { .. }) => return Ok(BindingAssessment::Invalid),
+                Err(error) => return Err(error.into()),
+            };
+            if snapshot.source_id != binding.source_id {
+                return Ok(BindingAssessment::Invalid);
+            }
+        }
+        let verification_ready = if let Some(extraction_id) = &binding.extraction_id {
+            let Some(snapshot_id) = &binding.source_snapshot_id else {
+                return Ok(BindingAssessment::Invalid);
+            };
+            let extraction = match self
+                .research
+                .get_pdf_extraction_by_id(&extraction_id.to_string())
+                .await
+            {
+                Ok(extraction) => extraction,
+                Err(ResearchError::NotFound { .. }) => return Ok(BindingAssessment::Invalid),
+                Err(error) => return Err(error.into()),
+            };
+            if extraction.source_snapshot_id != *snapshot_id {
+                return Ok(BindingAssessment::Invalid);
+            }
+            extraction.status == nineprofs_research::PdfExtractionStatus::Ready
+        } else {
+            false
+        };
+        Ok(BindingAssessment::Valid {
+            binding,
+            verification_ready,
+        })
     }
 
     async fn set_stage(
@@ -516,7 +943,14 @@ impl CitationReviewService {
                 .list_manuscript_reference_target_mappings(&entry_id)
                 .await?
             {
-                mapping_by_target.insert(mapping.citation_target_id.to_string(), entry_id.clone());
+                if mapping_by_target
+                    .insert(mapping.citation_target_id.to_string(), entry_id.clone())
+                    .is_some()
+                {
+                    return Err(CitationReviewError::Invalid(
+                        "citation target is mapped to multiple reference entries".into(),
+                    ));
+                }
             }
         }
         let resolution_entries = self
@@ -527,6 +961,9 @@ impl CitationReviewService {
         for entry in resolution_entries {
             resolution_by_entry.insert(entry.reference_entry_id.to_string(), entry);
         }
+        let binding_projection = self
+            .project_current_bindings(input, &mapping_by_target, &resolution_by_entry)
+            .await?;
 
         let extraction_items = self
             .research
@@ -562,11 +999,21 @@ impl CitationReviewService {
                 ));
             }
             let claim = self.research.get_claim(&link.claim_id.to_string()).await?;
+            if claim.research_case_id.to_string() != input.research_case_id {
+                return Err(CitationReviewError::Invalid(
+                    "claim citation link points outside the review case".into(),
+                ));
+            }
             let occurrence_id = link.citation_occurrence_id.to_string();
             let occurrence = self
                 .research
                 .get_citation_occurrence(&occurrence_id)
                 .await?;
+            if occurrence.research_case_id.to_string() != input.research_case_id {
+                return Err(CitationReviewError::Invalid(
+                    "citation occurrence is outside the review case".into(),
+                ));
+            }
             let sync_occurrence = occurrence_by_id.get(&occurrence_id).ok_or_else(|| {
                 CitationReviewError::Invalid(
                     "claim citation is absent from the pinned citation sync".into(),
@@ -605,27 +1052,18 @@ impl CitationReviewService {
                         "reference entry is absent from the pinned resolution".into(),
                     )
                 })?;
-                let candidates = self.review_candidates(resolution_entry).await?;
-                let binding = match resolution_entry.outcome {
-                    ManuscriptReferenceResolutionOutcome::ResolvedExact
-                    | ManuscriptReferenceResolutionOutcome::AlreadyBound => self
-                        .research
-                        .latest_citation_target_binding(&target_id)
-                        .await
-                        .ok(),
-                    _ => None,
-                };
-                let (status, binding) = review_item_status(&resolution_entry.outcome, binding);
-                let binding = binding.filter(|binding| {
-                    binding.research_case_id.to_string() == input.research_case_id
-                        && binding.citation_target_id.to_string() == target_id
-                });
-                let (status, binding) = if status == CitationReviewItemStatus::ReadyForVerification
-                    && binding.is_none()
-                {
-                    (CitationReviewItemStatus::BindingConflict, None)
+                let candidates = self
+                    .review_candidates(&input.research_case_id, resolution_entry)
+                    .await?;
+                let binding = binding_projection.by_target.get(&target_id).cloned();
+                let status = if binding_projection.conflicts.contains(&target_id) {
+                    CitationReviewItemStatus::BindingConflict
                 } else {
-                    (status, binding)
+                    review_item_status(
+                        &resolution_entry.outcome,
+                        binding.as_ref(),
+                        binding_projection.verification_ready.contains(&target_id),
+                    )
                 };
                 let item = CitationReviewItem {
                     item_id: format!("{review_id}_item_{}", nineprofs_common::new_id()),
@@ -712,6 +1150,7 @@ impl CitationReviewService {
 
     async fn review_candidates(
         &self,
+        research_case_id: &str,
         entry: &nineprofs_research::ManuscriptReferenceResolutionEntry,
     ) -> Result<Vec<CitationReviewCandidate>, CitationReviewError> {
         let mut candidates = Vec::new();
@@ -720,18 +1159,23 @@ impl CitationReviewService {
             .list_manuscript_reference_resolution_candidates(&entry.id.to_string())
             .await?
         {
-            let source_label = self
+            let source = self
                 .research
                 .get_source(&candidate.source_id.to_string())
-                .await
-                .ok()
-                .map(|source| source.label);
+                .await?;
+            if source.research_case_id.to_string() != research_case_id
+                || source.kind != SourceKind::ReferencePdf
+            {
+                return Err(CitationReviewError::Invalid(
+                    "resolution candidate source is outside the review case".into(),
+                ));
+            }
             candidates.push(CitationReviewCandidate {
                 candidate_id: candidate.id.to_string(),
                 resolution_entry_id: entry.id.to_string(),
                 ordinal: candidate.ordinal,
                 source_id: candidate.source_id.to_string(),
-                source_label,
+                source_label: Some(source.label),
                 source_snapshot_id: candidate.source_snapshot_id.map(|id| id.to_string()),
                 extraction_id: candidate.extraction_id.map(|id| id.to_string()),
                 match_kind: Some(candidate.match_kind),
@@ -815,7 +1259,10 @@ impl CitationReviewService {
                 .as_deref()
                 .and_then(|id| resolution_entries.get(id))
             {
-                Some(entry) => self.review_candidates(entry).await?,
+                Some(entry) => {
+                    self.review_candidates(&review.research_case_id, entry)
+                        .await?
+                }
                 None => Vec::new(),
             };
             items.push(CitationReviewItem {
@@ -906,47 +1353,90 @@ impl CitationReviewService {
     }
 }
 
+type BindingKey = (String, Option<String>, Option<String>);
+
+fn binding_key(binding: &nineprofs_research::CitationTargetBinding) -> BindingKey {
+    (
+        binding.source_id.to_string(),
+        binding.source_snapshot_id.as_ref().map(ToString::to_string),
+        binding.extraction_id.as_ref().map(ToString::to_string),
+    )
+}
+
+fn binding_matches_resolution(
+    binding: &nineprofs_research::CitationTargetBinding,
+    resolution: &nineprofs_research::ManuscriptReferenceResolutionEntry,
+) -> bool {
+    resolution
+        .chosen_source_id
+        .as_ref()
+        .is_some_and(|source_id| binding.source_id == *source_id)
+        && binding.source_snapshot_id.as_ref().map(ToString::to_string)
+            == resolution
+                .chosen_source_snapshot_id
+                .as_ref()
+                .map(ToString::to_string)
+        && binding.extraction_id.as_ref().map(ToString::to_string)
+            == resolution
+                .chosen_extraction_id
+                .as_ref()
+                .map(ToString::to_string)
+}
+
+fn binding_matches_candidate(
+    binding: &nineprofs_research::CitationTargetBinding,
+    candidate: &nineprofs_research::ManuscriptReferenceResolutionCandidate,
+) -> bool {
+    binding.source_id == candidate.source_id
+        && binding.source_snapshot_id == candidate.source_snapshot_id
+        && binding.extraction_id == candidate.extraction_id
+}
+
 fn review_item_status(
     outcome: &ManuscriptReferenceResolutionOutcome,
-    binding: Option<nineprofs_research::CitationTargetBinding>,
-) -> (
-    CitationReviewItemStatus,
-    Option<nineprofs_research::CitationTargetBinding>,
-) {
+    binding: Option<&nineprofs_research::CitationTargetBinding>,
+    verification_ready: bool,
+) -> CitationReviewItemStatus {
     match outcome {
         ManuscriptReferenceResolutionOutcome::ResolvedExact
-        | ManuscriptReferenceResolutionOutcome::AlreadyBound => match binding.as_ref() {
-            Some(binding) if binding.extraction_id.is_some() => (
-                CitationReviewItemStatus::ReadyForVerification,
-                Some(binding.clone()),
-            ),
-            Some(binding) => (
-                CitationReviewItemStatus::SourceMatchedNotVerificationReady,
-                Some(binding.clone()),
-            ),
-            None => (CitationReviewItemStatus::BindingConflict, None),
-        },
+        | ManuscriptReferenceResolutionOutcome::AlreadyBound => {
+            if binding.is_none() {
+                CitationReviewItemStatus::BindingConflict
+            } else if verification_ready {
+                CitationReviewItemStatus::ReadyForVerification
+            } else {
+                CitationReviewItemStatus::SourceMatchedNotVerificationReady
+            }
+        }
         ManuscriptReferenceResolutionOutcome::AmbiguousSource
         | ManuscriptReferenceResolutionOutcome::AmbiguousSnapshotOrExtraction => {
-            (CitationReviewItemStatus::AmbiguousReference, None)
+            if binding.is_some() && verification_ready {
+                CitationReviewItemStatus::ReadyForVerification
+            } else if binding.is_some() {
+                CitationReviewItemStatus::SourceMatchedNotVerificationReady
+            } else {
+                CitationReviewItemStatus::AmbiguousReference
+            }
         }
-        ManuscriptReferenceResolutionOutcome::CandidateRequiresConfirmation => (
-            CitationReviewItemStatus::ReferenceRequiresConfirmation,
-            None,
-        ),
-        ManuscriptReferenceResolutionOutcome::SourceMatchedButNotVerificationReady => (
-            CitationReviewItemStatus::SourceMatchedNotVerificationReady,
-            binding,
-        ),
+        ManuscriptReferenceResolutionOutcome::CandidateRequiresConfirmation => {
+            if binding.is_some() && verification_ready {
+                CitationReviewItemStatus::ReadyForVerification
+            } else if binding.is_some() {
+                CitationReviewItemStatus::SourceMatchedNotVerificationReady
+            } else {
+                CitationReviewItemStatus::ReferenceRequiresConfirmation
+            }
+        }
+        ManuscriptReferenceResolutionOutcome::SourceMatchedButNotVerificationReady => {
+            CitationReviewItemStatus::SourceMatchedNotVerificationReady
+        }
         ManuscriptReferenceResolutionOutcome::ConflictWithExistingBinding => {
-            (CitationReviewItemStatus::BindingConflict, None)
+            CitationReviewItemStatus::BindingConflict
         }
         ManuscriptReferenceResolutionOutcome::Unresolved => {
-            (CitationReviewItemStatus::UnresolvedReference, None)
+            CitationReviewItemStatus::UnresolvedReference
         }
-        ManuscriptReferenceResolutionOutcome::Failed => {
-            (CitationReviewItemStatus::ResolutionFailed, None)
-        }
+        ManuscriptReferenceResolutionOutcome::Failed => CitationReviewItemStatus::ResolutionFailed,
     }
 }
 
@@ -986,31 +1476,31 @@ mod tests {
     #[test]
     fn resolution_outcomes_preserve_review_taxonomy() {
         assert_eq!(
-            review_item_status(&O::Unresolved, None).0,
+            review_item_status(&O::Unresolved, None, false),
             CitationReviewItemStatus::UnresolvedReference
         );
         assert_eq!(
-            review_item_status(&O::AmbiguousSource, None).0,
+            review_item_status(&O::AmbiguousSource, None, false),
             CitationReviewItemStatus::AmbiguousReference
         );
         assert_eq!(
-            review_item_status(&O::CandidateRequiresConfirmation, None).0,
+            review_item_status(&O::CandidateRequiresConfirmation, None, false),
             CitationReviewItemStatus::ReferenceRequiresConfirmation
         );
         assert_eq!(
-            review_item_status(&O::SourceMatchedButNotVerificationReady, None).0,
+            review_item_status(&O::SourceMatchedButNotVerificationReady, None, false),
             CitationReviewItemStatus::SourceMatchedNotVerificationReady
         );
         assert_eq!(
-            review_item_status(&O::AmbiguousSnapshotOrExtraction, None).0,
+            review_item_status(&O::AmbiguousSnapshotOrExtraction, None, false),
             CitationReviewItemStatus::AmbiguousReference
         );
         assert_eq!(
-            review_item_status(&O::ConflictWithExistingBinding, None).0,
+            review_item_status(&O::ConflictWithExistingBinding, None, false),
             CitationReviewItemStatus::BindingConflict
         );
         assert_eq!(
-            review_item_status(&O::Failed, None).0,
+            review_item_status(&O::Failed, None, false),
             CitationReviewItemStatus::ResolutionFailed
         );
     }

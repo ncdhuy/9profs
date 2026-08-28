@@ -10,12 +10,18 @@ use axum::routing::{get, post};
 use nineprofs_api_types::{
     ApiResponse, CitationReviewCandidateDto, CitationReviewEvidenceDto, CitationReviewItemDto,
     CitationReviewItemStatusDto, CitationReviewRunDto, CitationReviewRunStatusDto,
-    CitationReviewVerificationDto, StartManuscriptCitationReviewRequest,
+    CitationReviewTargetRequest, CitationReviewVerificationDto,
+    StartManuscriptCitationReviewRequest,
+};
+use nineprofs_research::{
+    ManuscriptCitationFormat, ManuscriptReferenceCatalogWordSourceInput,
+    ManuscriptReferenceCatalogZoteroInput,
 };
 use nineprofs_research_verification::{
-    CitationReviewCandidate, CitationReviewEvidence, CitationReviewItem, CitationReviewItemStatus,
-    CitationReviewRun, CitationReviewRunStatus, CitationReviewVerification,
-    StartManuscriptCitationReview,
+    CitationReviewBlockCitationInput, CitationReviewBlockInput, CitationReviewCandidate,
+    CitationReviewCitationInput, CitationReviewEvidence, CitationReviewItem,
+    CitationReviewItemStatus, CitationReviewRun, CitationReviewRunStatus,
+    CitationReviewTargetInput, CitationReviewVerification, StartManuscriptCitationReview,
 };
 
 async fn start_review(
@@ -33,10 +39,39 @@ async fn start_review(
             manuscript_source_id: request.manuscript_source_id,
             document_id: request.document_id,
             document_version: request.document_version,
-            citation_sync_run_id: request.citation_sync_run_id,
-            reference_catalog_run_id: request.reference_catalog_run_id,
-            reference_resolution_run_id: request.reference_resolution_run_id,
-            claim_extraction_run_id: request.claim_extraction_run_id,
+            citations: request
+                .citations
+                .into_iter()
+                .map(|citation| CitationReviewCitationInput {
+                    format: manuscript_citation_format(citation.format),
+                    rendered_text: citation.rendered_text,
+                    block_id: citation.block_id,
+                    start: citation.start,
+                    end: citation.end,
+                    targets: citation
+                        .targets
+                        .into_iter()
+                        .map(citation_review_target_input)
+                        .collect(),
+                })
+                .collect(),
+            blocks: request
+                .blocks
+                .into_iter()
+                .map(|block| CitationReviewBlockInput {
+                    block_id: block.block_id,
+                    text: block.text,
+                    citations: block
+                        .citations
+                        .into_iter()
+                        .map(|citation| CitationReviewBlockCitationInput {
+                            start: citation.start,
+                            end: citation.end,
+                            rendered_text: citation.rendered_text,
+                        })
+                        .collect(),
+                })
+                .collect(),
         })
         .await?;
     Ok(axum::Json(ApiResponse::ok(citation_review_run_dto(run))))
@@ -66,6 +101,41 @@ async fn get_review_items(
     Ok(axum::Json(ApiResponse::ok(
         items.into_iter().map(citation_review_item_dto).collect(),
     )))
+}
+
+fn manuscript_citation_format(
+    value: nineprofs_api_types::ManuscriptCitationFormatDto,
+) -> ManuscriptCitationFormat {
+    match value {
+        nineprofs_api_types::ManuscriptCitationFormatDto::WordNative => {
+            ManuscriptCitationFormat::WordNative
+        }
+        nineprofs_api_types::ManuscriptCitationFormatDto::Zotero => {
+            ManuscriptCitationFormat::Zotero
+        }
+    }
+}
+
+fn citation_review_target_input(value: CitationReviewTargetRequest) -> CitationReviewTargetInput {
+    CitationReviewTargetInput {
+        ordinal: value.ordinal,
+        reference_key: value.reference_key,
+        cited_locator: value.cited_locator,
+        word_source: value
+            .word_source
+            .map(|source| ManuscriptReferenceCatalogWordSourceInput {
+                tag: source.tag,
+                title: source.title,
+                author: source.author,
+                year: source.year,
+            }),
+        zotero: value
+            .zotero
+            .map(|source| ManuscriptReferenceCatalogZoteroInput {
+                item_id: source.item_id,
+                uris: source.uris,
+            }),
+    }
 }
 
 pub(super) fn router() -> Router<AppState> {

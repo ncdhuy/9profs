@@ -1007,10 +1007,37 @@ export interface StartManuscriptCitationReviewInput {
   readonly manuscriptSourceId: ResearchSourceId
   readonly documentId: string
   readonly documentVersion: number
-  readonly citationSyncRunId: string
-  readonly referenceCatalogRunId: string
-  readonly referenceResolutionRunId: string
-  readonly claimExtractionRunId: string
+  readonly citations: readonly CitationReviewCitationInput[]
+  readonly blocks: readonly CitationReviewBlockInput[]
+}
+
+export interface CitationReviewTargetInput {
+  readonly ordinal: number
+  readonly referenceKey: string
+  readonly citedLocator?: string | null
+  readonly wordSource?: ManuscriptReferenceWordSourceInput | null
+  readonly zotero?: ManuscriptReferenceZoteroInput | null
+}
+
+export interface CitationReviewCitationInput {
+  readonly format: ManuscriptCitationFormat
+  readonly renderedText: string
+  readonly blockId: string
+  readonly start: number
+  readonly end: number
+  readonly targets: readonly CitationReviewTargetInput[]
+}
+
+export interface CitationReviewBlockCitationInput {
+  readonly start: number
+  readonly end: number
+  readonly renderedText: string
+}
+
+export interface CitationReviewBlockInput {
+  readonly blockId: string
+  readonly text: string
+  readonly citations: readonly CitationReviewBlockCitationInput[]
 }
 
 export interface CitationReviewCandidate {

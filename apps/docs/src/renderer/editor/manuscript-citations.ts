@@ -5,6 +5,7 @@ import type {
   ManuscriptCitationSyncOccurrence,
   ManuscriptCitationSyncRun,
   ManuscriptCitationSyncTarget,
+  StartManuscriptCitationReviewInput,
   SyncManuscriptReferenceCatalogInput,
   SyncManuscriptCitationsInput,
 } from '@genoffice/9profs-core'
@@ -62,6 +63,75 @@ export function buildManuscriptCitationSyncInput({
         },
       ]
     }),
+  }
+}
+
+export interface BuildManuscriptCitationReviewInputOptions {
+  readonly editor: Pick<Editor, 'state'>
+  readonly activeDocument: Pick<ActiveDocument, 'documentId' | 'version'>
+  readonly manuscriptSourceId: string
+}
+
+export function buildManuscriptCitationReviewInput({
+  editor,
+  activeDocument,
+  manuscriptSourceId,
+}: BuildManuscriptCitationReviewInputOptions): StartManuscriptCitationReviewInput {
+  const citations = extractDocxCitationsFromPmDoc(pmDocFromEditor(editor)).flatMap((citation) => {
+    const format = manuscriptCitationFormat(citation.format)
+    if (format === undefined) return []
+    return [
+      {
+        format,
+        renderedText: citation.renderedText,
+        blockId: citation.blockId,
+        start: citation.start,
+        end: citation.end,
+        targets: citation.targets.map((target) => ({
+          ordinal: target.ordinal,
+          referenceKey: target.referenceKey,
+          citedLocator: target.citedLocator ?? null,
+          ...(format === 'word_native' && target.source
+            ? {
+                wordSource: {
+                  tag: target.source.tag,
+                  title: target.source.title,
+                  author: target.source.author,
+                  year: target.source.year,
+                },
+              }
+            : {}),
+          ...(format === 'zotero'
+            ? {
+                zotero: {
+                  itemId: target.itemId ?? null,
+                  uris: target.uris ?? [],
+                },
+              }
+            : {}),
+        })),
+      },
+    ]
+  })
+  const supportedRanges = new Set(
+    citations.map((citation) => `${citation.blockId}:${citation.start}:${citation.end}`),
+  )
+  return {
+    manuscriptSourceId,
+    documentId: activeDocument.documentId,
+    documentVersion: activeDocument.version,
+    citations,
+    blocks: extractDocxClaimBlocksFromPmDoc(pmDocFromEditor(editor)).map((block) => ({
+      blockId: block.blockId,
+      text: block.text,
+      citations: block.citations
+        .filter((citation) => supportedRanges.has(`${citation.blockId}:${citation.start}:${citation.end}`))
+        .map((citation) => ({
+          start: citation.start,
+          end: citation.end,
+          renderedText: citation.renderedText,
+        })),
+    })),
   }
 }
 

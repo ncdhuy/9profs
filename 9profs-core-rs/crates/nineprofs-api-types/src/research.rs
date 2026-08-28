@@ -1049,15 +1049,50 @@ pub enum CitationReviewItemStatusDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CitationReviewTargetRequest {
+    pub ordinal: u32,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+    pub word_source: Option<ManuscriptReferenceCatalogWordSourceRequest>,
+    pub zotero: Option<ManuscriptReferenceCatalogZoteroRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CitationReviewCitationRequest {
+    pub format: ManuscriptCitationFormatDto,
+    pub rendered_text: String,
+    pub block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub targets: Vec<CitationReviewTargetRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CitationReviewBlockCitationRequest {
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CitationReviewBlockRequest {
+    pub block_id: String,
+    pub text: String,
+    pub citations: Vec<CitationReviewBlockCitationRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartManuscriptCitationReviewRequest {
     pub manuscript_source_id: String,
     pub document_id: String,
     pub document_version: i64,
-    pub citation_sync_run_id: String,
-    pub reference_catalog_run_id: String,
-    pub reference_resolution_run_id: String,
-    pub claim_extraction_run_id: String,
+    pub citations: Vec<CitationReviewCitationRequest>,
+    pub blocks: Vec<CitationReviewBlockRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

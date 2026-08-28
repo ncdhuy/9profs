@@ -22,4 +22,5 @@ sqlx.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+nineprofs-db = { path = "../nineprofs-db" }
 tokio.workspace = true
