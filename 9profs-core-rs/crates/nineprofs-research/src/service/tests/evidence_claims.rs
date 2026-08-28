@@ -16,6 +16,7 @@ async fn claim_without_link_has_no_assessment_and_relations_are_categorical() {
             research_case_id: case.id.clone(),
             kind: SourceKind::Web,
             label: "Web source".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();

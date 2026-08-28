@@ -53,7 +53,7 @@ impl SqliteResearchRepository {
         let rows = match research_case_id {
             Some(research_case_id) => {
                 sqlx::query(
-                    "SELECT id, research_case_id, kind, label, created_at_ms \
+                    "SELECT id, research_case_id, kind, label, identity_json, created_at_ms \
                      FROM research_sources WHERE research_case_id = ? ORDER BY id ASC",
                 )
                 .bind(research_case_id.as_str())
@@ -62,7 +62,7 @@ impl SqliteResearchRepository {
             }
             None => {
                 sqlx::query(
-                    "SELECT id, research_case_id, kind, label, created_at_ms \
+                    "SELECT id, research_case_id, kind, label, identity_json, created_at_ms \
                      FROM research_sources ORDER BY id ASC",
                 )
                 .fetch_all(&self.pool)
@@ -77,7 +77,7 @@ impl SqliteResearchRepository {
         id: &ResearchSourceId,
     ) -> Result<Option<ResearchSource>, ResearchError> {
         let row = sqlx::query(
-            "SELECT id, research_case_id, kind, label, created_at_ms \
+            "SELECT id, research_case_id, kind, label, identity_json, created_at_ms \
              FROM research_sources WHERE id = ?",
         )
         .bind(id.as_str())
@@ -88,13 +88,15 @@ impl SqliteResearchRepository {
 
     pub(super) async fn insert_source(&self, value: &ResearchSource) -> Result<(), ResearchError> {
         sqlx::query(
-            "INSERT INTO research_sources (id, research_case_id, kind, label, created_at_ms) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO research_sources \
+             (id, research_case_id, kind, label, identity_json, created_at_ms) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(value.id.as_str())
         .bind(value.research_case_id.as_str())
         .bind(enum_text(&value.kind))
         .bind(&value.label)
+        .bind(value.identity.as_ref().map(json_text).transpose()?)
         .bind(value.created_at_ms)
         .execute(&self.pool)
         .await?;
@@ -194,6 +196,11 @@ fn map_source(row: sqlx::sqlite::SqliteRow) -> Result<ResearchSource, ResearchEr
             "source kind",
         )?,
         label: row.get("label"),
+        identity: row
+            .try_get::<Option<String>, _>("identity_json")
+            .map_err(ResearchError::Database)?
+            .map(|value| json_column(value, "source identity"))
+            .transpose()?,
         created_at_ms: row.get("created_at_ms"),
     })
 }

@@ -14,6 +14,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{Row, Sqlite, SqlitePool};
 use thiserror::Error;
 
+// Keep the migration directory attached to this crate so additive migrations are rebuilt.
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, Error)]

@@ -3,6 +3,45 @@ import { extractResearchPdfPages } from '../src/research-pdf'
 import { createCoreTransport } from '../src/transport'
 
 describe('Core transport boundary', () => {
+  it('maps manuscript reference resolution and confirmation endpoints', async () => {
+    const requests: Array<{ input: string; method?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
+      requests.push({ input, method: init?.method })
+      return { ok: true, json: async () => ({ success: true, data: {} }) }
+    })
+
+    await transport.resolveManuscriptReferences('catalog-1')
+    await transport.manuscriptReferenceResolutionRun('run-1')
+    await transport.manuscriptReferenceResolutionEntries('run-1')
+    await transport.manuscriptReferenceResolutionCandidates('entry-1')
+    await transport.confirmManuscriptReferenceCandidate('run-1', 'entry-1', 'candidate-1')
+
+    expect(requests).toEqual([
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-reference-catalog-runs/catalog-1/resolution',
+        method: 'POST',
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-reference-resolution-runs/run-1',
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-reference-resolution-runs/run-1/entries',
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-reference-resolution-entries/entry-1/candidates',
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-reference-resolution-runs/run-1/entries/entry-1/candidates/candidate-1/confirm',
+        method: 'POST',
+      },
+    ])
+  })
+
   it('maps stable HTTP and WebSocket endpoints without Rust dependencies', async () => {
     const requests: string[] = []
     const transport = createCoreTransport('http://127.0.0.1:39761/', async (input) => {

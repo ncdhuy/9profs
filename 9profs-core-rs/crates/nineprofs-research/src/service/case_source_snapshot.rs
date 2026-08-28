@@ -4,8 +4,8 @@ use crate::{
     CaptureSourceSnapshot, ContentHash, CreateResearchCase, CreateResearchSource,
     MAX_CASE_TITLE_BYTES, MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES, ResearchCase,
     ResearchCaseId, ResearchError, ResearchRepository, ResearchSource, ResearchSourceId,
-    ResearchSourceSnapshot, ResearchSourceSnapshotId, SafeMetadata, SourceOrigin, VerifiedArtifact,
-    bounded_text, validate_metadata,
+    ResearchSourceIdentity, ResearchSourceSnapshot, ResearchSourceSnapshotId, SafeMetadata,
+    SourceOrigin, VerifiedArtifact, bounded_text, validate_metadata,
 };
 use nineprofs_common::now_ms;
 use serde_json::json;
@@ -68,12 +68,22 @@ impl ResearchService {
             .await?
             .ok_or_else(|| not_found("case", input.research_case_id.as_str()))?;
         bounded_text("source label", &input.label, MAX_SOURCE_LABEL_BYTES)?;
+        if let Some(identity) = &input.identity {
+            identity.validate()?;
+        }
+        let timestamp = now_ms();
         let value = ResearchSource {
             id: ResearchSourceId::new(),
             research_case_id: case.id,
             kind: input.kind,
             label: input.label,
-            created_at_ms: now_ms(),
+            identity: input.identity.map(|identity| ResearchSourceIdentity {
+                provider: identity.provider,
+                external_reference: identity.external_reference,
+                method: identity.method,
+                asserted_at_ms: timestamp,
+            }),
+            created_at_ms: timestamp,
         };
         self.repository.insert_source(&value).await?;
         self.publish(

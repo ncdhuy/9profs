@@ -199,6 +199,50 @@ impl ResearchService {
         &self,
         input: CreateCitationTargetBinding,
     ) -> Result<CitationTargetBinding, ResearchError> {
+        let value = self.prepare_citation_target_binding(input).await?;
+        if let Some(existing) = self
+            .repository
+            .list_citation_target_bindings(&value.citation_target_id)
+            .await?
+            .into_iter()
+            .find(|binding| {
+                binding.research_case_id == value.research_case_id
+                    && binding.source_id == value.source_id
+                    && binding.source_snapshot_id == value.source_snapshot_id
+                    && binding.extraction_id == value.extraction_id
+                    && binding.method == value.method
+            })
+        {
+            return Ok(existing);
+        }
+        self.repository
+            .insert_citation_target_binding(&value)
+            .await?;
+        self.publish_citation_target_bound(&value);
+        Ok(value)
+    }
+
+    pub(super) async fn create_citation_target_bindings(
+        &self,
+        inputs: Vec<CreateCitationTargetBinding>,
+    ) -> Result<Vec<CitationTargetBinding>, ResearchError> {
+        let mut values = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            values.push(self.prepare_citation_target_binding(input).await?);
+        }
+        self.repository
+            .insert_citation_target_bindings(&values)
+            .await?;
+        for value in &values {
+            self.publish_citation_target_bound(value);
+        }
+        Ok(values)
+    }
+
+    async fn prepare_citation_target_binding(
+        &self,
+        input: CreateCitationTargetBinding,
+    ) -> Result<CitationTargetBinding, ResearchError> {
         self.ensure_case(&input.research_case_id).await?;
         let target = self
             .repository
@@ -277,20 +321,6 @@ impl ResearchService {
             }
         }
 
-        let existing = self
-            .repository
-            .list_citation_target_bindings(&input.citation_target_id)
-            .await?;
-        if let Some(existing) = existing.into_iter().find(|binding| {
-            binding.research_case_id == input.research_case_id
-                && binding.source_id == input.source_id
-                && binding.source_snapshot_id == input.source_snapshot_id
-                && binding.extraction_id == input.extraction_id
-                && binding.method == input.method
-        }) {
-            return Ok(existing);
-        }
-
         let value = CitationTargetBinding {
             id: CitationTargetBindingId::new(),
             research_case_id: input.research_case_id,
@@ -301,9 +331,10 @@ impl ResearchService {
             method: input.method,
             created_at_ms: now_ms(),
         };
-        self.repository
-            .insert_citation_target_binding(&value)
-            .await?;
+        Ok(value)
+    }
+
+    fn publish_citation_target_bound(&self, value: &CitationTargetBinding) {
         self.publish(
             "research.citationTargetBound",
             json!({
@@ -316,7 +347,6 @@ impl ResearchService {
                 "method": value.method,
             }),
         );
-        Ok(value)
     }
 
     pub async fn list_claim_citation_links(

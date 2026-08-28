@@ -9,6 +9,7 @@ pub(super) mod common;
 pub(super) mod evidence;
 pub(super) mod manuscript;
 pub(super) mod pdf;
+pub(super) mod reference_resolution;
 pub(super) mod retrieval;
 pub(super) mod sources;
 pub(super) mod verification;
@@ -24,4 +25,5 @@ pub(super) fn router() -> Router<AppState> {
         .merge(manuscript::router())
         .merge(verification::router())
         .merge(retrieval::router())
+        .merge(reference_resolution::router())
 }

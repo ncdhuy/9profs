@@ -183,6 +183,32 @@ impl SqliteResearchRepository {
         Ok(())
     }
 
+    pub(super) async fn insert_citation_target_bindings(
+        &self,
+        values: &[CitationTargetBinding],
+    ) -> Result<(), ResearchError> {
+        let mut transaction = self.pool.begin().await?;
+        for value in values {
+            sqlx::query(
+                "INSERT INTO research_citation_target_bindings \
+                 (id, research_case_id, citation_target_id, source_id, source_snapshot_id, extraction_id, method, created_at_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(value.id.as_str())
+            .bind(value.research_case_id.as_str())
+            .bind(value.citation_target_id.as_str())
+            .bind(value.source_id.as_str())
+            .bind(value.source_snapshot_id.as_ref().map(|id| id.as_str()))
+            .bind(value.extraction_id.as_ref().map(|id| id.as_str()))
+            .bind(enum_text(&value.method))
+            .bind(value.created_at_ms)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     pub(super) async fn list_claim_citation_links(
         &self,
         research_case_id: Option<&ResearchCaseId>,

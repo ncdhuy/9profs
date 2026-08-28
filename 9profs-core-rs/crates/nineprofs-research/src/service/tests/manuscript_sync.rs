@@ -16,6 +16,7 @@ async fn manuscript_citation_sync_is_idempotent_versioned_and_transactional() {
             research_case_id: case.id.clone(),
             kind: SourceKind::Manuscript,
             label: "Draft".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();

@@ -26,6 +26,22 @@ pub enum ResearchCaptureMethodDto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ResearchSourceIdentityMethodDto {
+    Imported,
+    HumanConfirmed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchSourceIdentityDto {
+    pub provider: String,
+    pub external_reference: String,
+    pub method: ResearchSourceIdentityMethodDto,
+    pub asserted_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ResearchHashAlgorithmDto {
     Sha256,
 }
@@ -181,6 +197,7 @@ pub struct ResearchSourceDto {
     pub research_case_id: String,
     pub kind: ResearchSourceKindDto,
     pub label: String,
+    pub identity: Option<ResearchSourceIdentityDto>,
     pub created_at_ms: i64,
 }
 
@@ -439,6 +456,86 @@ pub struct ManuscriptReferenceTargetMappingDto {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceResolutionStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceResolutionOutcomeDto {
+    ResolvedExact,
+    AlreadyBound,
+    AmbiguousSource,
+    AmbiguousSnapshotOrExtraction,
+    CandidateRequiresConfirmation,
+    SourceMatchedButNotVerificationReady,
+    Unresolved,
+    ConflictWithExistingBinding,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceResolutionMatchKindDto {
+    ExactZoteroItemId,
+    ExactZoteroUri,
+    ReferenceKeySourceLabel,
+    ReferenceTitleSourceLabel,
+    MappingIntegrity,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceResolutionRunDto {
+    pub resolution_run_id: String,
+    pub research_case_id: String,
+    pub catalog_run_id: String,
+    pub catalog_hash: ResearchContentHashDto,
+    pub source_state_hash: ResearchContentHashDto,
+    pub resolver_policy_version: String,
+    pub status: ManuscriptReferenceResolutionStatusDto,
+    pub entry_count: u32,
+    pub resolved_entry_count: u32,
+    pub candidate_entry_count: u32,
+    pub unresolved_entry_count: u32,
+    pub conflict_entry_count: u32,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceResolutionEntryDto {
+    pub resolution_entry_id: String,
+    pub resolution_run_id: String,
+    pub reference_entry_id: String,
+    pub outcome: ManuscriptReferenceResolutionOutcomeDto,
+    pub match_kind: Option<ManuscriptReferenceResolutionMatchKindDto>,
+    pub chosen_source_id: Option<String>,
+    pub chosen_source_snapshot_id: Option<String>,
+    pub chosen_extraction_id: Option<String>,
+    pub automatic_binding_permitted: bool,
+    pub candidate_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptReferenceResolutionCandidateDto {
+    pub candidate_id: String,
+    pub resolution_entry_id: String,
+    pub ordinal: u32,
+    pub source_id: String,
+    pub source_snapshot_id: Option<String>,
+    pub extraction_id: Option<String>,
+    pub match_kind: ManuscriptReferenceResolutionMatchKindDto,
+    pub automatic_binding_permitted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ManuscriptClaimExtractionStatusDto {
     Running,
     Completed,
@@ -539,6 +636,15 @@ pub struct CreateResearchSourceRequest {
     pub research_case_id: String,
     pub kind: ResearchSourceKindDto,
     pub label: String,
+    pub identity: Option<ResearchSourceIdentityRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResearchSourceIdentityRequest {
+    pub provider: String,
+    pub external_reference: String,
+    pub method: ResearchSourceIdentityMethodDto,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

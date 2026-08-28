@@ -13,6 +13,7 @@ mod manuscript_citation_sync;
 mod manuscript_claim_extraction;
 mod pdf;
 mod reference_catalog;
+mod reference_resolution;
 
 #[cfg(test)]
 mod tests;

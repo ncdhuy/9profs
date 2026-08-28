@@ -13,6 +13,9 @@ use nineprofs_api_types::CaptureResearchSourceSnapshotRequest;
 use nineprofs_api_types::CreateResearchSourceRequest;
 use nineprofs_api_types::ResearchCaptureMethodDto;
 use nineprofs_api_types::ResearchSourceDto;
+use nineprofs_api_types::ResearchSourceIdentityDto;
+use nineprofs_api_types::ResearchSourceIdentityMethodDto;
+use nineprofs_api_types::ResearchSourceIdentityRequest;
 use nineprofs_api_types::ResearchSourceKindDto;
 use nineprofs_api_types::ResearchSourceOriginDto;
 use nineprofs_api_types::ResearchSourceSnapshotDto;
@@ -20,6 +23,9 @@ use nineprofs_research::CaptureMethod;
 use nineprofs_research::CaptureSourceSnapshot;
 use nineprofs_research::CreateResearchSource;
 use nineprofs_research::ResearchSource;
+use nineprofs_research::ResearchSourceIdentity;
+use nineprofs_research::ResearchSourceIdentityInput;
+use nineprofs_research::ResearchSourceIdentityMethod;
 use nineprofs_research::ResearchSourceSnapshot;
 use nineprofs_research::SourceKind;
 use nineprofs_research::SourceOrigin;
@@ -74,6 +80,7 @@ async fn create_research_source(
             research_case_id: nineprofs_research::ResearchCaseId::parse(request.research_case_id)?,
             kind: source_kind(request.kind),
             label: request.label,
+            identity: request.identity.map(source_identity),
         })
         .await?;
     Ok(axum::Json(ApiResponse::ok(research_source_dto(source))))
@@ -130,7 +137,45 @@ pub(crate) fn research_source_dto(value: ResearchSource) -> ResearchSourceDto {
         research_case_id: value.research_case_id.to_string(),
         kind: source_kind_dto(value.kind),
         label: value.label,
+        identity: value.identity.map(source_identity_dto),
         created_at_ms: value.created_at_ms,
+    }
+}
+
+fn source_identity(value: ResearchSourceIdentityRequest) -> ResearchSourceIdentityInput {
+    ResearchSourceIdentityInput {
+        provider: value.provider,
+        external_reference: value.external_reference,
+        method: source_identity_method(value.method),
+    }
+}
+
+fn source_identity_method(value: ResearchSourceIdentityMethodDto) -> ResearchSourceIdentityMethod {
+    match value {
+        ResearchSourceIdentityMethodDto::Imported => ResearchSourceIdentityMethod::Imported,
+        ResearchSourceIdentityMethodDto::HumanConfirmed => {
+            ResearchSourceIdentityMethod::HumanConfirmed
+        }
+    }
+}
+
+fn source_identity_method_dto(
+    value: ResearchSourceIdentityMethod,
+) -> ResearchSourceIdentityMethodDto {
+    match value {
+        ResearchSourceIdentityMethod::Imported => ResearchSourceIdentityMethodDto::Imported,
+        ResearchSourceIdentityMethod::HumanConfirmed => {
+            ResearchSourceIdentityMethodDto::HumanConfirmed
+        }
+    }
+}
+
+fn source_identity_dto(value: ResearchSourceIdentity) -> ResearchSourceIdentityDto {
+    ResearchSourceIdentityDto {
+        provider: value.provider,
+        external_reference: value.external_reference,
+        method: source_identity_method_dto(value.method),
+        asserted_at_ms: value.asserted_at_ms,
     }
 }
 

@@ -13,6 +13,9 @@ export type ClaimEvidenceLinkId = string
 export type CitationVerificationRunId = string
 export type ManuscriptClaimExtractionRunId = string
 export type ManuscriptClaimExtractionItemId = string
+export type ManuscriptReferenceResolutionRunId = string
+export type ManuscriptReferenceResolutionEntryId = string
+export type ManuscriptReferenceResolutionCandidateId = string
 
 export interface AgentRequest {
   readonly input: string
@@ -290,6 +293,21 @@ export type ResearchCaptureMethod =
   | 'external_import'
 export type ResearchHashAlgorithm = 'sha256'
 
+export type ResearchSourceIdentityMethod = 'imported' | 'human_confirmed'
+
+export interface ResearchSourceIdentity {
+  readonly provider: string
+  readonly externalReference: string
+  readonly method: ResearchSourceIdentityMethod
+  readonly assertedAtMs: number
+}
+
+export interface ResearchSourceIdentityInput {
+  readonly provider: string
+  readonly externalReference: string
+  readonly method: ResearchSourceIdentityMethod
+}
+
 export type ResearchPdfExtractionStatus =
   'ready' | 'no_extractable_text' | 'failed' | 'password_required'
 
@@ -401,6 +419,7 @@ export interface ResearchSource {
   readonly researchCaseId: ResearchCaseId
   readonly kind: ResearchSourceKind
   readonly label: string
+  readonly identity: ResearchSourceIdentity | null
   readonly createdAtMs: number
 }
 
@@ -715,6 +734,66 @@ export interface ManuscriptReferenceTargetMapping {
   readonly documentTargetOrdinal: number
 }
 
+export type ManuscriptReferenceResolutionStatus = 'running' | 'completed' | 'failed'
+export type ManuscriptReferenceResolutionOutcome =
+  | 'resolved_exact'
+  | 'already_bound'
+  | 'ambiguous_source'
+  | 'ambiguous_snapshot_or_extraction'
+  | 'candidate_requires_confirmation'
+  | 'source_matched_but_not_verification_ready'
+  | 'unresolved'
+  | 'conflict_with_existing_binding'
+  | 'failed'
+export type ManuscriptReferenceResolutionMatchKind =
+  | 'exact_zotero_item_id'
+  | 'exact_zotero_uri'
+  | 'reference_key_source_label'
+  | 'reference_title_source_label'
+  | 'mapping_integrity'
+
+export interface ManuscriptReferenceResolutionRun {
+  readonly resolutionRunId: ManuscriptReferenceResolutionRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly catalogRunId: string
+  readonly catalogHash: ResearchContentHash
+  readonly sourceStateHash: ResearchContentHash
+  readonly resolverPolicyVersion: string
+  readonly status: ManuscriptReferenceResolutionStatus
+  readonly entryCount: number
+  readonly resolvedEntryCount: number
+  readonly candidateEntryCount: number
+  readonly unresolvedEntryCount: number
+  readonly conflictEntryCount: number
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly failureCode: string | null
+}
+
+export interface ManuscriptReferenceResolutionEntry {
+  readonly resolutionEntryId: ManuscriptReferenceResolutionEntryId
+  readonly resolutionRunId: ManuscriptReferenceResolutionRunId
+  readonly referenceEntryId: string
+  readonly outcome: ManuscriptReferenceResolutionOutcome
+  readonly matchKind: ManuscriptReferenceResolutionMatchKind | null
+  readonly chosenSourceId: ResearchSourceId | null
+  readonly chosenSourceSnapshotId: ResearchSourceSnapshotId | null
+  readonly chosenExtractionId: ResearchPdfExtractionId | null
+  readonly automaticBindingPermitted: boolean
+  readonly candidateCount: number
+}
+
+export interface ManuscriptReferenceResolutionCandidate {
+  readonly candidateId: ManuscriptReferenceResolutionCandidateId
+  readonly resolutionEntryId: ManuscriptReferenceResolutionEntryId
+  readonly ordinal: number
+  readonly sourceId: ResearchSourceId
+  readonly sourceSnapshotId: ResearchSourceSnapshotId | null
+  readonly extractionId: ResearchPdfExtractionId | null
+  readonly matchKind: ManuscriptReferenceResolutionMatchKind
+  readonly automaticBindingPermitted: boolean
+}
+
 export interface ManuscriptReferenceWordSourceInput {
   readonly tag: string
   readonly title: string
@@ -906,6 +985,7 @@ export interface CreateResearchSourceInput {
   readonly researchCaseId: ResearchCaseId
   readonly kind: ResearchSourceKind
   readonly label: string
+  readonly identity?: ResearchSourceIdentityInput | null
 }
 
 export interface CaptureResearchSourceSnapshotInput {

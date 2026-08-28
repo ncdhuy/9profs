@@ -35,6 +35,8 @@ pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_TARGETS: usize = 65_536;
 pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_MANUSCRIPT_REFERENCE_URI_COUNT: usize = 16;
 pub const MAX_MANUSCRIPT_REFERENCE_URI_BYTES: usize = 4 * 1024;
+pub const MAX_REFERENCE_RESOLUTION_CANDIDATES: usize = 256;
+pub const REFERENCE_RESOLVER_POLICY_VERSION: &str = "5c3b3b-v1";
 
 #[derive(Debug, Error)]
 pub enum ResearchError {
@@ -151,6 +153,18 @@ id_type!(
     ManuscriptReferenceTargetMappingId,
     "manuscript reference target mapping ID"
 );
+id_type!(
+    ManuscriptReferenceResolutionRunId,
+    "manuscript reference resolution run ID"
+);
+id_type!(
+    ManuscriptReferenceResolutionEntryId,
+    "manuscript reference resolution entry ID"
+);
+id_type!(
+    ManuscriptReferenceResolutionCandidateId,
+    "manuscript reference resolution candidate ID"
+);
 
 /// Provider-neutral retrieval boundary. Provider adapters translate these
 /// canonical identities into provider-specific filters.
@@ -220,7 +234,31 @@ pub struct ResearchSource {
     pub research_case_id: ResearchCaseId,
     pub kind: SourceKind,
     pub label: String,
+    #[serde(default)]
+    pub identity: Option<ResearchSourceIdentity>,
     pub created_at_ms: TimestampMs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResearchSourceIdentityMethod {
+    Imported,
+    HumanConfirmed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResearchSourceIdentity {
+    pub provider: String,
+    pub external_reference: String,
+    pub method: ResearchSourceIdentityMethod,
+    pub asserted_at_ms: TimestampMs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResearchSourceIdentityInput {
+    pub provider: String,
+    pub external_reference: String,
+    pub method: ResearchSourceIdentityMethod,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -528,6 +566,83 @@ pub enum ManuscriptReferenceCatalogStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceResolutionStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceResolutionOutcome {
+    ResolvedExact,
+    AlreadyBound,
+    AmbiguousSource,
+    AmbiguousSnapshotOrExtraction,
+    CandidateRequiresConfirmation,
+    SourceMatchedButNotVerificationReady,
+    Unresolved,
+    ConflictWithExistingBinding,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptReferenceResolutionMatchKind {
+    ExactZoteroItemId,
+    ExactZoteroUri,
+    ReferenceKeySourceLabel,
+    ReferenceTitleSourceLabel,
+    MappingIntegrity,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceResolutionRun {
+    pub id: ManuscriptReferenceResolutionRunId,
+    pub research_case_id: ResearchCaseId,
+    pub catalog_run_id: ManuscriptReferenceCatalogRunId,
+    pub catalog_hash: ContentHash,
+    pub source_state_hash: ContentHash,
+    pub resolver_policy_version: String,
+    pub status: ManuscriptReferenceResolutionStatus,
+    pub entry_count: u32,
+    pub resolved_entry_count: u32,
+    pub candidate_entry_count: u32,
+    pub unresolved_entry_count: u32,
+    pub conflict_entry_count: u32,
+    pub created_at_ms: TimestampMs,
+    pub completed_at_ms: Option<TimestampMs>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceResolutionEntry {
+    pub id: ManuscriptReferenceResolutionEntryId,
+    pub resolution_run_id: ManuscriptReferenceResolutionRunId,
+    pub reference_entry_id: ManuscriptReferenceEntryId,
+    pub outcome: ManuscriptReferenceResolutionOutcome,
+    pub match_kind: Option<ManuscriptReferenceResolutionMatchKind>,
+    pub chosen_source_id: Option<ResearchSourceId>,
+    pub chosen_source_snapshot_id: Option<ResearchSourceSnapshotId>,
+    pub chosen_extraction_id: Option<ResearchPdfExtractionId>,
+    pub automatic_binding_permitted: bool,
+    pub candidate_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptReferenceResolutionCandidate {
+    pub id: ManuscriptReferenceResolutionCandidateId,
+    pub resolution_entry_id: ManuscriptReferenceResolutionEntryId,
+    pub ordinal: u32,
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: Option<ResearchSourceSnapshotId>,
+    pub extraction_id: Option<ResearchPdfExtractionId>,
+    pub match_kind: ManuscriptReferenceResolutionMatchKind,
+    pub automatic_binding_permitted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ManuscriptReferenceCatalogRun {
     pub id: ManuscriptReferenceCatalogRunId,
     pub research_case_id: ResearchCaseId,
@@ -728,6 +843,7 @@ pub struct CreateResearchSource {
     pub research_case_id: ResearchCaseId,
     pub kind: SourceKind,
     pub label: String,
+    pub identity: Option<ResearchSourceIdentityInput>,
 }
 
 #[derive(Clone, Debug)]
@@ -891,6 +1007,13 @@ pub struct ManuscriptReferenceCatalogWrite {
     pub mappings: Vec<ManuscriptReferenceTargetMapping>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ManuscriptReferenceResolutionWrite {
+    pub run: ManuscriptReferenceResolutionRun,
+    pub entries: Vec<ManuscriptReferenceResolutionEntry>,
+    pub candidates: Vec<ManuscriptReferenceResolutionCandidate>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ManuscriptClaimExtractionCitationInput {
     pub citation_occurrence_id: String,
@@ -1036,6 +1159,22 @@ impl SourceOrigin {
                 safe_provenance_text("external_reference", external_reference)?;
             }
         }
+        Ok(())
+    }
+}
+
+impl ResearchSourceIdentityInput {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        bounded_text(
+            "source identity provider",
+            &self.provider,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        bounded_text(
+            "source identity external reference",
+            &self.external_reference,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
         Ok(())
     }
 }

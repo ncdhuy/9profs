@@ -16,6 +16,7 @@ async fn citations_support_grouped_targets_many_to_many_links_and_unresolved_tar
             research_case_id: case.id.clone(),
             kind: SourceKind::Web,
             label: "Reference".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -255,6 +256,7 @@ async fn exact_pdf_bindings_pin_history_and_reject_cross_case_or_broken_chains()
             research_case_id: case.id.clone(),
             kind: SourceKind::ReferencePdf,
             label: "Reference PDF".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -356,6 +358,7 @@ async fn exact_pdf_bindings_pin_history_and_reject_cross_case_or_broken_chains()
             research_case_id: case.id.clone(),
             kind: SourceKind::ReferencePdf,
             label: "Other reference PDF".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();

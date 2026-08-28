@@ -525,7 +525,8 @@ architecture and does not override source evidence.
 - Phase 5 established the Research Domain, immutable PDF provenance, scoped
   Dify retrieval, citation binding, citation verification, model-backed
   assessment, DOCX citation inventory, manuscript synchronization, atomic claim
-  extraction, and reference-catalog synchronization.
+  extraction, reference-catalog synchronization, and deterministic manuscript
+  reference resolution with exact citation binding.
 - R2A established the `9Profs Required` CI contract.
 
 For original audit evidence and phase-specific rationale, see
@@ -536,42 +537,6 @@ For original audit evidence and phase-specific rationale, see
 ## Future roadmap
 
 The following items are not current implementation claims.
-
-### Phase 5C3B3B - reference resolution and exact binding
-
-The next feature-development continuation after stabilization is:
-
-```text
-ManuscriptReferenceEntry
-        |
-        v
-reference resolver
-   ├─ deterministic exact match
-   │      |
-   │      v
-   │  ResearchSource
-   │      |
-   │      v
-   │  SourceSnapshot
-   │      |
-   │      v
-   │  ready exact ExtractionId
-   │      |
-   │      v
-   │  CitationTargetBinding
-   │
-   ├─ ambiguous
-   │      |
-   │      v
-   │  candidates + user confirmation
-   │
-   └─ unresolved
-```
-
-Only identity evidence strong enough for deterministic exact resolution may
-auto-bind. Fuzzy or LLM similarity may suggest candidates, but must not create
-`CitationTargetBinding` automatically. Resolution is distinct from citation
-verification and evidence assessment.
 
 ### Later established roadmap
 

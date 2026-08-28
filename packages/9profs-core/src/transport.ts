@@ -39,6 +39,12 @@ import type {
   ManuscriptReferenceCatalogRun,
   ManuscriptReferenceEntry,
   ManuscriptReferenceTargetMapping,
+  ManuscriptReferenceResolutionCandidate,
+  ManuscriptReferenceResolutionCandidateId,
+  ManuscriptReferenceResolutionEntry,
+  ManuscriptReferenceResolutionEntryId,
+  ManuscriptReferenceResolutionRun,
+  ManuscriptReferenceResolutionRunId,
   ManuscriptClaimExtractionItem,
   ManuscriptClaimExtractionRun,
   ManuscriptClaimExtractionCoverage,
@@ -174,7 +180,11 @@ export interface CoreTransport {
   ingestReferencePdf(
     researchCaseId: ResearchCaseId,
     bytes: Uint8Array,
-    options?: { readonly filename?: string; readonly label?: string },
+    options?: {
+      readonly filename?: string
+      readonly label?: string
+      readonly identity?: { readonly provider: string; readonly externalReference: string }
+    },
   ): Promise<ReferencePdfIngestion>
   recordResearchPdfExtraction(
     snapshotId: ResearchSourceSnapshotId,
@@ -247,6 +257,21 @@ export interface CoreTransport {
   manuscriptReferenceCatalogRun(catalogRunId: string): Promise<ManuscriptReferenceCatalogRun>
   manuscriptReferenceEntries(catalogRunId: string): Promise<ManuscriptReferenceEntry[]>
   manuscriptReferenceTargetMappings(entryId: string): Promise<ManuscriptReferenceTargetMapping[]>
+  resolveManuscriptReferences(catalogRunId: string): Promise<ManuscriptReferenceResolutionRun>
+  manuscriptReferenceResolutionRun(
+    resolutionRunId: ManuscriptReferenceResolutionRunId,
+  ): Promise<ManuscriptReferenceResolutionRun>
+  manuscriptReferenceResolutionEntries(
+    resolutionRunId: ManuscriptReferenceResolutionRunId,
+  ): Promise<ManuscriptReferenceResolutionEntry[]>
+  manuscriptReferenceResolutionCandidates(
+    resolutionEntryId: ManuscriptReferenceResolutionEntryId,
+  ): Promise<ManuscriptReferenceResolutionCandidate[]>
+  confirmManuscriptReferenceCandidate(
+    resolutionRunId: ManuscriptReferenceResolutionRunId,
+    resolutionEntryId: ManuscriptReferenceResolutionEntryId,
+    candidateId: ManuscriptReferenceResolutionCandidateId,
+  ): Promise<CitationTargetBinding[]>
   createManuscriptClaimExtraction(
     syncRunId: string,
     input: CreateManuscriptClaimExtractionInput,
@@ -469,6 +494,12 @@ export function createCoreTransport(
             ? {}
             : { 'x-nineprofs-original-filename': options.filename }),
           ...(options.label === undefined ? {} : { 'x-nineprofs-source-label': options.label }),
+          ...(options.identity === undefined
+            ? {}
+            : {
+                'x-nineprofs-source-identity-provider': options.identity.provider,
+                'x-nineprofs-source-identity-reference': options.identity.externalReference,
+              }),
         },
       ),
     recordResearchPdfExtraction: (snapshotId, input) =>
@@ -621,6 +652,28 @@ export function createCoreTransport(
     manuscriptReferenceTargetMappings: (entryId) =>
       get<ManuscriptReferenceTargetMapping[]>(
         `/api/research/manuscript-reference-entries/${encodeURIComponent(entryId)}/mappings`,
+      ),
+    resolveManuscriptReferences: (catalogRunId) =>
+      trustedRequest<ManuscriptReferenceResolutionRun>(
+        `/api/research/manuscript-reference-catalog-runs/${encodeURIComponent(catalogRunId)}/resolution`,
+        'POST',
+      ),
+    manuscriptReferenceResolutionRun: (resolutionRunId) =>
+      get<ManuscriptReferenceResolutionRun>(
+        `/api/research/manuscript-reference-resolution-runs/${encodeURIComponent(resolutionRunId)}`,
+      ),
+    manuscriptReferenceResolutionEntries: (resolutionRunId) =>
+      get<ManuscriptReferenceResolutionEntry[]>(
+        `/api/research/manuscript-reference-resolution-runs/${encodeURIComponent(resolutionRunId)}/entries`,
+      ),
+    manuscriptReferenceResolutionCandidates: (resolutionEntryId) =>
+      get<ManuscriptReferenceResolutionCandidate[]>(
+        `/api/research/manuscript-reference-resolution-entries/${encodeURIComponent(resolutionEntryId)}/candidates`,
+      ),
+    confirmManuscriptReferenceCandidate: (resolutionRunId, resolutionEntryId, candidateId) =>
+      trustedRequest<CitationTargetBinding[]>(
+        `/api/research/manuscript-reference-resolution-runs/${encodeURIComponent(resolutionRunId)}/entries/${encodeURIComponent(resolutionEntryId)}/candidates/${encodeURIComponent(candidateId)}/confirm`,
+        'POST',
       ),
     createManuscriptClaimExtraction: (syncRunId, input) =>
       trustedRequest<ManuscriptClaimExtractionRun>(

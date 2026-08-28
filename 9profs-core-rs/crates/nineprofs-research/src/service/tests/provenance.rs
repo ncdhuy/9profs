@@ -17,6 +17,7 @@ async fn case_source_snapshot_and_evidence_preserve_provenance() {
             research_case_id: case.id.clone(),
             kind: SourceKind::Manuscript,
             label: "Draft".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -68,6 +69,7 @@ async fn same_source_duplicate_snapshot_returns_existing_and_other_sources_stay_
             research_case_id: case_id.clone(),
             kind: SourceKind::Dataset,
             label: "First".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -76,6 +78,7 @@ async fn same_source_duplicate_snapshot_returns_existing_and_other_sources_stay_
             research_case_id: case_id.clone(),
             kind: SourceKind::Dataset,
             label: "Second".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -138,6 +141,7 @@ async fn persistence_round_trip_survives_service_recreation() {
             research_case_id: case.id.clone(),
             kind: SourceKind::Manuscript,
             label: "Reference".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -213,6 +217,7 @@ async fn foreign_references_and_secret_metadata_are_rejected() {
             research_case_id: case_id.clone(),
             kind: SourceKind::Other,
             label: "Source".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -222,6 +227,7 @@ async fn foreign_references_and_secret_metadata_are_rejected() {
                 research_case_id: ResearchCaseId::parse("missing-case").unwrap(),
                 kind: SourceKind::Other,
                 label: "Invalid".to_owned(),
+                identity: None,
             })
             .await,
         Err(ResearchError::NotFound { entity: "case", .. })

@@ -31,6 +31,8 @@ use nineprofs_research::CreateResearchSource;
 use nineprofs_research::ResearchPdfExtraction;
 use nineprofs_research::ResearchPdfPage;
 use nineprofs_research::ResearchPdfPageBatch;
+use nineprofs_research::ResearchSourceIdentityInput;
+use nineprofs_research::ResearchSourceIdentityMethod;
 use nineprofs_research::SourceKind;
 use std::collections::BTreeMap;
 
@@ -82,6 +84,7 @@ async fn ingest_reference_pdf(
             research_case_id,
             kind: SourceKind::ReferencePdf,
             label: source_label,
+            identity: source_identity_from_headers(&headers)?,
         })
         .await?;
     let snapshot = service
@@ -349,4 +352,22 @@ pub(super) fn router() -> Router<AppState> {
             "/api/research/pdf-evidence",
             post(capture_research_pdf_evidence),
         )
+}
+
+fn source_identity_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<ResearchSourceIdentityInput>, ApiError> {
+    let provider = header_text(headers, "x-nineprofs-source-identity-provider")?;
+    let external_reference = header_text(headers, "x-nineprofs-source-identity-reference")?;
+    match (provider, external_reference) {
+        (None, None) => Ok(None),
+        (Some(provider), Some(external_reference)) => Ok(Some(ResearchSourceIdentityInput {
+            provider,
+            external_reference,
+            method: ResearchSourceIdentityMethod::Imported,
+        })),
+        _ => Err(ApiError::InvalidRequest(
+            "source identity provider and reference must be supplied together".to_owned(),
+        )),
+    }
 }

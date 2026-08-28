@@ -14,10 +14,14 @@ use crate::{
     ManuscriptClaimExtractionItem, ManuscriptClaimExtractionRun, ManuscriptClaimExtractionRunId,
     ManuscriptClaimExtractionWrite, ManuscriptReferenceCatalogRun, ManuscriptReferenceCatalogRunId,
     ManuscriptReferenceCatalogWrite, ManuscriptReferenceEntry, ManuscriptReferenceEntryId,
-    ManuscriptReferenceTargetMapping, ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId,
-    ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
-    ResearchPdfExtractionId, ResearchPdfPage, ResearchRepository, ResearchSource, ResearchSourceId,
-    ResearchSourceSnapshot, ResearchSourceSnapshotId, SqliteResearchRepository,
+    ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
+    ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
+    ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
+    ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, ResearchCase,
+    ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
+    ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
+    ResearchRepository, ResearchSource, ResearchSourceId, ResearchSourceSnapshot,
+    ResearchSourceSnapshotId, SqliteResearchRepository,
 };
 
 struct FaultInjectingRepository {
@@ -103,10 +107,18 @@ impl_delegating_repository! {
     get_manuscript_reference_entry(id: &ManuscriptReferenceEntryId) -> Result<Option<ManuscriptReferenceEntry>, ResearchError>;
     list_manuscript_reference_target_mappings(reference_entry_id: &ManuscriptReferenceEntryId) -> Result<Vec<ManuscriptReferenceTargetMapping>, ResearchError>;
     persist_manuscript_reference_catalog(value: &ManuscriptReferenceCatalogWrite) -> Result<ManuscriptReferenceCatalogRun, ResearchError>;
+    get_manuscript_reference_resolution_run(id: &ManuscriptReferenceResolutionRunId) -> Result<Option<ManuscriptReferenceResolutionRun>, ResearchError>;
+    get_manuscript_reference_resolution_for_catalog(catalog_run_id: &ManuscriptReferenceCatalogRunId, catalog_hash: &ContentHash, source_state_hash: &ContentHash, resolver_policy_version: &str) -> Result<Option<ManuscriptReferenceResolutionRun>, ResearchError>;
+    list_manuscript_reference_resolution_entries(resolution_run_id: &ManuscriptReferenceResolutionRunId) -> Result<Vec<ManuscriptReferenceResolutionEntry>, ResearchError>;
+    get_manuscript_reference_resolution_entry(id: &ManuscriptReferenceResolutionEntryId) -> Result<Option<ManuscriptReferenceResolutionEntry>, ResearchError>;
+    list_manuscript_reference_resolution_candidates(resolution_entry_id: &ManuscriptReferenceResolutionEntryId) -> Result<Vec<ManuscriptReferenceResolutionCandidate>, ResearchError>;
+    get_manuscript_reference_resolution_candidate(id: &ManuscriptReferenceResolutionCandidateId) -> Result<Option<ManuscriptReferenceResolutionCandidate>, ResearchError>;
+    persist_manuscript_reference_resolution(value: &ManuscriptReferenceResolutionWrite) -> Result<ManuscriptReferenceResolutionRun, ResearchError>;
     list_citation_target_bindings(citation_target_id: &CitationTargetId) -> Result<Vec<CitationTargetBinding>, ResearchError>;
     get_citation_target_binding(id: &CitationTargetBindingId) -> Result<Option<CitationTargetBinding>, ResearchError>;
     latest_citation_target_binding(citation_target_id: &CitationTargetId) -> Result<Option<CitationTargetBinding>, ResearchError>;
     insert_citation_target_binding(value: &CitationTargetBinding) -> Result<(), ResearchError>;
+    insert_citation_target_bindings(values: &[CitationTargetBinding]) -> Result<(), ResearchError>;
     list_claim_citation_links(research_case_id: Option<&ResearchCaseId>, claim_id: Option<&ResearchClaimId>, citation_occurrence_id: Option<&CitationOccurrenceId>) -> Result<Vec<ClaimCitationLink>, ResearchError>;
     get_claim_citation_link(id: &ClaimCitationLinkId) -> Result<Option<ClaimCitationLink>, ResearchError>;
     find_claim_citation_link(claim_id: &ResearchClaimId, citation_occurrence_id: &CitationOccurrenceId) -> Result<Option<ClaimCitationLink>, ResearchError>;

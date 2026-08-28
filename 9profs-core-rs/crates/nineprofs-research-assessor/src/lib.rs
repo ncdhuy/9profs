@@ -946,6 +946,7 @@ mod tests {
                 research_case_id: case.id.clone(),
                 kind: SourceKind::ReferencePdf,
                 label: "Reference".to_owned(),
+                identity: None,
             })
             .await
             .unwrap();

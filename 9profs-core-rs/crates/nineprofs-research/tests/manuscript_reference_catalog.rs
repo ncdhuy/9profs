@@ -34,6 +34,7 @@ async fn fixture(
             research_case_id: case.id.clone(),
             kind: SourceKind::Manuscript,
             label: "Draft".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();

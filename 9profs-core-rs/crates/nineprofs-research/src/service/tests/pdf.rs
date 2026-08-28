@@ -65,6 +65,7 @@ async fn streamed_pdf_artifact_snapshot_extraction_and_exact_unicode_evidence_ar
             research_case_id: case.id.clone(),
             kind: SourceKind::ReferencePdf,
             label: "Reference".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();
@@ -171,6 +172,7 @@ async fn pdf_extraction_access_is_exact_ordered_paginated_and_ready_only() {
             research_case_id: case.id,
             kind: SourceKind::ReferencePdf,
             label: "Access fixture".to_owned(),
+            identity: None,
         })
         .await
         .unwrap();

@@ -10,10 +10,13 @@ use crate::{
     ManuscriptClaimExtractionItem, ManuscriptClaimExtractionRun, ManuscriptClaimExtractionRunId,
     ManuscriptClaimExtractionWrite, ManuscriptReferenceCatalogRun, ManuscriptReferenceCatalogRunId,
     ManuscriptReferenceCatalogWrite, ManuscriptReferenceEntry, ManuscriptReferenceEntryId,
-    ManuscriptReferenceTargetMapping, ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId,
-    ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
-    ResearchPdfExtractionId, ResearchPdfPage, ResearchSource, ResearchSourceId,
-    ResearchSourceSnapshot, ResearchSourceSnapshotId,
+    ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
+    ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
+    ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
+    ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, ResearchCase,
+    ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
+    ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
+    ResearchSource, ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId,
 };
 
 mod case_source_snapshot;
@@ -24,6 +27,7 @@ mod manuscript_citation_sync;
 mod manuscript_claim_extraction;
 mod pdf;
 mod reference_catalog;
+mod reference_resolution;
 
 #[async_trait]
 pub trait ResearchRepository: Send + Sync {
@@ -210,6 +214,38 @@ pub trait ResearchRepository: Send + Sync {
         value: &ManuscriptReferenceCatalogWrite,
     ) -> Result<ManuscriptReferenceCatalogRun, ResearchError>;
 
+    async fn get_manuscript_reference_resolution_run(
+        &self,
+        id: &ManuscriptReferenceResolutionRunId,
+    ) -> Result<Option<ManuscriptReferenceResolutionRun>, ResearchError>;
+    async fn get_manuscript_reference_resolution_for_catalog(
+        &self,
+        catalog_run_id: &ManuscriptReferenceCatalogRunId,
+        catalog_hash: &ContentHash,
+        source_state_hash: &ContentHash,
+        resolver_policy_version: &str,
+    ) -> Result<Option<ManuscriptReferenceResolutionRun>, ResearchError>;
+    async fn list_manuscript_reference_resolution_entries(
+        &self,
+        resolution_run_id: &ManuscriptReferenceResolutionRunId,
+    ) -> Result<Vec<ManuscriptReferenceResolutionEntry>, ResearchError>;
+    async fn get_manuscript_reference_resolution_entry(
+        &self,
+        id: &ManuscriptReferenceResolutionEntryId,
+    ) -> Result<Option<ManuscriptReferenceResolutionEntry>, ResearchError>;
+    async fn list_manuscript_reference_resolution_candidates(
+        &self,
+        resolution_entry_id: &ManuscriptReferenceResolutionEntryId,
+    ) -> Result<Vec<ManuscriptReferenceResolutionCandidate>, ResearchError>;
+    async fn get_manuscript_reference_resolution_candidate(
+        &self,
+        id: &ManuscriptReferenceResolutionCandidateId,
+    ) -> Result<Option<ManuscriptReferenceResolutionCandidate>, ResearchError>;
+    async fn persist_manuscript_reference_resolution(
+        &self,
+        value: &ManuscriptReferenceResolutionWrite,
+    ) -> Result<ManuscriptReferenceResolutionRun, ResearchError>;
+
     async fn list_citation_target_bindings(
         &self,
         citation_target_id: &CitationTargetId,
@@ -225,6 +261,10 @@ pub trait ResearchRepository: Send + Sync {
     async fn insert_citation_target_binding(
         &self,
         value: &CitationTargetBinding,
+    ) -> Result<(), ResearchError>;
+    async fn insert_citation_target_bindings(
+        &self,
+        values: &[CitationTargetBinding],
     ) -> Result<(), ResearchError>;
 
     async fn list_claim_citation_links(
@@ -618,6 +658,66 @@ impl ResearchRepository for SqliteResearchRepository {
         self.persist_manuscript_reference_catalog(value).await
     }
 
+    async fn get_manuscript_reference_resolution_run(
+        &self,
+        id: &ManuscriptReferenceResolutionRunId,
+    ) -> Result<Option<ManuscriptReferenceResolutionRun>, ResearchError> {
+        self.get_manuscript_reference_resolution_run(id).await
+    }
+
+    async fn get_manuscript_reference_resolution_for_catalog(
+        &self,
+        catalog_run_id: &ManuscriptReferenceCatalogRunId,
+        catalog_hash: &ContentHash,
+        source_state_hash: &ContentHash,
+        resolver_policy_version: &str,
+    ) -> Result<Option<ManuscriptReferenceResolutionRun>, ResearchError> {
+        self.get_manuscript_reference_resolution_for_catalog(
+            catalog_run_id,
+            catalog_hash,
+            source_state_hash,
+            resolver_policy_version,
+        )
+        .await
+    }
+
+    async fn list_manuscript_reference_resolution_entries(
+        &self,
+        resolution_run_id: &ManuscriptReferenceResolutionRunId,
+    ) -> Result<Vec<ManuscriptReferenceResolutionEntry>, ResearchError> {
+        self.list_manuscript_reference_resolution_entries(resolution_run_id)
+            .await
+    }
+
+    async fn get_manuscript_reference_resolution_entry(
+        &self,
+        id: &ManuscriptReferenceResolutionEntryId,
+    ) -> Result<Option<ManuscriptReferenceResolutionEntry>, ResearchError> {
+        self.get_manuscript_reference_resolution_entry(id).await
+    }
+
+    async fn list_manuscript_reference_resolution_candidates(
+        &self,
+        resolution_entry_id: &ManuscriptReferenceResolutionEntryId,
+    ) -> Result<Vec<ManuscriptReferenceResolutionCandidate>, ResearchError> {
+        self.list_manuscript_reference_resolution_candidates(resolution_entry_id)
+            .await
+    }
+
+    async fn get_manuscript_reference_resolution_candidate(
+        &self,
+        id: &ManuscriptReferenceResolutionCandidateId,
+    ) -> Result<Option<ManuscriptReferenceResolutionCandidate>, ResearchError> {
+        self.get_manuscript_reference_resolution_candidate(id).await
+    }
+
+    async fn persist_manuscript_reference_resolution(
+        &self,
+        value: &ManuscriptReferenceResolutionWrite,
+    ) -> Result<ManuscriptReferenceResolutionRun, ResearchError> {
+        self.persist_manuscript_reference_resolution(value).await
+    }
+
     async fn list_citation_target_bindings(
         &self,
         citation_target_id: &CitationTargetId,
@@ -645,6 +745,13 @@ impl ResearchRepository for SqliteResearchRepository {
         value: &CitationTargetBinding,
     ) -> Result<(), ResearchError> {
         self.insert_citation_target_binding(value).await
+    }
+
+    async fn insert_citation_target_bindings(
+        &self,
+        values: &[CitationTargetBinding],
+    ) -> Result<(), ResearchError> {
+        self.insert_citation_target_bindings(values).await
     }
 
     async fn list_claim_citation_links(
