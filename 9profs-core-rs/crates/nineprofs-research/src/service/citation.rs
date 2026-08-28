@@ -226,15 +226,23 @@ impl ResearchService {
         &self,
         inputs: Vec<CreateCitationTargetBinding>,
     ) -> Result<Vec<CitationTargetBinding>, ResearchError> {
-        let mut values = Vec::with_capacity(inputs.len());
-        for input in inputs {
-            values.push(self.prepare_citation_target_binding(input).await?);
-        }
+        let values = self.prepare_citation_target_bindings(inputs).await?;
         self.repository
             .insert_citation_target_bindings(&values)
             .await?;
         for value in &values {
             self.publish_citation_target_bound(value);
+        }
+        Ok(values)
+    }
+
+    pub(super) async fn prepare_citation_target_bindings(
+        &self,
+        inputs: Vec<CreateCitationTargetBinding>,
+    ) -> Result<Vec<CitationTargetBinding>, ResearchError> {
+        let mut values = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            values.push(self.prepare_citation_target_binding(input).await?);
         }
         Ok(values)
     }
@@ -334,7 +342,7 @@ impl ResearchService {
         Ok(value)
     }
 
-    fn publish_citation_target_bound(&self, value: &CitationTargetBinding) {
+    pub(super) fn publish_citation_target_bound(&self, value: &CitationTargetBinding) {
         self.publish(
             "research.citationTargetBound",
             json!({

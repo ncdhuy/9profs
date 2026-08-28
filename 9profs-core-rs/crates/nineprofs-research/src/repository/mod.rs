@@ -245,6 +245,11 @@ pub trait ResearchRepository: Send + Sync {
         &self,
         value: &ManuscriptReferenceResolutionWrite,
     ) -> Result<ManuscriptReferenceResolutionRun, ResearchError>;
+    async fn persist_manuscript_reference_resolution_with_bindings(
+        &self,
+        value: &ManuscriptReferenceResolutionWrite,
+        bindings: &[CitationTargetBinding],
+    ) -> Result<(ManuscriptReferenceResolutionRun, Vec<CitationTargetBinding>), ResearchError>;
 
     async fn list_citation_target_bindings(
         &self,
@@ -716,6 +721,15 @@ impl ResearchRepository for SqliteResearchRepository {
         value: &ManuscriptReferenceResolutionWrite,
     ) -> Result<ManuscriptReferenceResolutionRun, ResearchError> {
         self.persist_manuscript_reference_resolution(value).await
+    }
+
+    async fn persist_manuscript_reference_resolution_with_bindings(
+        &self,
+        value: &ManuscriptReferenceResolutionWrite,
+        bindings: &[CitationTargetBinding],
+    ) -> Result<(ManuscriptReferenceResolutionRun, Vec<CitationTargetBinding>), ResearchError> {
+        self.persist_manuscript_reference_resolution_with_bindings(value, bindings)
+            .await
     }
 
     async fn list_citation_target_bindings(

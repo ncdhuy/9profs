@@ -144,34 +144,34 @@ impl ResearchService {
                     }
                 };
                 if !mappings.is_empty() {
-                    let existing_state = self
-                        .existing_binding_state(&mappings, &plan, &catalog.research_case_id)
+                    let binding_states = self
+                        .target_binding_states(&mappings, &plan, &catalog.research_case_id)
                         .await?;
-                    match existing_state {
-                        ExistingBindingState::Conflict => {
-                            plan.outcome =
-                                ManuscriptReferenceResolutionOutcome::ConflictWithExistingBinding;
-                            plan.automatic_binding_permitted = false;
-                            plan.candidates.iter_mut().for_each(|candidate| {
-                                candidate.automatic_binding_permitted = false;
-                            });
-                        }
-                        ExistingBindingState::AlreadyBound => {
-                            plan.outcome = ManuscriptReferenceResolutionOutcome::AlreadyBound;
-                            plan.automatic_binding_permitted = false;
-                            plan.candidates.iter_mut().for_each(|candidate| {
-                                candidate.automatic_binding_permitted = false;
-                            });
-                        }
-                        ExistingBindingState::Unbound => {
-                            let target_ids = mappings
-                                .iter()
-                                .map(|mapping| mapping.citation_target_id.clone())
-                                .collect::<BTreeSet<_>>();
-                            for target_id in target_ids {
+                    if binding_states
+                        .iter()
+                        .any(|state| matches!(state, TargetBindingState::Conflict))
+                    {
+                        plan.outcome =
+                            ManuscriptReferenceResolutionOutcome::ConflictWithExistingBinding;
+                        plan.automatic_binding_permitted = false;
+                        plan.candidates.iter_mut().for_each(|candidate| {
+                            candidate.automatic_binding_permitted = false;
+                        });
+                    } else if binding_states
+                        .iter()
+                        .all(|state| matches!(state, TargetBindingState::Equivalent))
+                    {
+                        plan.outcome = ManuscriptReferenceResolutionOutcome::AlreadyBound;
+                        plan.automatic_binding_permitted = false;
+                        plan.candidates.iter_mut().for_each(|candidate| {
+                            candidate.automatic_binding_permitted = false;
+                        });
+                    } else {
+                        for (mapping, state) in mappings.iter().zip(binding_states) {
+                            if matches!(state, TargetBindingState::Unbound) {
                                 binding_inputs.push(CreateCitationTargetBinding {
                                     research_case_id: catalog.research_case_id.clone(),
-                                    citation_target_id: target_id,
+                                    citation_target_id: mapping.citation_target_id.clone(),
                                     source_id: plan
                                         .chosen_source_id
                                         .clone()
@@ -228,9 +228,9 @@ impl ResearchService {
             candidate.resolution_entry_id = entry.id.clone();
         }
 
-        if !binding_inputs.is_empty() {
-            self.create_citation_target_bindings(binding_inputs).await?;
-        }
+        let binding_values = self
+            .prepare_citation_target_bindings(binding_inputs)
+            .await?;
         let created_at_ms = now_ms();
         let resolved_entry_count = resolution_entries
             .iter()
@@ -290,28 +290,38 @@ impl ResearchService {
             completed_at_ms: Some(now_ms()),
             failure_code: None,
         };
-        let persisted = self
+        let resolution_write = ManuscriptReferenceResolutionWrite {
+            run,
+            entries: resolution_entries,
+            candidates,
+        };
+        let resolution_run_id = resolution_write.run.id.clone();
+        let (persisted, created_bindings) = self
             .repository
-            .persist_manuscript_reference_resolution(&ManuscriptReferenceResolutionWrite {
-                run,
-                entries: resolution_entries,
-                candidates,
-            })
+            .persist_manuscript_reference_resolution_with_bindings(
+                &resolution_write,
+                &binding_values,
+            )
             .await?;
-        self.publish(
-            "research.manuscriptReferenceResolutionCompleted",
-            json!({
-                "resolution_run_id": persisted.id,
-                "research_case_id": persisted.research_case_id,
-                "catalog_run_id": persisted.catalog_run_id,
-                "status": persisted.status,
-                "entry_count": persisted.entry_count,
-                "resolved_entry_count": persisted.resolved_entry_count,
-                "candidate_entry_count": persisted.candidate_entry_count,
-                "unresolved_entry_count": persisted.unresolved_entry_count,
-                "conflict_entry_count": persisted.conflict_entry_count,
-            }),
-        );
+        for binding in created_bindings {
+            self.publish_citation_target_bound(&binding);
+        }
+        if persisted.id == resolution_run_id {
+            self.publish(
+                "research.manuscriptReferenceResolutionCompleted",
+                json!({
+                    "resolution_run_id": persisted.id,
+                    "research_case_id": persisted.research_case_id,
+                    "catalog_run_id": persisted.catalog_run_id,
+                    "status": persisted.status,
+                    "entry_count": persisted.entry_count,
+                    "resolved_entry_count": persisted.resolved_entry_count,
+                    "candidate_entry_count": persisted.candidate_entry_count,
+                    "unresolved_entry_count": persisted.unresolved_entry_count,
+                    "conflict_entry_count": persisted.conflict_entry_count,
+                }),
+            );
+        }
         Ok(persisted)
     }
 
@@ -718,36 +728,36 @@ impl ResearchService {
         ))
     }
 
-    async fn existing_binding_state(
+    async fn target_binding_states(
         &self,
         mappings: &[ManuscriptReferenceTargetMapping],
         plan: &EntryPlan,
         case_id: &ResearchCaseId,
-    ) -> Result<ExistingBindingState, ResearchError> {
-        let mut has_unbound = false;
+    ) -> Result<Vec<TargetBindingState>, ResearchError> {
+        let mut states = Vec::with_capacity(mappings.len());
         for mapping in mappings {
-            match self
-                .repository
-                .latest_citation_target_binding(&mapping.citation_target_id)
-                .await?
-            {
-                Some(binding) if binding_matches_plan(&binding, plan, case_id) => {}
-                Some(_) => return Ok(ExistingBindingState::Conflict),
-                None => has_unbound = true,
-            }
+            states.push(
+                match self
+                    .repository
+                    .latest_citation_target_binding(&mapping.citation_target_id)
+                    .await?
+                {
+                    Some(binding) if binding_matches_plan(&binding, plan, case_id) => {
+                        TargetBindingState::Equivalent
+                    }
+                    Some(_) => TargetBindingState::Conflict,
+                    None => TargetBindingState::Unbound,
+                },
+            );
         }
-        Ok(if has_unbound {
-            ExistingBindingState::Unbound
-        } else {
-            ExistingBindingState::AlreadyBound
-        })
+        Ok(states)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum ExistingBindingState {
+enum TargetBindingState {
     Unbound,
-    AlreadyBound,
+    Equivalent,
     Conflict,
 }
 

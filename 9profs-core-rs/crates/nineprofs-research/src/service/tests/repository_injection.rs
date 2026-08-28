@@ -114,6 +114,7 @@ impl_delegating_repository! {
     list_manuscript_reference_resolution_candidates(resolution_entry_id: &ManuscriptReferenceResolutionEntryId) -> Result<Vec<ManuscriptReferenceResolutionCandidate>, ResearchError>;
     get_manuscript_reference_resolution_candidate(id: &ManuscriptReferenceResolutionCandidateId) -> Result<Option<ManuscriptReferenceResolutionCandidate>, ResearchError>;
     persist_manuscript_reference_resolution(value: &ManuscriptReferenceResolutionWrite) -> Result<ManuscriptReferenceResolutionRun, ResearchError>;
+    persist_manuscript_reference_resolution_with_bindings(value: &ManuscriptReferenceResolutionWrite, bindings: &[CitationTargetBinding]) -> Result<(ManuscriptReferenceResolutionRun, Vec<CitationTargetBinding>), ResearchError>;
     list_citation_target_bindings(citation_target_id: &CitationTargetId) -> Result<Vec<CitationTargetBinding>, ResearchError>;
     get_citation_target_binding(id: &CitationTargetBindingId) -> Result<Option<CitationTargetBinding>, ResearchError>;
     latest_citation_target_binding(citation_target_id: &CitationTargetId) -> Result<Option<CitationTargetBinding>, ResearchError>;

@@ -1,11 +1,11 @@
 use sqlx::Row;
 
 use crate::{
-    ContentHash, ManuscriptReferenceCatalogRunId, ManuscriptReferenceEntryId,
-    ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
-    ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
-    ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
-    ManuscriptReferenceResolutionWrite, ResearchError,
+    CitationTargetBinding, ContentHash, ManuscriptReferenceCatalogRunId,
+    ManuscriptReferenceEntryId, ManuscriptReferenceResolutionCandidate,
+    ManuscriptReferenceResolutionCandidateId, ManuscriptReferenceResolutionEntry,
+    ManuscriptReferenceResolutionEntryId, ManuscriptReferenceResolutionRun,
+    ManuscriptReferenceResolutionRunId, ManuscriptReferenceResolutionWrite, ResearchError,
 };
 
 use super::{
@@ -127,8 +127,19 @@ impl SqliteResearchRepository {
         &self,
         value: &ManuscriptReferenceResolutionWrite,
     ) -> Result<ManuscriptReferenceResolutionRun, ResearchError> {
+        let (run, _) = self
+            .persist_manuscript_reference_resolution_with_bindings(value, &[])
+            .await?;
+        Ok(run)
+    }
+
+    pub(super) async fn persist_manuscript_reference_resolution_with_bindings(
+        &self,
+        value: &ManuscriptReferenceResolutionWrite,
+        bindings: &[CitationTargetBinding],
+    ) -> Result<(ManuscriptReferenceResolutionRun, Vec<CitationTargetBinding>), ResearchError> {
         let mut transaction = self.pool.begin().await?;
-        sqlx::query(
+        let run_insert = sqlx::query(
             "INSERT INTO research_manuscript_reference_resolution_runs \
              (id, research_case_id, catalog_run_id, catalog_hash_algorithm, catalog_hash, \
               source_state_hash_algorithm, source_state_hash, resolver_policy_version, status, \
@@ -154,7 +165,24 @@ impl SqliteResearchRepository {
         .bind(value.run.completed_at_ms)
         .bind(&value.run.failure_code)
         .execute(&mut *transaction)
-        .await?;
+        .await;
+        if let Err(error) = run_insert {
+            if is_resolution_run_unique_violation(&error) {
+                drop(transaction);
+                if let Some(existing) = self
+                    .get_manuscript_reference_resolution_for_catalog(
+                        &value.run.catalog_run_id,
+                        &value.run.catalog_hash,
+                        &value.run.source_state_hash,
+                        &value.run.resolver_policy_version,
+                    )
+                    .await?
+                {
+                    return Ok((existing, Vec::new()));
+                }
+            }
+            return Err(error.into());
+        }
 
         for entry in &value.entries {
             sqlx::query(
@@ -210,9 +238,68 @@ impl SqliteResearchRepository {
             .await?;
         }
 
+        let mut created_bindings = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let existing = sqlx::query(
+                "SELECT research_case_id, source_id, source_snapshot_id, extraction_id \
+                 FROM research_citation_target_bindings \
+                 WHERE citation_target_id = ? ORDER BY created_at_ms DESC, id DESC LIMIT 1",
+            )
+            .bind(binding.citation_target_id.as_str())
+            .fetch_optional(&mut *transaction)
+            .await?;
+            if let Some(existing) = existing {
+                let equivalent = existing.get::<String, _>("research_case_id")
+                    == binding.research_case_id.as_str()
+                    && existing.get::<String, _>("source_id") == binding.source_id.as_str()
+                    && existing
+                        .get::<Option<String>, _>("source_snapshot_id")
+                        .as_deref()
+                        == binding.source_snapshot_id.as_ref().map(|id| id.as_str())
+                    && existing
+                        .get::<Option<String>, _>("extraction_id")
+                        .as_deref()
+                        == binding.extraction_id.as_ref().map(|id| id.as_str());
+                if equivalent {
+                    continue;
+                }
+                return Err(ResearchError::Invalid(
+                    "automatic citation binding conflicts with existing citation binding"
+                        .to_owned(),
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO research_citation_target_bindings \
+                 (id, research_case_id, citation_target_id, source_id, source_snapshot_id, extraction_id, method, created_at_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(binding.id.as_str())
+            .bind(binding.research_case_id.as_str())
+            .bind(binding.citation_target_id.as_str())
+            .bind(binding.source_id.as_str())
+            .bind(binding.source_snapshot_id.as_ref().map(|id| id.as_str()))
+            .bind(binding.extraction_id.as_ref().map(|id| id.as_str()))
+            .bind(enum_text(&binding.method))
+            .bind(binding.created_at_ms)
+            .execute(&mut *transaction)
+            .await?;
+            created_bindings.push(binding.clone());
+        }
+
         transaction.commit().await?;
-        Ok(value.run.clone())
+        Ok((value.run.clone(), created_bindings))
     }
+}
+
+fn is_resolution_run_unique_violation(error: &sqlx::Error) -> bool {
+    matches!(
+        error,
+        sqlx::Error::Database(error)
+            if error.code().as_deref() == Some("2067")
+                && error
+                    .message()
+                    .contains("research_manuscript_reference_resolution_runs")
+    )
 }
 
 fn map_resolution_run(

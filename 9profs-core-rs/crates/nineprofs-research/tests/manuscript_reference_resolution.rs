@@ -8,9 +8,9 @@ use nineprofs_research::{
     ManuscriptCitationSyncCitationInput, ManuscriptCitationSyncTargetInput,
     ManuscriptReferenceCatalogCitationInput, ManuscriptReferenceCatalogTargetInput,
     ManuscriptReferenceCatalogWordSourceInput, ManuscriptReferenceCatalogZoteroInput,
-    ManuscriptReferenceResolutionOutcome, ResearchArtifactStore, ResearchService, ResearchSource,
-    ResearchSourceIdentityInput, ResearchSourceIdentityMethod, SourceKind,
-    SqliteResearchRepository, SyncManuscriptCitations, SyncManuscriptReferenceCatalog,
+    ManuscriptReferenceResolutionOutcome, ResearchArtifactStore, ResearchRepository,
+    ResearchService, ResearchSource, ResearchSourceIdentityInput, ResearchSourceIdentityMethod,
+    SourceKind, SqliteResearchRepository, SyncManuscriptCitations, SyncManuscriptReferenceCatalog,
 };
 use sqlx::Row;
 
@@ -28,7 +28,23 @@ async fn fixture(
     target_count: u32,
     reference_source: Option<(SourceKind, String, Option<ResearchSourceIdentityInput>)>,
 ) -> Fixture {
-    let database = Database::in_memory().await.unwrap();
+    fixture_with_database(
+        Database::in_memory().await.unwrap(),
+        key,
+        format,
+        target_count,
+        reference_source,
+    )
+    .await
+}
+
+async fn fixture_with_database(
+    database: Database,
+    key: &str,
+    format: ManuscriptCitationFormat,
+    target_count: u32,
+    reference_source: Option<(SourceKind, String, Option<ResearchSourceIdentityInput>)>,
+) -> Fixture {
     let store = Arc::new(ResearchArtifactStore::new(
         std::env::temp_dir().join(format!(
             "9profs-reference-resolution-{}-{key}",
@@ -375,6 +391,379 @@ async fn equivalent_existing_binding_is_reported_without_duplicate() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn mixed_equivalent_and_unbound_targets_preserve_existing_methods() {
+    let fixture = fixture(
+        "ref-mixed",
+        ManuscriptCitationFormat::Zotero,
+        3,
+        Some((
+            SourceKind::ReferencePdf,
+            "Reference mixed".to_owned(),
+            Some(zotero_identity("ref-mixed")),
+        )),
+    )
+    .await;
+    let (snapshot, extraction) = add_pdf(
+        &fixture,
+        nineprofs_research::PdfExtractionStatus::Ready,
+        "mixed-ready",
+    )
+    .await;
+    let mappings = mappings(&fixture).await;
+    let source_id = fixture.reference_source.as_ref().unwrap().id.clone();
+    let human = fixture
+        .service
+        .create_citation_target_binding(CreateCitationTargetBinding {
+            research_case_id: fixture.case_id.clone(),
+            citation_target_id: mappings[0].citation_target_id.clone(),
+            source_id: source_id.clone(),
+            source_snapshot_id: Some(snapshot.id.clone()),
+            extraction_id: Some(extraction.id.clone()),
+            method: CitationBindingMethod::Human,
+        })
+        .await
+        .unwrap();
+    let imported = fixture
+        .service
+        .create_citation_target_binding(CreateCitationTargetBinding {
+            research_case_id: fixture.case_id.clone(),
+            citation_target_id: mappings[2].citation_target_id.clone(),
+            source_id,
+            source_snapshot_id: Some(snapshot.id),
+            extraction_id: Some(extraction.id.clone()),
+            method: CitationBindingMethod::Imported,
+        })
+        .await
+        .unwrap();
+
+    let run = fixture
+        .service
+        .resolve_manuscript_references(fixture.catalog.id.as_str())
+        .await
+        .unwrap();
+    let entry = fixture
+        .service
+        .list_manuscript_reference_resolution_entries(run.id.as_str())
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(matches!(
+        entry.outcome,
+        ManuscriptReferenceResolutionOutcome::ResolvedExact
+    ));
+
+    let first = fixture
+        .service
+        .list_citation_target_bindings(mappings[0].citation_target_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].id, human.id);
+    assert_eq!(first[0].method, CitationBindingMethod::Human);
+
+    let second = fixture
+        .service
+        .list_citation_target_bindings(mappings[1].citation_target_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(
+        second[0].method,
+        CitationBindingMethod::DeterministicResolver
+    );
+    assert_eq!(
+        second[0].source_snapshot_id,
+        entry.chosen_source_snapshot_id
+    );
+    assert_eq!(second[0].extraction_id, Some(extraction.id));
+
+    let third = fixture
+        .service
+        .list_citation_target_bindings(mappings[2].citation_target_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(third.len(), 1);
+    assert_eq!(third[0].id, imported.id);
+    assert_eq!(third[0].method, CitationBindingMethod::Imported);
+}
+
+#[tokio::test]
+async fn mixed_targets_with_conflict_write_no_new_bindings() {
+    let fixture = fixture(
+        "ref-mixed-conflict",
+        ManuscriptCitationFormat::Zotero,
+        3,
+        Some((
+            SourceKind::Other,
+            "Reference mixed conflict".to_owned(),
+            Some(zotero_identity("ref-mixed-conflict")),
+        )),
+    )
+    .await;
+    let competing_source = fixture
+        .service
+        .create_source(CreateResearchSource {
+            research_case_id: fixture.case_id.clone(),
+            kind: SourceKind::Other,
+            label: "Competing mixed source".to_owned(),
+            identity: None,
+        })
+        .await
+        .unwrap();
+    let mappings = mappings(&fixture).await;
+    let source_id = fixture.reference_source.as_ref().unwrap().id.clone();
+    let preserved = fixture
+        .service
+        .create_citation_target_binding(CreateCitationTargetBinding {
+            research_case_id: fixture.case_id.clone(),
+            citation_target_id: mappings[0].citation_target_id.clone(),
+            source_id,
+            source_snapshot_id: None,
+            extraction_id: None,
+            method: CitationBindingMethod::Human,
+        })
+        .await
+        .unwrap();
+    let conflict = fixture
+        .service
+        .create_citation_target_binding(CreateCitationTargetBinding {
+            research_case_id: fixture.case_id.clone(),
+            citation_target_id: mappings[2].citation_target_id.clone(),
+            source_id: competing_source.id.clone(),
+            source_snapshot_id: None,
+            extraction_id: None,
+            method: CitationBindingMethod::Imported,
+        })
+        .await
+        .unwrap();
+
+    let run = fixture
+        .service
+        .resolve_manuscript_references(fixture.catalog.id.as_str())
+        .await
+        .unwrap();
+    let entry = fixture
+        .service
+        .list_manuscript_reference_resolution_entries(run.id.as_str())
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(matches!(
+        entry.outcome,
+        ManuscriptReferenceResolutionOutcome::ConflictWithExistingBinding
+    ));
+
+    let first = fixture
+        .service
+        .list_citation_target_bindings(mappings[0].citation_target_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].id, preserved.id);
+    let second = fixture
+        .service
+        .list_citation_target_bindings(mappings[1].citation_target_id.as_str())
+        .await
+        .unwrap();
+    assert!(second.is_empty());
+    let third = fixture
+        .service
+        .list_citation_target_bindings(mappings[2].citation_target_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(third.len(), 1);
+    assert_eq!(third[0].id, conflict.id);
+}
+
+#[tokio::test]
+async fn automatic_resolution_rolls_back_a_binding_insert_failure() {
+    let fixture = fixture(
+        "ref-atomic",
+        ManuscriptCitationFormat::Zotero,
+        2,
+        Some((
+            SourceKind::Other,
+            "Reference atomic".to_owned(),
+            Some(zotero_identity("ref-atomic")),
+        )),
+    )
+    .await;
+    let entries = fixture
+        .service
+        .list_manuscript_reference_entries(fixture.catalog.id.as_str())
+        .await
+        .unwrap();
+    let mappings = mappings(&fixture).await;
+    let source_id = fixture.reference_source.as_ref().unwrap().id.clone();
+    let resolution_run = nineprofs_research::ManuscriptReferenceResolutionRun {
+        id: nineprofs_research::ManuscriptReferenceResolutionRunId::new(),
+        research_case_id: fixture.case_id.clone(),
+        catalog_run_id: fixture.catalog.id.clone(),
+        catalog_hash: fixture.catalog.catalog_hash.clone(),
+        source_state_hash: fixture.catalog.catalog_hash.clone(),
+        resolver_policy_version: "test".to_owned(),
+        status: nineprofs_research::ManuscriptReferenceResolutionStatus::Completed,
+        entry_count: 1,
+        resolved_entry_count: 1,
+        candidate_entry_count: 0,
+        unresolved_entry_count: 0,
+        conflict_entry_count: 0,
+        created_at_ms: 0,
+        completed_at_ms: Some(0),
+        failure_code: None,
+    };
+    let resolution_entry = nineprofs_research::ManuscriptReferenceResolutionEntry {
+        id: nineprofs_research::ManuscriptReferenceResolutionEntryId::new(),
+        resolution_run_id: resolution_run.id.clone(),
+        reference_entry_id: entries[0].id.clone(),
+        outcome: ManuscriptReferenceResolutionOutcome::ResolvedExact,
+        match_kind: Some(
+            nineprofs_research::ManuscriptReferenceResolutionMatchKind::ExactZoteroItemId,
+        ),
+        chosen_source_id: Some(source_id.clone()),
+        chosen_source_snapshot_id: None,
+        chosen_extraction_id: None,
+        automatic_binding_permitted: true,
+        candidate_count: 1,
+    };
+    let resolution_entry_id = resolution_entry.id.clone();
+    let resolution_candidate = nineprofs_research::ManuscriptReferenceResolutionCandidate {
+        id: nineprofs_research::ManuscriptReferenceResolutionCandidateId::new(),
+        resolution_entry_id: resolution_entry_id.clone(),
+        ordinal: 0,
+        source_id: source_id.clone(),
+        source_snapshot_id: None,
+        extraction_id: None,
+        match_kind: nineprofs_research::ManuscriptReferenceResolutionMatchKind::ExactZoteroItemId,
+        automatic_binding_permitted: true,
+    };
+    let valid_binding = nineprofs_research::CitationTargetBinding {
+        id: nineprofs_research::CitationTargetBindingId::new(),
+        research_case_id: fixture.case_id.clone(),
+        citation_target_id: mappings[0].citation_target_id.clone(),
+        source_id: source_id.clone(),
+        source_snapshot_id: None,
+        extraction_id: None,
+        method: CitationBindingMethod::DeterministicResolver,
+        created_at_ms: 0,
+    };
+    let duplicate_id_binding = nineprofs_research::CitationTargetBinding {
+        citation_target_id: mappings[1].citation_target_id.clone(),
+        ..valid_binding.clone()
+    };
+    let repository = SqliteResearchRepository::new(fixture.database.pool().clone());
+    let result = repository
+        .persist_manuscript_reference_resolution_with_bindings(
+            &nineprofs_research::ManuscriptReferenceResolutionWrite {
+                run: resolution_run.clone(),
+                entries: vec![resolution_entry],
+                candidates: vec![resolution_candidate],
+            },
+            &[valid_binding, duplicate_id_binding],
+        )
+        .await;
+    assert!(result.is_err());
+
+    for (table, column, id) in [
+        (
+            "research_manuscript_reference_resolution_runs",
+            "id",
+            resolution_run.id.as_str(),
+        ),
+        (
+            "research_manuscript_reference_resolution_entries",
+            "resolution_run_id",
+            resolution_run.id.as_str(),
+        ),
+        (
+            "research_manuscript_reference_resolution_candidates",
+            "resolution_entry_id",
+            resolution_entry_id.as_str(),
+        ),
+    ] {
+        let query = format!("SELECT COUNT(*) AS count FROM {table} WHERE {column} = ?");
+        let count = sqlx::query(&query)
+            .bind(id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap()
+            .get::<i64, _>("count");
+        assert_eq!(count, 0, "{table} retained rolled-back state");
+    }
+    let binding_count = sqlx::query(
+        "SELECT COUNT(*) AS count FROM research_citation_target_bindings \
+         WHERE citation_target_id IN (?, ?)",
+    )
+    .bind(mappings[0].citation_target_id.as_str())
+    .bind(mappings[1].citation_target_id.as_str())
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap()
+    .get::<i64, _>("count");
+    assert_eq!(binding_count, 0);
+}
+
+#[tokio::test]
+async fn concurrent_equivalent_resolutions_converge_on_one_run_and_bindings() {
+    let database_path = std::env::temp_dir().join(format!(
+        "9profs-reference-resolution-concurrent-{}.sqlite",
+        nineprofs_research::ResearchCaseId::new()
+    ));
+    let fixture = fixture_with_database(
+        Database::open(&database_path).await.unwrap(),
+        "ref-concurrent",
+        ManuscriptCitationFormat::Zotero,
+        2,
+        Some((
+            SourceKind::Other,
+            "Reference concurrent".to_owned(),
+            Some(zotero_identity("ref-concurrent")),
+        )),
+    )
+    .await;
+    let mappings = mappings(&fixture).await;
+    let catalog_id = fixture.catalog.id.to_string();
+    let left = fixture.service.clone();
+    let right = fixture.service.clone();
+    let (first, second) = tokio::join!(
+        left.resolve_manuscript_references(&catalog_id),
+        right.resolve_manuscript_references(&catalog_id),
+    );
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_eq!(first.id, second.id);
+
+    let run_count = sqlx::query(
+        "SELECT COUNT(*) AS count FROM research_manuscript_reference_resolution_runs \
+         WHERE catalog_run_id = ?",
+    )
+    .bind(fixture.catalog.id.as_str())
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap()
+    .get::<i64, _>("count");
+    assert_eq!(run_count, 1);
+    for mapping in mappings {
+        let bindings = fixture
+            .service
+            .list_citation_target_bindings(mapping.citation_target_id.as_str())
+            .await
+            .unwrap();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(
+            bindings[0].method,
+            CitationBindingMethod::DeterministicResolver
+        );
+    }
+
+    drop(left);
+    drop(right);
+    fixture.database.close().await;
+    drop(fixture);
+    std::fs::remove_file(database_path).ok();
 }
 
 #[tokio::test]
