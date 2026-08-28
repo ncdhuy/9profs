@@ -13,6 +13,9 @@ use super::{
     common::{enum_text, json_column, json_text},
 };
 
+const COMPLETED_IDENTITY_INDEX: &str =
+    "idx_research_manuscript_claim_inventory_runs_completed_identity";
+
 impl SqliteResearchRepository {
     pub(super) async fn get_manuscript_claim_inventory_run(
         &self,
@@ -43,6 +46,7 @@ impl SqliteResearchRepository {
         extractor_version: &str,
         extractor_model_id: Option<&str>,
         extraction_contract_version: &str,
+        coverage_contract_version: &str,
     ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError> {
         let row = sqlx::query(
             "SELECT id, research_case_id, manuscript_source_id, document_id, document_version, \
@@ -54,8 +58,9 @@ impl SqliteResearchRepository {
              WHERE research_case_id = ? AND manuscript_source_id = ? AND document_id = ? \
              AND document_version = ? AND document_context_hash_algorithm = ? \
              AND document_context_hash = ? AND extractor_provider = ? AND extractor_version = ? \
-             AND extractor_model_id IS ? AND extraction_contract_version = ? \
-             AND status = 'completed' ORDER BY created_at_ms DESC, id DESC LIMIT 1",
+              AND extractor_model_id IS ? AND extraction_contract_version = ? \
+              AND coverage_contract_version = ? \
+              AND status = 'completed' ORDER BY created_at_ms DESC, id DESC LIMIT 1",
         )
         .bind(research_case_id.as_str())
         .bind(manuscript_source_id.as_str())
@@ -67,6 +72,7 @@ impl SqliteResearchRepository {
         .bind(extractor_version)
         .bind(extractor_model_id)
         .bind(extraction_contract_version)
+        .bind(coverage_contract_version)
         .fetch_optional(&self.pool)
         .await?;
         row.map(map_manuscript_claim_inventory_run).transpose()
@@ -112,56 +118,31 @@ impl SqliteResearchRepository {
         &self,
         value: &ManuscriptClaimInventoryWrite,
     ) -> Result<ManuscriptClaimInventoryRun, ResearchError> {
+        if matches!(&value.run.status, ManuscriptClaimInventoryStatus::Failed)
+            && (value.run.item_count != 0
+                || value.run.covered_block_count != 0
+                || !value.items.is_empty()
+                || !value.coverage.is_empty())
+        {
+            return Err(ResearchError::Invalid(
+                "failed claim inventory runs must not persist items or coverage".to_owned(),
+            ));
+        }
+        if matches!(&value.run.status, ManuscriptClaimInventoryStatus::Completed)
+            && value.run.covered_block_count as usize != value.coverage.len()
+        {
+            return Err(ResearchError::Invalid(
+                "completed claim inventory coverage count must match persisted coverage".to_owned(),
+            ));
+        }
+        if let Some(existing) = self
+            .get_manuscript_claim_inventory_run(&value.run.id)
+            .await?
+        {
+            return Ok(existing);
+        }
         let mut transaction = self.pool.begin().await?;
-        if let Some(row) = sqlx::query(
-            "SELECT id, research_case_id, manuscript_source_id, document_id, document_version, \
-             document_context_hash_algorithm, document_context_hash, extractor_provider, \
-             extractor_version, extractor_model_id, extraction_contract_version, \
-             coverage_contract_version, coverage_scope, coverage_limitations_json, status, \
-             item_count, covered_block_count, created_at_ms, completed_at_ms, failure_code \
-             FROM research_manuscript_claim_inventory_runs WHERE id = ?",
-        )
-        .bind(value.run.id.as_str())
-        .fetch_optional(&mut *transaction)
-        .await?
-        {
-            let existing = map_manuscript_claim_inventory_run(row)?;
-            transaction.commit().await?;
-            return Ok(existing);
-        }
-
-        if let Some(row) = sqlx::query(
-            "SELECT id, research_case_id, manuscript_source_id, document_id, document_version, \
-             document_context_hash_algorithm, document_context_hash, extractor_provider, \
-             extractor_version, extractor_model_id, extraction_contract_version, \
-             coverage_contract_version, coverage_scope, coverage_limitations_json, status, \
-             item_count, covered_block_count, created_at_ms, completed_at_ms, failure_code \
-             FROM research_manuscript_claim_inventory_runs \
-             WHERE research_case_id = ? AND manuscript_source_id = ? AND document_id = ? \
-             AND document_version = ? AND document_context_hash_algorithm = ? \
-             AND document_context_hash = ? AND extractor_provider = ? AND extractor_version = ? \
-             AND extractor_model_id IS ? AND extraction_contract_version = ? \
-             AND status = 'completed' ORDER BY created_at_ms DESC, id DESC LIMIT 1",
-        )
-        .bind(value.run.research_case_id.as_str())
-        .bind(value.run.manuscript_source_id.as_str())
-        .bind(&value.run.document_id)
-        .bind(value.run.document_version)
-        .bind(enum_text(&value.run.document_context_hash.algorithm))
-        .bind(&value.run.document_context_hash.value)
-        .bind(&value.run.extractor_provider)
-        .bind(&value.run.extractor_version)
-        .bind(value.run.extractor_model_id.as_deref())
-        .bind(&value.run.extraction_contract_version)
-        .fetch_optional(&mut *transaction)
-        .await?
-        {
-            let existing = map_manuscript_claim_inventory_run(row)?;
-            transaction.commit().await?;
-            return Ok(existing);
-        }
-
-        sqlx::query(
+        let run_insert = sqlx::query(
             "INSERT INTO research_manuscript_claim_inventory_runs \
              (id, research_case_id, manuscript_source_id, document_id, document_version, \
               document_context_hash_algorithm, document_context_hash, extractor_provider, \
@@ -191,7 +172,30 @@ impl SqliteResearchRepository {
         .bind(value.run.completed_at_ms)
         .bind(&value.run.failure_code)
         .execute(&mut *transaction)
-        .await?;
+        .await;
+        if let Err(error) = run_insert {
+            if is_completed_identity_unique_violation(&error) {
+                drop(transaction);
+                if let Some(existing) = self
+                    .find_completed_manuscript_claim_inventory(
+                        &value.run.research_case_id,
+                        &value.run.manuscript_source_id,
+                        &value.run.document_id,
+                        value.run.document_version,
+                        &value.run.document_context_hash,
+                        &value.run.extractor_provider,
+                        &value.run.extractor_version,
+                        value.run.extractor_model_id.as_deref(),
+                        &value.run.extraction_contract_version,
+                        &value.run.coverage_contract_version,
+                    )
+                    .await?
+                {
+                    return Ok(existing);
+                }
+            }
+            return Err(error.into());
+        }
 
         for item in &value.items {
             sqlx::query(
@@ -245,6 +249,15 @@ impl SqliteResearchRepository {
         transaction.commit().await?;
         Ok(value.run.clone())
     }
+}
+
+fn is_completed_identity_unique_violation(error: &sqlx::Error) -> bool {
+    matches!(
+        error,
+        sqlx::Error::Database(error)
+            if error.code().as_deref() == Some("2067")
+                && error.message().contains(COMPLETED_IDENTITY_INDEX)
+    )
 }
 
 fn map_manuscript_claim_inventory_run(

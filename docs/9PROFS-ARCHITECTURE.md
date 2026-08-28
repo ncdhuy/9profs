@@ -541,7 +541,7 @@ For original audit evidence and phase-specific rationale, see
   projection, and verification. Docs supplies live citation observations and
   exact PM-atom navigation without mutating the document or bypassing the
   save pipeline.
-- 5D1 (CURRENT): Whole-Manuscript Claim Inventory. Docs supplies every
+- 5D1 Claim Inventory (IMPLEMENTED): Whole-Manuscript Claim Inventory. Docs supplies every
   eligible visible paragraph, heading, and list-item block, including uncited
   blocks; Core persists bounded observation-first claims, coverage, Unicode
   source ranges, compact review kinds, provider identity, and explicit scope
@@ -550,14 +550,9 @@ For original audit evidence and phase-specific rationale, see
 
 ### Next/future
 
-- 5C3C2: Docs citation review UI. The References ribbon opens a
-  dedicated read-only panel that selects a ResearchCase and manuscript
-  ResearchSource, submits one live-document review request, renders Core's
-  persisted review projection, and navigates only to exact PM citation atoms.
-  Candidate confirmation uses the trusted Core API and invalidates the review
-  until a new review is started; the panel never mutates the document or
-  orchestrates lower stages.
-- 5D2: whole-manuscript Research review projection and downstream workflows.
+- 5D2 Coverage Analysis (NEXT): whole-manuscript claim/citation coverage analysis.
+- 5D3 Cross-Claim Review (FUTURE): cross-claim contradiction and consistency review.
+- 5D4 Whole Review UI (FUTURE): whole-manuscript review experience.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.
 

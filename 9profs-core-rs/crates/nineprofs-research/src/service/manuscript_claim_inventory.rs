@@ -80,13 +80,14 @@ impl ResearchService {
                 &identity.extractor_version,
                 identity.model_id.as_deref(),
                 &identity.extraction_contract_version,
+                MANUSCRIPT_CLAIM_INVENTORY_COVERAGE_CONTRACT_VERSION,
             )
             .await?
         {
             return Ok(existing);
         }
 
-        let timestamp = now_ms();
+        let created_at_ms = now_ms();
         let run_id = ManuscriptClaimInventoryRunId::new();
         let base_run = || ManuscriptClaimInventoryRun {
             id: run_id.clone(),
@@ -108,9 +109,9 @@ impl ResearchService {
                 .collect(),
             status: ManuscriptClaimInventoryStatus::Failed,
             item_count: 0,
-            covered_block_count: input.blocks.len() as u32,
-            created_at_ms: timestamp,
-            completed_at_ms: Some(timestamp),
+            covered_block_count: 0,
+            created_at_ms,
+            completed_at_ms: None,
             failure_code: None,
         };
 
@@ -202,7 +203,10 @@ impl ResearchService {
         let mut run = base_run();
         run.status = ManuscriptClaimInventoryStatus::Completed;
         run.item_count = items.len() as u32;
+        run.covered_block_count = coverage.len() as u32;
+        run.completed_at_ms = Some(now_ms());
         run.failure_code = None;
+        let candidate_run_id = run.id.clone();
         let result = self
             .repository
             .persist_manuscript_claim_inventory(&ManuscriptClaimInventoryWrite {
@@ -211,19 +215,21 @@ impl ResearchService {
                 coverage,
             })
             .await?;
-        self.publish(
-            "research.manuscriptClaimInventoryCompleted",
-            json!({
-                "inventory_run_id": result.id,
-                "research_case_id": result.research_case_id,
-                "manuscript_source_id": result.manuscript_source_id,
-                "document_id": result.document_id,
-                "document_version": result.document_version,
-                "item_count": result.item_count,
-                "covered_block_count": result.covered_block_count,
-                "status": result.status,
-            }),
-        );
+        if result.id == candidate_run_id {
+            self.publish(
+                "research.manuscriptClaimInventoryCompleted",
+                json!({
+                    "inventory_run_id": result.id,
+                    "research_case_id": result.research_case_id,
+                    "manuscript_source_id": result.manuscript_source_id,
+                    "document_id": result.document_id,
+                    "document_version": result.document_version,
+                    "item_count": result.item_count,
+                    "covered_block_count": result.covered_block_count,
+                    "status": result.status,
+                }),
+            );
+        }
         Ok(result)
     }
 
@@ -234,6 +240,8 @@ impl ResearchService {
     ) -> Result<(), ResearchError> {
         run.status = ManuscriptClaimInventoryStatus::Failed;
         run.item_count = 0;
+        run.covered_block_count = 0;
+        run.completed_at_ms = Some(now_ms());
         run.failure_code = Some(code.to_owned());
         let result = self
             .repository

@@ -339,6 +339,7 @@ pub trait ResearchRepository: Send + Sync {
         extractor_version: &str,
         extractor_model_id: Option<&str>,
         extraction_contract_version: &str,
+        coverage_contract_version: &str,
     ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError>;
     async fn list_manuscript_claim_inventory_items(
         &self,
@@ -908,6 +909,7 @@ impl ResearchRepository for SqliteResearchRepository {
         extractor_version: &str,
         extractor_model_id: Option<&str>,
         extraction_contract_version: &str,
+        coverage_contract_version: &str,
     ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError> {
         self.find_completed_manuscript_claim_inventory(
             research_case_id,
@@ -919,6 +921,7 @@ impl ResearchRepository for SqliteResearchRepository {
             extractor_version,
             extractor_model_id,
             extraction_contract_version,
+            coverage_contract_version,
         )
         .await
     }
