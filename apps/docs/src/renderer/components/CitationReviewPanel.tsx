@@ -67,8 +67,20 @@ const ATTENTION_STATUSES = new Set<CitationReviewItem['status']>([
   'resolution_failed',
 ])
 
+const CANDIDATE_CONFIRMATION_STATUSES = new Set<CitationReviewItem['status']>([
+  'reference_requires_confirmation',
+  'ambiguous_reference',
+])
+
 export function citationReviewNeedsAttention(item: Pick<CitationReviewItem, 'status'>): boolean {
   return ATTENTION_STATUSES.has(item.status)
+}
+
+/** Historical candidates are displayed for audit, but only these effective item states allow action. */
+export function citationReviewAllowsCandidateConfirmation(
+  item: Pick<CitationReviewItem, 'status' | 'candidates'>,
+): boolean {
+  return CANDIDATE_CONFIRMATION_STATUSES.has(item.status) && item.candidates.length > 0
 }
 
 function textOrDash(value: string | null | undefined): string {
@@ -299,6 +311,7 @@ export function CitationReviewPanel({
   const firstVisibleCandidateItemByEntry = useMemo(() => {
     const first = new Map<string, string>()
     for (const item of filteredItems) {
+      if (!citationReviewAllowsCandidateConfirmation(item)) continue
       for (const candidate of item.candidates) {
         if (!first.has(candidate.resolutionEntryId)) {
           first.set(candidate.resolutionEntryId, item.itemId)
@@ -590,8 +603,9 @@ export function CitationReviewPanel({
                     : (item.candidates[0]?.sourceLabel ?? null)
                   const showCandidateControls = item.candidates.some(
                     (candidate) =>
+                      citationReviewAllowsCandidateConfirmation(item) &&
                       firstVisibleCandidateItemByEntry.get(candidate.resolutionEntryId) ===
-                      item.itemId,
+                        item.itemId,
                   )
                   return (
                     <article className="citation-review-card" key={item.itemId}>

@@ -5,11 +5,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
 import type { CitationReviewItem, CitationReviewRun, CoreTransport } from '@genoffice/9profs-core'
 import type { DocxCitation, Run } from '@genoffice/docx-engine'
-import { blocksToPmDoc } from '../src/renderer/editor/convert'
+import {
+  blocksToPmDoc,
+  extractDocxCitationsFromPmDoc,
+  type PmNode,
+} from '../src/renderer/editor/convert'
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { findCitationNodePosition } from '../src/renderer/editor/citation-review-navigation'
 import {
   CitationReviewPanel,
+  citationReviewAllowsCandidateConfirmation,
   citationReviewNeedsAttention,
 } from '../src/renderer/components/CitationReviewPanel'
 
@@ -33,9 +38,9 @@ const citation: DocxCitation = {
   originalXml: '<w:r><w:t>[12,13]</w:t></w:r>',
 }
 
-function editorForCitation(): Editor {
+function editorForCitation(prefix = 'Drug A works '): Editor {
   const runs: Run[] = [
-    { text: 'Drug A works ' },
+    { text: prefix },
     { text: citation.renderedText, citation },
     { text: ' in adults.' },
   ]
@@ -75,7 +80,11 @@ function reviewRun(): CitationReviewRun {
   }
 }
 
-function reviewItem(referenceKey: string, itemId: string): CitationReviewItem {
+function reviewItem(
+  referenceKey: string,
+  itemId: string,
+  overrides: Partial<CitationReviewItem> = {},
+): CitationReviewItem {
   return {
     itemId,
     reviewRunId: 'review-1' as never,
@@ -117,6 +126,21 @@ function reviewItem(referenceKey: string, itemId: string): CitationReviewItem {
     ],
     verification: null,
     evidence: [],
+    ...overrides,
+  }
+}
+
+function completedVerification(): NonNullable<CitationReviewItem['verification']> {
+  return {
+    verificationRunId: 'verification-1' as never,
+    status: 'completed',
+    failureCode: null,
+    relation: 'supports',
+    rationale: 'The evidence supports the claim.',
+    assessorProvider: 'core',
+    assessorVersion: '1',
+    assessorModelId: 'model-1',
+    completedAtMs: 3,
   }
 }
 
@@ -150,16 +174,32 @@ async function flush() {
 }
 
 describe('citation review navigation', () => {
-  it('resolves grouped targets to the citation atom and fails closed without fuzzy matching', () => {
-    const editor = editorForCitation()
-    const first = reviewItem('12', 'item-12')
-    const second = reviewItem('13', 'item-13')
+  it('resolves Unicode-offset grouped targets to the citation atom and fails closed', () => {
+    const editor = editorForCitation('研究 🧬 cho thấy ')
+    const descriptor = extractDocxCitationsFromPmDoc(editor.getJSON() as PmNode)[0]
+    const first = reviewItem('12', 'item-12', {
+      documentBlockId: descriptor.blockId,
+      start: descriptor.start,
+      end: descriptor.end,
+      renderedText: descriptor.renderedText,
+    })
+    const second = reviewItem('13', 'item-13', {
+      documentBlockId: descriptor.blockId,
+      start: descriptor.start,
+      end: descriptor.end,
+      renderedText: descriptor.renderedText,
+    })
     const firstPosition = findCitationNodePosition(editor, first)
     const secondPosition = findCitationNodePosition(editor, second)
+    let actualPosition = -1
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'docxCitation') actualPosition = pos
+    })
+    expect(firstPosition).toBe(actualPosition)
     expect(firstPosition).toBeGreaterThan(0)
+    expect(firstPosition).not.toBe(descriptor.start)
     expect(secondPosition).toBe(firstPosition)
     expect(findCitationNodePosition(editor, { ...first, referenceKey: 'missing' })).toBeNull()
-    expect(editor.getJSON()).toEqual(editor.getJSON())
   })
 })
 
@@ -193,6 +233,19 @@ describe('citation review panel', () => {
       confirmManuscriptReferenceCandidate,
     } as unknown as CoreTransport
     return { transport, activeDocument, confirmManuscriptReferenceCandidate }
+  }
+
+  async function loadPanel(items: CitationReviewItem[]) {
+    const editor = editorForCitation()
+    const { transport, activeDocument, confirmManuscriptReferenceCandidate } = transportFor(items)
+    const rendered = renderPanel(transport, editor)
+    await flush()
+    await flush()
+    await act(async () => {
+      rendered.container.querySelector<HTMLButtonElement>('.citation-review-start')?.click()
+    })
+    await flush()
+    return { editor, rendered, activeDocument, confirmManuscriptReferenceCandidate }
   }
 
   it('shows separate target cards, one confirmation control per shared resolution entry, and no editor mutation', async () => {
@@ -260,6 +313,95 @@ describe('citation review panel', () => {
       rendered.container.querySelector<HTMLButtonElement>('.citation-review-confirm')?.disabled,
     ).toBe(true)
     expect(activeDocument).toHaveBeenCalled()
+    rendered.unmount()
+  })
+
+  it('keeps historical candidates visible without actions for Human-bound effective states', async () => {
+    const fixtures: Array<Partial<CitationReviewItem>> = [
+      {
+        status: 'verification_completed',
+        bindingId: 'binding-human',
+        bindingMethod: 'human',
+        verification: completedVerification(),
+      },
+      {
+        status: 'source_matched_not_verification_ready',
+        bindingId: 'binding-human',
+        bindingMethod: 'human',
+      },
+    ]
+    for (const overrides of fixtures) {
+      const { rendered } = await loadPanel([reviewItem('12', 'item-12', overrides)])
+      expect(rendered.container.querySelectorAll('.citation-review-details')).toHaveLength(2)
+      expect(rendered.container.querySelectorAll('.citation-review-confirm')).toHaveLength(0)
+      rendered.unmount()
+    }
+    expect(
+      citationReviewAllowsCandidateConfirmation(
+        reviewItem('12', 'item-12', { status: 'verification_completed' }),
+      ),
+    ).toBe(false)
+    for (const status of [
+      'source_matched_not_verification_ready',
+      'ready_for_verification',
+      'verification_running',
+      'verification_completed',
+      'verification_failed',
+      'binding_conflict',
+      'unresolved_reference',
+      'resolution_failed',
+    ] as const) {
+      expect(
+        citationReviewAllowsCandidateConfirmation(reviewItem('12', 'item-12', { status })),
+      ).toBe(false)
+    }
+  })
+
+  it('allows ambiguous references to choose persisted candidates once per grouped entry', async () => {
+    const base = reviewItem('12', 'item-12')
+    const candidates = [
+      ...base.candidates,
+      { ...base.candidates[0], candidateId: 'candidate-13', ordinal: 2 },
+    ]
+    const first = reviewItem('12', 'item-12', {
+      status: 'ambiguous_reference',
+      candidates,
+    })
+    const second = reviewItem('13', 'item-13', {
+      status: 'ambiguous_reference',
+      candidates,
+    })
+    const { rendered } = await loadPanel([first, second])
+    expect(rendered.container.querySelectorAll('.citation-review-card')).toHaveLength(2)
+    expect(rendered.container.querySelectorAll('.citation-review-confirm')).toHaveLength(2)
+    rendered.unmount()
+  })
+
+  it('does not resurrect confirmation through All, Needs attention, or relation filters', async () => {
+    const { rendered } = await loadPanel([
+      reviewItem('12', 'item-12', {
+        status: 'verification_completed',
+        bindingId: 'binding-human',
+        bindingMethod: 'human',
+        verification: completedVerification(),
+      }),
+    ])
+    const filter = rendered.container.querySelector<HTMLSelectElement>('.citation-review-filter')
+    expect(filter).not.toBeNull()
+    for (const value of [
+      'all',
+      'needs',
+      'supports',
+      'contradicts',
+      'contextualizes',
+      'insufficient',
+    ]) {
+      await act(async () => {
+        filter!.value = value
+        filter!.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      expect(rendered.container.querySelectorAll('.citation-review-confirm')).toHaveLength(0)
+    }
     rendered.unmount()
   })
 
