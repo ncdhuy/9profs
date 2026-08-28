@@ -543,7 +543,13 @@ For original audit evidence and phase-specific rationale, see
 
 ### Next/future
 
-- 5C3C2 (NEXT/FUTURE): Docs citation review UI.
+- 5C3C2 (CURRENT): Docs citation review UI. The References ribbon opens a
+  dedicated read-only panel that selects a ResearchCase and manuscript
+  ResearchSource, submits one live-document review request, renders Core's
+  persisted review projection, and navigates only to exact PM citation atoms.
+  Candidate confirmation uses the trusted Core API and invalidates the review
+  until a new review is started; the panel never mutates the document or
+  orchestrates lower stages.
 - 5D: whole-manuscript Research review.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.

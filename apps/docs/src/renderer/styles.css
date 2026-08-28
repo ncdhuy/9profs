@@ -2813,6 +2813,290 @@ th.cell-rev-del {
   gap: 8px;
 }
 
+.citation-review-pane {
+  width: 380px;
+}
+
+.citation-review-pane .comments-pane-head {
+  align-items: flex-start;
+}
+
+.citation-review-mode {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.citation-review-scroll {
+  min-width: 0;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.citation-review-context,
+.citation-review-summary {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.citation-review-context h2,
+.citation-review-summary h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.citation-review-context label,
+.citation-review-filter-label {
+  display: block;
+  margin: 8px 0 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.citation-review-context select,
+.citation-review-context input,
+.citation-review-filter {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.citation-review-create-row {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.citation-review-create-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.citation-review-create-row button,
+.citation-review-start {
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.citation-review-start {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.citation-review-help,
+.citation-review-state,
+.citation-review-error,
+.citation-review-message,
+.citation-review-stale,
+.citation-review-no-evidence {
+  margin: 8px 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.citation-review-error,
+.citation-review-stale {
+  color: var(--danger, #b42318);
+}
+
+.citation-review-message {
+  color: var(--text);
+}
+
+.citation-review-summary-head,
+.citation-review-card-head,
+.citation-review-counts,
+.citation-review-relations,
+.citation-review-candidate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.citation-review-run-status,
+.citation-review-item-status {
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.citation-review-item-status.status-reference_requires_confirmation,
+.citation-review-item-status.status-binding_conflict,
+.citation-review-item-status.status-verification_failed,
+.citation-review-item-status.status-resolution_failed,
+.citation-review-item-status.status-unresolved_reference,
+.citation-review-item-status.status-ambiguous_reference {
+  color: var(--danger, #b42318);
+}
+
+.citation-review-counts,
+.citation-review-relations {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.citation-review-relations span {
+  padding-right: 8px;
+}
+
+.citation-review-filter-label,
+.citation-review-filter {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+
+.citation-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.citation-review-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 9px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.citation-review-card-number {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.citation-review-go,
+.citation-review-confirm {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.citation-review-go:hover,
+.citation-review-confirm:hover {
+  background: var(--hover);
+}
+
+.citation-review-go:disabled,
+.citation-review-confirm:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.citation-review-fields,
+.citation-review-details dl {
+  margin: 9px 0 0;
+}
+
+.citation-review-fields > div,
+.citation-review-details dl > div {
+  margin-top: 6px;
+}
+
+.citation-review-fields dt,
+.citation-review-details dt {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.citation-review-fields dd,
+.citation-review-details dd {
+  margin: 1px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.citation-review-relation,
+.citation-review-rationale {
+  margin: 9px 0 0;
+  line-height: 1.4;
+}
+
+.citation-review-evidence {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+}
+
+.citation-review-evidence h3 {
+  margin: 0 0 5px;
+  font-size: 11px;
+}
+
+.citation-review-evidence blockquote {
+  margin: 6px 0 0;
+  border-left: 3px solid var(--docs-comment-accent, var(--border));
+  padding: 2px 0 2px 8px;
+}
+
+.citation-review-evidence blockquote p {
+  margin: 0 0 3px;
+  white-space: pre-wrap;
+}
+
+.citation-review-evidence cite {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.citation-review-details {
+  margin-top: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+}
+
+.citation-review-details summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.citation-review-candidate {
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+.citation-review-candidate-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.citation-review-confirm {
+  flex: none;
+  margin-top: 0;
+}
+
+.citation-review-confirmed {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
 .comment-card {
   display: block;
   width: 100%;

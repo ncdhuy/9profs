@@ -340,6 +340,7 @@ interface ReferencesTabProps extends TabProps {
   onInsertNote: (kind: 'footnote' | 'endnote') => void
   sources: SourceInfo[]
   onAddSource: (source: SourceInfo) => void
+  onCitationReview: () => void
   /** TOC page-number backfill: docHeadings in document order → real page numbers */
   headingPages?: () => number[] | null
 }
@@ -353,6 +354,7 @@ export function ReferencesTab({
   onInsertNote,
   sources,
   onAddSource,
+  onCitationReview,
   headingPages,
 }: ReferencesTabProps) {
   const { t } = useI18n()
@@ -605,6 +607,17 @@ export function ReferencesTab({
               </div>
             )}
           </div>
+          <button
+            className="rb-big"
+            disabled={!hasDoc}
+            data-tip={t('ribbonCitationReviewTip')}
+            onClick={onCitationReview}
+          >
+            <span className="rb-big-icon">
+              <IconCitation size={BIG} />
+            </span>
+            <span>{t('ribbonCitationReview')}</span>
+          </button>
         </div>
         <div className="ribbon-group-label">{t('ribbonGroupCitationsIndex')}</div>
       </div>

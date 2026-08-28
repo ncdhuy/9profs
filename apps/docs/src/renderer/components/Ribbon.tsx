@@ -163,6 +163,7 @@ interface RibbonProps {
   onInsertNote: (kind: 'footnote' | 'endnote') => void
   sources: SourceInfo[]
   onAddSource: (source: SourceInfo) => void
+  onCitationReview?: () => void
   /** TOC page-number backfill: docHeadings in document order → real page numbers (null when not computable) */
   headingPages?: () => number[] | null
   zoom: number
@@ -575,6 +576,7 @@ function RibbonInner({
   onInsertNote,
   sources,
   onAddSource,
+  onCitationReview,
   headingPages,
   zoom,
   onZoom,
@@ -3268,6 +3270,7 @@ function RibbonInner({
             onInsertNote={onInsertNote}
             sources={sources}
             onAddSource={onAddSource}
+            onCitationReview={onCitationReview ?? (() => undefined)}
             headingPages={headingPages}
           />
         ) : tab === 'review' ? (

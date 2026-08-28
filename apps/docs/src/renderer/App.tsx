@@ -48,6 +48,7 @@ import { executeCommands, type Command } from './ai/commands'
 import { buildDocumentContext } from './ai/protocol'
 import { asianCharCount, countWords, nonAsianWordCount } from './word-count'
 import { CommentsPanel } from './components/CommentsPanel'
+import { CitationReviewPanel } from './components/CitationReviewPanel'
 import { EquationModal } from './components/EquationModal'
 import { HeaderFooterArea } from './components/HeaderFooterArea'
 import { PageFootnotes, PageEndnotes } from './components/PageNoteAreas'
@@ -586,6 +587,7 @@ export function App() {
   const [splitHtml, setSplitHtml] = useState('')
   const [showFind, setShowFind] = useState(false)
   const [showComments, setShowComments] = useState(false)
+  const [showCitationReview, setShowCitationReview] = useState(false)
   /** Style definitions pending write-back (key = styleId), saved via SaveOptions.styleUpserts */
   const [styleUpserts, setStyleUpserts] = useState<Record<string, StyleUpsert>>({})
   const [comments, setComments] = useState<CommentInfo[]>([])
@@ -3626,7 +3628,10 @@ export function App() {
     onShowMarks: setShowMarks,
     onShowRuler: setShowRuler,
     onShowNav: setShowNav,
-    onShowComments: () => setShowComments(true),
+    onShowComments: () => {
+      setShowCitationReview(false)
+      setShowComments(true)
+    },
     onNewComment: startNewComment,
     onTrackChanges: setTrackChanges,
     onRevisionDisplay: setRevisionDisplay,
@@ -3636,7 +3641,16 @@ export function App() {
       if (editor) gotoRevision(editor, dir)
     },
     onProtectDoc: () => setShowProtectDialog(true),
-    onCompare: () => void compareWithFile(),
+    onCompare: () => {
+      setShowCitationReview(false)
+      void compareWithFile()
+    },
+    onCitationReview: () => {
+      cancelNewComment()
+      setShowComments(false)
+      setCompareResult(null)
+      setShowCitationReview(true)
+    },
     onViewMode: setViewMode,
     onReadMode: setReadMode,
     onShowGrid: setShowGrid,
@@ -3648,6 +3662,10 @@ export function App() {
     setShowComments(false)
     cancelNewComment()
   }, [cancelNewComment])
+
+  const closeCitationReviewPanel = useCallback(() => {
+    setShowCitationReview(false)
+  }, [])
 
   const hasDoc = !!doc
   // Undo/redo availability: refreshed on every transaction so the QAT buttons grey out when empty
@@ -4035,6 +4053,15 @@ export function App() {
                 otherName={compareResult.otherName}
                 entries={compareResult.entries}
                 onClose={() => setCompareResult(null)}
+              />
+            )}
+            {doc && editor && showCitationReview && (
+              <CitationReviewPanel
+                key={doc.documentId}
+                editor={editor}
+                documentId={doc.documentId}
+                transport={coreTransport}
+                onClose={closeCitationReviewPanel}
               />
             )}
           </div>
