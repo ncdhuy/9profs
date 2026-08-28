@@ -1057,6 +1057,28 @@ export function extractDocxClaimBlocksFromPmDoc(doc: PmNode): ManuscriptClaimBlo
   })
 }
 
+export interface WholeManuscriptClaimBlockContext {
+  readonly blockId: string
+  readonly blockOrdinal: number
+  readonly blockKind: 'paragraph' | 'heading' | 'list_item'
+  readonly text: string
+  readonly citations: DocxCitationOccurrenceDescriptor[]
+}
+
+/** Read-only visible block context for observation-first whole-manuscript inventory. */
+export function extractWholeManuscriptClaimBlocksFromPmDoc(
+  doc: PmNode,
+): WholeManuscriptClaimBlockContext[] {
+  return pmBlocksFromPmDoc(doc).map((block, blockOrdinal) => ({
+    blockId: block.id,
+    blockOrdinal,
+    blockKind:
+      block.type === 'heading' ? 'heading' : block.type === 'listItem' ? 'list_item' : 'paragraph',
+    text: block.runs?.map((run) => run.text).join('') ?? '',
+    citations: extractDocxCitationsFromBlocks([block]),
+  }))
+}
+
 function pmBlocksFromPmDoc(doc: PmNode): Block[] {
   const blocks: Block[] = []
   const collect = (node: PmNode, path: string, inheritedDocxIndex: number | null = null): void => {

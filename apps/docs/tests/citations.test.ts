@@ -17,6 +17,7 @@ import {
   buildManuscriptCitationSyncInput,
   buildManuscriptReferenceCatalogInput,
   buildManuscriptClaimExtractionInput,
+  buildManuscriptClaimInventoryInput,
 } from '../src/renderer/editor/manuscript-citations'
 
 const editors = new Set<Editor>()
@@ -120,6 +121,66 @@ describe('Docs inline citation atom', () => {
             { ordinal: 1, referenceKey: '12', citedLocator: null },
             { ordinal: 2, referenceKey: '13', citedLocator: null },
           ],
+        },
+      ],
+    })
+  })
+
+  it('builds whole-manuscript inventory input for every eligible visible block', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: editorExtensions,
+      content: blocksToPmDoc([
+        sourceBlock(),
+        {
+          id: 'b8',
+          type: 'paragraph',
+          docxIndex: 8,
+          originalXml: null,
+          runs: [{ text: 'An uncited observation.' }],
+        },
+        {
+          id: 'b9',
+          type: 'heading',
+          docxIndex: 9,
+          originalXml: null,
+          runs: [{ text: 'A heading.' }],
+        },
+      ] as never) as never,
+    })
+    editors.add(editor)
+
+    expect(
+      buildManuscriptClaimInventoryInput({
+        editor,
+        activeDocument: { documentId: 'doc-1', version: 7 },
+        manuscriptSourceId: 'source-1',
+      }),
+    ).toEqual({
+      manuscriptSourceId: 'source-1',
+      documentId: 'doc-1',
+      documentVersion: 7,
+      blocks: [
+        {
+          blockId: 'b7',
+          blockOrdinal: 0,
+          blockKind: 'paragraph',
+          text: 'Drug A works [12,13] in adults.',
+          citations: [{ start: 13, end: 20, renderedText: '[12,13]' }],
+        },
+        {
+          blockId: 'b8',
+          blockOrdinal: 1,
+          blockKind: 'paragraph',
+          text: 'An uncited observation.',
+          citations: [],
+        },
+        {
+          blockId: 'b9',
+          blockOrdinal: 2,
+          blockKind: 'heading',
+          text: 'A heading.',
+          citations: [],
         },
       ],
     })

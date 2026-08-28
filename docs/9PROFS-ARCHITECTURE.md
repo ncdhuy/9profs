@@ -536,21 +536,28 @@ For original audit evidence and phase-specific rationale, see
 
 ## Current research roadmap
 
-- 5C3C1 (CURRENT): Core-owned manuscript citation review workflow and read
-  model. The Docs renderer supplies live citation and manuscript-block
-  observations; Core/Research orchestrates citation sync, reference catalog,
-  resolution, claim extraction, projection, and verification.
+- 5C Citation Checker (IMPLEMENTED): Core owns manuscript citation sync,
+  reference catalog, resolution, citation-scoped claim extraction, review
+  projection, and verification. Docs supplies live citation observations and
+  exact PM-atom navigation without mutating the document or bypassing the
+  save pipeline.
+- 5D1 (CURRENT): Whole-Manuscript Claim Inventory. Docs supplies every
+  eligible visible paragraph, heading, and list-item block, including uncited
+  blocks; Core persists bounded observation-first claims, coverage, Unicode
+  source ranges, compact review kinds, provider identity, and explicit scope
+  limitations. Inventory runs do not create ResearchClaim, ClaimCitationLink,
+  ResearchEvidence, Dify, or Agent records.
 
 ### Next/future
 
-- 5C3C2 (CURRENT): Docs citation review UI. The References ribbon opens a
+- 5C3C2: Docs citation review UI. The References ribbon opens a
   dedicated read-only panel that selects a ResearchCase and manuscript
   ResearchSource, submits one live-document review request, renders Core's
   persisted review projection, and navigates only to exact PM citation atoms.
   Candidate confirmation uses the trusted Core API and invalidates the review
   until a new review is started; the panel never mutates the document or
   orchestrates lower stages.
-- 5D: whole-manuscript Research review.
+- 5D2: whole-manuscript Research review projection and downstream workflows.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.
 

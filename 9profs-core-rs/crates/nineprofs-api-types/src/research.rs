@@ -600,6 +600,94 @@ pub struct ManuscriptClaimExtractionCoverageDto {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimInventoryStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimInventoryCoverageStatusDto {
+    Processed,
+    NoClaims,
+    Excluded,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimInventoryBlockKindDto {
+    Paragraph,
+    Heading,
+    ListItem,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimReviewKindDto {
+    ExternalEvidence,
+    ManuscriptInternal,
+    Interpretive,
+    NonEvidentiary,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimInventoryRunDto {
+    pub inventory_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub document_context_hash: ResearchContentHashDto,
+    pub extractor_provider: String,
+    pub extractor_version: String,
+    pub extractor_model_id: Option<String>,
+    pub extraction_contract_version: String,
+    pub coverage_contract_version: String,
+    pub coverage_scope: String,
+    pub coverage_limitations: Vec<String>,
+    pub status: ManuscriptClaimInventoryStatusDto,
+    pub item_count: u32,
+    pub covered_block_count: u32,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimInventoryItemDto {
+    pub item_id: String,
+    pub inventory_run_id: String,
+    pub ordinal: u32,
+    pub document_block_id: String,
+    pub block_ordinal: u32,
+    pub block_kind: ManuscriptClaimInventoryBlockKindDto,
+    pub source_start: u64,
+    pub source_end: u64,
+    pub source_excerpt: String,
+    pub source_excerpt_hash: ResearchContentHashDto,
+    pub claim_text: String,
+    pub review_kind: ClaimReviewKindDto,
+    pub overlapping_citation_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimInventoryCoverageDto {
+    pub coverage_id: String,
+    pub inventory_run_id: String,
+    pub document_block_id: String,
+    pub block_ordinal: u32,
+    pub block_kind: ManuscriptClaimInventoryBlockKindDto,
+    pub status: ManuscriptClaimInventoryCoverageStatusDto,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationTargetBindingDto {
     pub binding_id: String,
@@ -851,6 +939,33 @@ pub struct CreateManuscriptClaimExtractionRequest {
     pub document_id: String,
     pub document_version: i64,
     pub blocks: Vec<ManuscriptClaimExtractionBlockRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptClaimInventoryCitationRequest {
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManuscriptClaimInventoryBlockRequest {
+    pub block_id: String,
+    pub block_ordinal: u32,
+    pub block_kind: ManuscriptClaimInventoryBlockKindDto,
+    pub text: String,
+    pub citations: Vec<ManuscriptClaimInventoryCitationRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptClaimInventoryRequest {
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub blocks: Vec<ManuscriptClaimInventoryBlockRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -102,6 +102,62 @@ describe('Core transport boundary', () => {
     ])
   })
 
+  it('maps whole-manuscript claim inventory through the trusted start and read endpoints', async () => {
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
+      requests.push({
+        input,
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      })
+      return { ok: true, json: async () => ({ success: true, data: [] }) }
+    })
+    const input = {
+      manuscriptSourceId: 'source-1',
+      documentId: 'doc-1',
+      documentVersion: 7,
+      blocks: [
+        {
+          blockId: 'b1',
+          blockOrdinal: 0,
+          blockKind: 'paragraph' as const,
+          text: 'A claim [1].',
+          citations: [{ start: 9, end: 12, renderedText: '[1]' }],
+        },
+        {
+          blockId: 'b2',
+          blockOrdinal: 1,
+          blockKind: 'paragraph' as const,
+          text: 'An uncited claim.',
+          citations: [],
+        },
+      ],
+    }
+
+    await transport.startManuscriptClaimInventory('case-1', input)
+    await transport.manuscriptClaimInventory('inventory-1')
+    await transport.manuscriptClaimInventoryItems('inventory-1')
+    await transport.manuscriptClaimInventoryCoverage('inventory-1')
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/research/cases/case-1/manuscript-claim-inventories',
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-claim-inventories/inventory-1',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-claim-inventories/inventory-1/items',
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-claim-inventories/inventory-1/coverage',
+      },
+    ])
+  })
+
   it('maps manuscript reference resolution and confirmation endpoints', async () => {
     const requests: Array<{ input: string; method?: string }> = []
     const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
@@ -122,8 +178,7 @@ describe('Core transport boundary', () => {
         method: 'POST',
       },
       {
-        input:
-          'http://127.0.0.1:39761/api/research/manuscript-reference-resolution-runs/run-1',
+        input: 'http://127.0.0.1:39761/api/research/manuscript-reference-resolution-runs/run-1',
       },
       {
         input:

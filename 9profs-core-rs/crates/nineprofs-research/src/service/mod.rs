@@ -11,6 +11,7 @@ mod citation;
 mod evidence_claims;
 mod manuscript_citation_sync;
 mod manuscript_claim_extraction;
+mod manuscript_claim_inventory;
 mod pdf;
 mod reference_catalog;
 mod reference_resolution;
@@ -24,6 +25,7 @@ pub struct ResearchService {
     events: Arc<BroadcastEventBus>,
     artifact_store: Option<Arc<crate::ResearchArtifactStore>>,
     claim_extractor: Option<Arc<dyn crate::ManuscriptClaimExtractionProvider>>,
+    claim_inventory_extractor: Option<Arc<dyn crate::ManuscriptClaimInventoryProvider>>,
 }
 
 impl ResearchService {
@@ -43,6 +45,7 @@ impl ResearchService {
             events,
             artifact_store: None,
             claim_extractor: None,
+            claim_inventory_extractor: None,
         }
     }
 
@@ -60,6 +63,14 @@ impl ResearchService {
         extractor: Arc<dyn crate::ManuscriptClaimExtractionProvider>,
     ) -> Self {
         self.claim_extractor = Some(extractor);
+        self
+    }
+
+    pub fn with_claim_inventory_extractor(
+        mut self,
+        extractor: Arc<dyn crate::ManuscriptClaimInventoryProvider>,
+    ) -> Self {
+        self.claim_inventory_extractor = Some(extractor);
         self
     }
     async fn ensure_case(&self, id: &ResearchCaseId) -> Result<(), ResearchError> {

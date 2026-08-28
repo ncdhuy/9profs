@@ -5,6 +5,7 @@ import type {
   ManuscriptCitationSyncOccurrence,
   ManuscriptCitationSyncRun,
   ManuscriptCitationSyncTarget,
+  StartManuscriptClaimInventoryInput,
   StartManuscriptCitationReviewInput,
   SyncManuscriptReferenceCatalogInput,
   SyncManuscriptCitationsInput,
@@ -12,6 +13,7 @@ import type {
 import {
   extractDocxCitationsFromPmDoc,
   extractDocxClaimBlocksFromPmDoc,
+  extractWholeManuscriptClaimBlocksFromPmDoc,
   type PmNode,
 } from './convert'
 
@@ -125,12 +127,43 @@ export function buildManuscriptCitationReviewInput({
       blockId: block.blockId,
       text: block.text,
       citations: block.citations
-        .filter((citation) => supportedRanges.has(`${citation.blockId}:${citation.start}:${citation.end}`))
+        .filter((citation) =>
+          supportedRanges.has(`${citation.blockId}:${citation.start}:${citation.end}`),
+        )
         .map((citation) => ({
           start: citation.start,
           end: citation.end,
           renderedText: citation.renderedText,
         })),
+    })),
+  }
+}
+
+export interface BuildManuscriptClaimInventoryInputOptions {
+  readonly editor: Pick<Editor, 'state'>
+  readonly activeDocument: Pick<ActiveDocument, 'documentId' | 'version'>
+  readonly manuscriptSourceId: string
+}
+
+export function buildManuscriptClaimInventoryInput({
+  editor,
+  activeDocument,
+  manuscriptSourceId,
+}: BuildManuscriptClaimInventoryInputOptions): StartManuscriptClaimInventoryInput {
+  return {
+    manuscriptSourceId,
+    documentId: activeDocument.documentId,
+    documentVersion: activeDocument.version,
+    blocks: extractWholeManuscriptClaimBlocksFromPmDoc(pmDocFromEditor(editor)).map((block) => ({
+      blockId: block.blockId,
+      blockOrdinal: block.blockOrdinal,
+      blockKind: block.blockKind,
+      text: block.text,
+      citations: block.citations.map((citation) => ({
+        start: citation.start,
+        end: citation.end,
+        renderedText: citation.renderedText,
+      })),
     })),
   }
 }

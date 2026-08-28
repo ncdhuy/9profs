@@ -30,6 +30,14 @@ pub const MAX_RETRIEVAL_SCOPE_IDS: usize = 16;
 pub const MAX_CLAIM_EXTRACTION_BLOCKS: usize = 4_096;
 pub const MAX_CLAIM_EXTRACTION_CONTEXT_BYTES: usize = 512 * 1024;
 pub const MAX_CLAIM_EXTRACTION_CITATIONS_PER_BLOCK: usize = 128;
+pub const MAX_MANUSCRIPT_CLAIM_INVENTORY_BLOCKS: usize = 4_096;
+pub const MAX_MANUSCRIPT_CLAIM_INVENTORY_BLOCK_TEXT_BYTES: usize = 64 * 1024;
+pub const MAX_MANUSCRIPT_CLAIM_INVENTORY_CONTEXT_BYTES: usize = 512 * 1024;
+pub const MAX_MANUSCRIPT_CLAIM_INVENTORY_CLAIMS_PER_BLOCK: usize = 256;
+pub const MAX_MANUSCRIPT_CLAIM_INVENTORY_CITATIONS_PER_BLOCK: usize = 128;
+pub const MANUSCRIPT_CLAIM_INVENTORY_COVERAGE_CONTRACT_VERSION: &str =
+    "manuscript-claim-inventory-coverage-v1";
+pub const MANUSCRIPT_CLAIM_INVENTORY_COVERAGE_SCOPE: &str = "paragraph,heading,list_item";
 pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_ENTRIES: usize = 4_096;
 pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_TARGETS: usize = 65_536;
 pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_BYTES: usize = 8 * 1024 * 1024;
@@ -67,6 +75,12 @@ pub enum ResearchError {
     ManuscriptClaimExtractionStale,
     #[error("manuscript claim extraction failed: {0}")]
     ManuscriptClaimExtractionFailed(String),
+    #[error("manuscript claim inventory extractor is not configured")]
+    ManuscriptClaimInventoryExtractorNotConfigured,
+    #[error("manuscript claim inventory extractor configuration is invalid: {0}")]
+    ManuscriptClaimInventoryExtractorInvalidConfiguration(String),
+    #[error("manuscript claim inventory failed: {0}")]
+    ManuscriptClaimInventoryFailed(String),
     #[error("manuscript reference catalog is stale for citation sync run")]
     ManuscriptReferenceCatalogStale,
     #[error(
@@ -143,6 +157,18 @@ id_type!(
 id_type!(
     ManuscriptClaimExtractionCoverageId,
     "manuscript claim extraction coverage ID"
+);
+id_type!(
+    ManuscriptClaimInventoryRunId,
+    "manuscript claim inventory run ID"
+);
+id_type!(
+    ManuscriptClaimInventoryItemId,
+    "manuscript claim inventory item ID"
+);
+id_type!(
+    ManuscriptClaimInventoryCoverageId,
+    "manuscript claim inventory coverage ID"
 );
 id_type!(
     ManuscriptReferenceCatalogRunId,
@@ -802,6 +828,91 @@ pub struct ManuscriptClaimExtractionCoverage {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimInventoryStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimInventoryCoverageStatus {
+    Processed,
+    NoClaims,
+    Excluded,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimInventoryBlockKind {
+    Paragraph,
+    Heading,
+    ListItem,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimReviewKind {
+    ExternalEvidence,
+    ManuscriptInternal,
+    Interpretive,
+    NonEvidentiary,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryRun {
+    pub id: ManuscriptClaimInventoryRunId,
+    pub research_case_id: ResearchCaseId,
+    pub manuscript_source_id: ResearchSourceId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub document_context_hash: ContentHash,
+    pub extractor_provider: String,
+    pub extractor_version: String,
+    pub extractor_model_id: Option<String>,
+    pub extraction_contract_version: String,
+    pub coverage_contract_version: String,
+    pub coverage_scope: String,
+    pub coverage_limitations: Vec<String>,
+    pub status: ManuscriptClaimInventoryStatus,
+    pub item_count: u32,
+    pub covered_block_count: u32,
+    pub created_at_ms: TimestampMs,
+    pub completed_at_ms: Option<TimestampMs>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryItem {
+    pub id: ManuscriptClaimInventoryItemId,
+    pub inventory_run_id: ManuscriptClaimInventoryRunId,
+    pub ordinal: u32,
+    pub document_block_id: String,
+    pub block_ordinal: u32,
+    pub block_kind: ManuscriptClaimInventoryBlockKind,
+    pub source_start: u64,
+    pub source_end: u64,
+    pub source_excerpt: String,
+    pub source_excerpt_hash: ContentHash,
+    pub claim_text: String,
+    pub review_kind: ClaimReviewKind,
+    pub overlapping_citation_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryCoverage {
+    pub id: ManuscriptClaimInventoryCoverageId,
+    pub inventory_run_id: ManuscriptClaimInventoryRunId,
+    pub document_block_id: String,
+    pub block_ordinal: u32,
+    pub block_kind: ManuscriptClaimInventoryBlockKind,
+    pub status: ManuscriptClaimInventoryCoverageStatus,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClaimEvidenceRelation {
     Supports,
     Contradicts,
@@ -1073,6 +1184,60 @@ pub struct ManuscriptClaimExtractionWrite {
     pub links: Vec<ClaimCitationLink>,
     pub items: Vec<ManuscriptClaimExtractionItem>,
     pub coverage: Vec<ManuscriptClaimExtractionCoverage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryCitationInput {
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryBlockInput {
+    pub block_id: String,
+    pub block_ordinal: u32,
+    pub block_kind: ManuscriptClaimInventoryBlockKind,
+    pub text: String,
+    #[serde(default)]
+    pub citations: Vec<ManuscriptClaimInventoryCitationInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StartManuscriptClaimInventory {
+    pub research_case_id: ResearchCaseId,
+    pub manuscript_source_id: ResearchSourceId,
+    pub document_id: String,
+    pub document_version: i64,
+    pub blocks: Vec<ManuscriptClaimInventoryBlockInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryIdentity {
+    pub provider: String,
+    pub extractor_version: String,
+    pub model_id: Option<String>,
+    pub extraction_contract_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryClaimOutput {
+    pub claim_text: String,
+    pub source_start: u64,
+    pub source_end: u64,
+    pub review_kind: ClaimReviewKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManuscriptClaimInventoryOutput {
+    pub claims: Vec<ManuscriptClaimInventoryClaimOutput>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ManuscriptClaimInventoryWrite {
+    pub run: ManuscriptClaimInventoryRun,
+    pub items: Vec<ManuscriptClaimInventoryItem>,
+    pub coverage: Vec<ManuscriptClaimInventoryCoverage>,
 }
 
 #[derive(Clone, Debug)]

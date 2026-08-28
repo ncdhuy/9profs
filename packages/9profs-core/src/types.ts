@@ -14,6 +14,9 @@ export type CitationVerificationRunId = string
 export type CitationReviewRunId = string
 export type ManuscriptClaimExtractionRunId = string
 export type ManuscriptClaimExtractionItemId = string
+export type ManuscriptClaimInventoryRunId = string
+export type ManuscriptClaimInventoryItemId = string
+export type ManuscriptClaimInventoryCoverageId = string
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string
@@ -916,6 +919,81 @@ export interface CreateManuscriptClaimExtractionInput {
   readonly documentId: string
   readonly documentVersion: number
   readonly blocks: readonly ManuscriptClaimExtractionBlockInput[]
+}
+
+export type ManuscriptClaimInventoryStatus = 'running' | 'completed' | 'failed'
+export type ManuscriptClaimInventoryCoverageStatus = 'processed' | 'no_claims' | 'excluded'
+export type ManuscriptClaimInventoryBlockKind = 'paragraph' | 'heading' | 'list_item'
+export type ClaimReviewKind =
+  'external_evidence' | 'manuscript_internal' | 'interpretive' | 'non_evidentiary' | 'uncertain'
+
+export interface ManuscriptClaimInventoryRun {
+  readonly inventoryRunId: ManuscriptClaimInventoryRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly documentContextHash: ResearchContentHash
+  readonly extractorProvider: string
+  readonly extractorVersion: string
+  readonly extractorModelId: string | null
+  readonly extractionContractVersion: string
+  readonly coverageContractVersion: string
+  readonly coverageScope: string
+  readonly coverageLimitations: readonly string[]
+  readonly status: ManuscriptClaimInventoryStatus
+  readonly itemCount: number
+  readonly coveredBlockCount: number
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly failureCode: string | null
+}
+
+export interface ManuscriptClaimInventoryItem {
+  readonly itemId: ManuscriptClaimInventoryItemId
+  readonly inventoryRunId: ManuscriptClaimInventoryRunId
+  readonly ordinal: number
+  readonly documentBlockId: string
+  readonly blockOrdinal: number
+  readonly blockKind: ManuscriptClaimInventoryBlockKind
+  readonly sourceStart: number
+  readonly sourceEnd: number
+  readonly sourceExcerpt: string
+  readonly sourceExcerptHash: ResearchContentHash
+  readonly claimText: string
+  readonly reviewKind: ClaimReviewKind
+  readonly overlappingCitationCount: number
+}
+
+export interface ManuscriptClaimInventoryCoverage {
+  readonly coverageId: ManuscriptClaimInventoryCoverageId
+  readonly inventoryRunId: ManuscriptClaimInventoryRunId
+  readonly documentBlockId: string
+  readonly blockOrdinal: number
+  readonly blockKind: ManuscriptClaimInventoryBlockKind
+  readonly status: ManuscriptClaimInventoryCoverageStatus
+  readonly reason: string | null
+}
+
+export interface ManuscriptClaimInventoryCitationInput {
+  readonly start: number
+  readonly end: number
+  readonly renderedText: string
+}
+
+export interface ManuscriptClaimInventoryBlockInput {
+  readonly blockId: string
+  readonly blockOrdinal: number
+  readonly blockKind: ManuscriptClaimInventoryBlockKind
+  readonly text: string
+  readonly citations: readonly ManuscriptClaimInventoryCitationInput[]
+}
+
+export interface StartManuscriptClaimInventoryInput {
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly blocks: readonly ManuscriptClaimInventoryBlockInput[]
 }
 
 export type CitationVerificationStatus = 'running' | 'completed' | 'failed'

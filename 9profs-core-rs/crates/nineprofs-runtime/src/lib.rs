@@ -28,6 +28,7 @@ use nineprofs_research_assessor::{
 };
 use nineprofs_research_claim_extractor::{
     ClaimExtractorConfig, ClaimExtractorReadiness, ModelClaimExtractionProvider,
+    ModelWholeManuscriptClaimInventoryProvider,
 };
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
 use nineprofs_research_verification::{
@@ -195,6 +196,9 @@ impl CoreRuntime {
         {
             research_service = research_service.with_claim_extractor(Arc::new(
                 ModelClaimExtractionProvider::new(config.claim_extractor.clone()),
+            ));
+            research_service = research_service.with_claim_inventory_extractor(Arc::new(
+                ModelWholeManuscriptClaimInventoryProvider::new(config.claim_extractor.clone()),
             ));
         }
         let research_service = Arc::new(research_service);

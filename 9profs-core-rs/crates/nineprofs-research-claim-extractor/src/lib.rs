@@ -7,10 +7,13 @@ use std::{fmt, time::Duration};
 
 use async_trait::async_trait;
 use nineprofs_research::{
-    ManuscriptClaimExtractionBlockInput, ManuscriptClaimExtractionClaimOutput,
+    ClaimReviewKind, ManuscriptClaimExtractionBlockInput, ManuscriptClaimExtractionClaimOutput,
     ManuscriptClaimExtractionIdentity, ManuscriptClaimExtractionOutput,
     ManuscriptClaimExtractionProvider, ManuscriptClaimExtractionProviderError,
-    ManuscriptClaimExtractionUnassociatedCitation,
+    ManuscriptClaimExtractionUnassociatedCitation, ManuscriptClaimInventoryBlockInput,
+    ManuscriptClaimInventoryClaimOutput, ManuscriptClaimInventoryIdentity,
+    ManuscriptClaimInventoryOutput, ManuscriptClaimInventoryProvider,
+    ManuscriptClaimInventoryProviderError,
 };
 use nineprofs_structured_model::{
     StructuredModelClient, StructuredModelConfig, StructuredModelConfigError,
@@ -31,6 +34,19 @@ An atomic claim is one independently verifiable proposition that can meaningfull
 Every claim must select at least one supplied citationOccurrenceId. Select IDs only from this block. A citation may support multiple claims, and one claim may select multiple citations. Use Unicode scalar/code-point offsets into block text, not UTF-8 byte offsets or JavaScript UTF-16 offsets. sourceStart/sourceEnd must cover prose used for the proposition and must not include the citation marker atom. Do not return source excerpts, provenance fields, confidence, truth values, evidence IDs, source IDs, PDF IDs, or rationale.
 
 If a supplied citation is not used with a clear verifiable proposition in this block, put it in unassociatedCitations with reason no_verifiable_claim. Return only the requested JSON object."#;
+
+pub const CLAIM_INVENTORY_IMPLEMENTATION_VERSION: &str =
+    "model-whole-manuscript-claim-inventory-v1";
+pub const CLAIM_INVENTORY_CONTRACT_VERSION: &str = "whole-manuscript-claim-inventory-v1";
+pub const CLAIM_INVENTORY_INSTRUCTION: &str = r#"You are whole-manuscript-claim-inventory-v1, a bounded manuscript claim inventory extractor.
+
+Read ONLY the supplied block text. Extract only propositions actually expressed in that text. Do not use outside knowledge, fact-check, rewrite the manuscript, add citations, infer missing results, or strengthen tentative language. This is an inventory, not a truth judgment or citation-sufficiency decision.
+
+Return atomic claims when independently reviewable, but preserve every material qualifier: negation, modality, uncertainty, quantities, comparison direction, causal versus associative language, scope, population, intervention, comparator, and time conditions. Keep "may reduce" as "may reduce". The normalized claim must not add facts.
+
+For every claim return Unicode scalar/code-point offsets into the supplied block text, not UTF-8 byte offsets or JavaScript UTF-16 offsets. Return no source excerpt: the trusted backend reconstructs it. A claim range must cover the prose expressing that proposition. Classify each proposition only as externalEvidence, manuscriptInternal, interpretive, nonEvidentiary, or uncertain. This classification is routing metadata, not a truth judgment and not a citation requirement decision.
+
+Return zero claims for headings, transitions, acknowledgements, formatting text, or text without a research-relevant proposition. Return only the requested JSON object."#;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 256 * 1024;
@@ -320,6 +336,234 @@ impl ManuscriptClaimExtractionProvider for ModelClaimExtractionProvider {
         let response = self.request(self.request_body(&block)?).await?;
         parse_response(&self.config.provider, &response)
     }
+}
+
+#[derive(Clone)]
+pub struct ModelWholeManuscriptClaimInventoryProvider {
+    config: ClaimExtractorConfig,
+    client: StructuredModelClient,
+}
+
+impl fmt::Debug for ModelWholeManuscriptClaimInventoryProvider {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelWholeManuscriptClaimInventoryProvider")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl ModelWholeManuscriptClaimInventoryProvider {
+    pub fn new(config: ClaimExtractorConfig) -> Self {
+        let client = StructuredModelClient::new(config.shared_config());
+        Self { config, client }
+    }
+
+    fn request_body(
+        &self,
+        block: &ManuscriptClaimInventoryBlockInput,
+    ) -> Result<Value, ManuscriptClaimInventoryProviderError> {
+        let block_json = serde_json::to_string(&json!({
+            "blockKind": block.block_kind,
+            "text": block.text,
+        }))
+        .map_err(|_| ManuscriptClaimInventoryProviderError::MalformedResponse)?;
+        let prompt = format!("Extract claims from this exact manuscript block JSON:\n{block_json}");
+        let body = match self.config.provider.as_str() {
+            "anthropic" => json!({
+                "model": self.config.model,
+                "max_tokens": self.config.max_output_tokens,
+                "temperature": 0,
+                "system": CLAIM_INVENTORY_INSTRUCTION,
+                "messages": [{"role": "user", "content": prompt}],
+                "tools": [{
+                    "name": "inventory_manuscript_claims",
+                    "description": "Return strict whole-manuscript claim inventory output.",
+                    "input_schema": inventory_schema()
+                }],
+                "tool_choice": {"type": "tool", "name": "inventory_manuscript_claims"}
+            }),
+            _ => json!({
+                "model": self.config.model,
+                "temperature": 0,
+                "max_tokens": self.config.max_output_tokens,
+                "messages": [
+                    {"role": "system", "content": CLAIM_INVENTORY_INSTRUCTION},
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "whole_manuscript_claim_inventory",
+                        "strict": true,
+                        "schema": inventory_schema()
+                    }
+                }
+            }),
+        };
+        if serde_json::to_vec(&body)
+            .map(|bytes| bytes.len() > MAX_REQUEST_BYTES)
+            .unwrap_or(true)
+        {
+            return Err(ManuscriptClaimInventoryProviderError::InvalidStructuredOutput);
+        }
+        Ok(body)
+    }
+
+    async fn request(&self, body: Value) -> Result<Vec<u8>, ManuscriptClaimInventoryProviderError> {
+        let credential = self
+            .config
+            .credential()
+            .ok_or(ManuscriptClaimInventoryProviderError::NotConfigured)?;
+        self.client
+            .execute_json(&body, &credential)
+            .await
+            .map_err(map_inventory_transport_error)
+    }
+}
+
+#[async_trait]
+impl ManuscriptClaimInventoryProvider for ModelWholeManuscriptClaimInventoryProvider {
+    fn identity(&self) -> ManuscriptClaimInventoryIdentity {
+        ManuscriptClaimInventoryIdentity {
+            provider: self.config.provider.clone(),
+            extractor_version: CLAIM_INVENTORY_IMPLEMENTATION_VERSION.to_owned(),
+            model_id: (!self.config.model.trim().is_empty()).then(|| self.config.model.clone()),
+            extraction_contract_version: CLAIM_INVENTORY_CONTRACT_VERSION.to_owned(),
+        }
+    }
+
+    async fn extract(
+        &self,
+        block: ManuscriptClaimInventoryBlockInput,
+    ) -> Result<ManuscriptClaimInventoryOutput, ManuscriptClaimInventoryProviderError> {
+        if let Some(error) = self.config.configuration_error() {
+            return if matches!(error, ClaimExtractorConfigError::MissingCredential) {
+                Err(ManuscriptClaimInventoryProviderError::NotConfigured)
+            } else {
+                Err(ManuscriptClaimInventoryProviderError::InvalidConfiguration(
+                    error.to_string(),
+                ))
+            };
+        }
+        let response = self.request(self.request_body(&block)?).await?;
+        parse_inventory_response(&self.config.provider, &response)
+    }
+}
+
+fn map_inventory_transport_error(
+    error: StructuredModelTransportError,
+) -> ManuscriptClaimInventoryProviderError {
+    match error {
+        StructuredModelTransportError::NotConfigured => {
+            ManuscriptClaimInventoryProviderError::NotConfigured
+        }
+        StructuredModelTransportError::InvalidConfiguration
+        | StructuredModelTransportError::ClientBuildFailed => {
+            ManuscriptClaimInventoryProviderError::InvalidConfiguration(
+                "claim inventory extractor configuration is invalid".to_owned(),
+            )
+        }
+        StructuredModelTransportError::Timeout => ManuscriptClaimInventoryProviderError::Timeout,
+        StructuredModelTransportError::ResponseTooLarge => {
+            ManuscriptClaimInventoryProviderError::ResponseTooLarge
+        }
+        StructuredModelTransportError::Unauthorized
+        | StructuredModelTransportError::RateLimited
+        | StructuredModelTransportError::ProviderUnavailable
+        | StructuredModelTransportError::Transport => {
+            ManuscriptClaimInventoryProviderError::Transport
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireInventoryExtraction {
+    claims: Vec<WireInventoryClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireInventoryClaim {
+    claim_text: String,
+    source_start: u64,
+    source_end: u64,
+    review_kind: ClaimReviewKind,
+}
+
+fn parse_inventory_response(
+    provider: &str,
+    bytes: &[u8],
+) -> Result<ManuscriptClaimInventoryOutput, ManuscriptClaimInventoryProviderError> {
+    let root: Value = serde_json::from_slice(bytes)
+        .map_err(|_| ManuscriptClaimInventoryProviderError::MalformedResponse)?;
+    let output = match provider {
+        "anthropic" => root
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|content| {
+                content.iter().find_map(|item| {
+                    (item.get("type")?.as_str()? == "tool_use").then(|| item.get("input"))
+                })
+            })
+            .flatten()
+            .cloned()
+            .ok_or(ManuscriptClaimInventoryProviderError::MalformedResponse)?,
+        _ => {
+            let content = root
+                .get("choices")
+                .and_then(Value::as_array)
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice.get("message"))
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .ok_or(ManuscriptClaimInventoryProviderError::MalformedResponse)?;
+            serde_json::from_str(content)
+                .map_err(|_| ManuscriptClaimInventoryProviderError::MalformedResponse)?
+        }
+    };
+    let wire: WireInventoryExtraction = serde_json::from_value(output)
+        .map_err(|_| ManuscriptClaimInventoryProviderError::InvalidStructuredOutput)?;
+    Ok(ManuscriptClaimInventoryOutput {
+        claims: wire
+            .claims
+            .into_iter()
+            .map(|claim| ManuscriptClaimInventoryClaimOutput {
+                claim_text: claim.claim_text,
+                source_start: claim.source_start,
+                source_end: claim.source_end,
+                review_kind: claim.review_kind,
+            })
+            .collect(),
+    })
+}
+
+fn inventory_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "claims": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "claimText": {"type": "string"},
+                        "sourceStart": {"type": "integer", "minimum": 0},
+                        "sourceEnd": {"type": "integer", "minimum": 1},
+                        "reviewKind": {"type": "string", "enum": [
+                            "external_evidence", "manuscript_internal", "interpretive",
+                            "non_evidentiary", "uncertain"
+                        ]}
+                    },
+                    "required": ["claimText", "sourceStart", "sourceEnd", "reviewKind"]
+                }
+            }
+        },
+        "required": ["claims"]
+    })
 }
 
 fn map_config_error(error: StructuredModelConfigError) -> ClaimExtractorConfigError {

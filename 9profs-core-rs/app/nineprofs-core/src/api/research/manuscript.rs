@@ -9,7 +9,9 @@ use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::routing::post;
 use nineprofs_api_types::ApiResponse;
+use nineprofs_api_types::ClaimReviewKindDto;
 use nineprofs_api_types::CreateManuscriptClaimExtractionRequest;
+use nineprofs_api_types::CreateManuscriptClaimInventoryRequest;
 use nineprofs_api_types::CreateManuscriptReferenceCatalogRequest;
 use nineprofs_api_types::ManuscriptCitationFormatDto;
 use nineprofs_api_types::ManuscriptCitationSyncCitationRequest;
@@ -23,6 +25,12 @@ use nineprofs_api_types::ManuscriptClaimExtractionCoverageStatusDto;
 use nineprofs_api_types::ManuscriptClaimExtractionItemDto;
 use nineprofs_api_types::ManuscriptClaimExtractionRunDto;
 use nineprofs_api_types::ManuscriptClaimExtractionStatusDto;
+use nineprofs_api_types::ManuscriptClaimInventoryBlockKindDto;
+use nineprofs_api_types::ManuscriptClaimInventoryCoverageDto;
+use nineprofs_api_types::ManuscriptClaimInventoryCoverageStatusDto;
+use nineprofs_api_types::ManuscriptClaimInventoryItemDto;
+use nineprofs_api_types::ManuscriptClaimInventoryRunDto;
+use nineprofs_api_types::ManuscriptClaimInventoryStatusDto;
 use nineprofs_api_types::ManuscriptReferenceCatalogCitationRequest;
 use nineprofs_api_types::ManuscriptReferenceCatalogRunDto;
 use nineprofs_api_types::ManuscriptReferenceCatalogStatusDto;
@@ -35,6 +43,10 @@ use nineprofs_api_types::SyncManuscriptCitationsRequest;
 use nineprofs_research::ExtractManuscriptClaims;
 use nineprofs_research::ManuscriptClaimExtractionBlockInput;
 use nineprofs_research::ManuscriptClaimExtractionCitationInput;
+use nineprofs_research::ManuscriptClaimInventoryBlockInput;
+use nineprofs_research::ManuscriptClaimInventoryBlockKind;
+use nineprofs_research::ManuscriptClaimInventoryCitationInput;
+use nineprofs_research::StartManuscriptClaimInventory;
 
 async fn sync_manuscript_citations(
     State(state): State<AppState>,
@@ -342,6 +354,224 @@ async fn list_manuscript_claim_extraction_coverage(
             .map(manuscript_claim_extraction_coverage_dto)
             .collect(),
     )))
+}
+
+async fn start_manuscript_claim_inventory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(case_id): Path<String>,
+    axum::Json(request): axum::Json<CreateManuscriptClaimInventoryRequest>,
+) -> Result<axum::Json<ApiResponse<ManuscriptClaimInventoryRunDto>>, ApiError> {
+    authorize_trusted_decision(&headers, state.runtime.config())?;
+    let run = state
+        .runtime
+        .research_service()
+        .start_manuscript_claim_inventory(StartManuscriptClaimInventory {
+            research_case_id: nineprofs_research::ResearchCaseId::parse(case_id)?,
+            manuscript_source_id: nineprofs_research::ResearchSourceId::parse(
+                request.manuscript_source_id,
+            )?,
+            document_id: request.document_id,
+            document_version: request.document_version,
+            blocks: request
+                .blocks
+                .into_iter()
+                .map(|block| ManuscriptClaimInventoryBlockInput {
+                    block_id: block.block_id,
+                    block_ordinal: block.block_ordinal,
+                    block_kind: manuscript_claim_inventory_block_kind(block.block_kind),
+                    text: block.text,
+                    citations: block
+                        .citations
+                        .into_iter()
+                        .map(|citation| ManuscriptClaimInventoryCitationInput {
+                            start: citation.start,
+                            end: citation.end,
+                            rendered_text: citation.rendered_text,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .await?;
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_claim_inventory_run_dto(run),
+    )))
+}
+
+async fn get_manuscript_claim_inventory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<ManuscriptClaimInventoryRunDto>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        manuscript_claim_inventory_run_dto(
+            state
+                .runtime
+                .research_service()
+                .get_manuscript_claim_inventory(&id)
+                .await?,
+        ),
+    )))
+}
+
+async fn list_manuscript_claim_inventory_items(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptClaimInventoryItemDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_claim_inventory_items(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_claim_inventory_item_dto)
+            .collect(),
+    )))
+}
+
+async fn list_manuscript_claim_inventory_coverage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::Json<ApiResponse<Vec<ManuscriptClaimInventoryCoverageDto>>>, ApiError> {
+    Ok(axum::Json(ApiResponse::ok(
+        state
+            .runtime
+            .research_service()
+            .list_manuscript_claim_inventory_coverage(&id)
+            .await?
+            .into_iter()
+            .map(manuscript_claim_inventory_coverage_dto)
+            .collect(),
+    )))
+}
+
+pub(crate) fn manuscript_claim_inventory_run_dto(
+    value: nineprofs_research::ManuscriptClaimInventoryRun,
+) -> ManuscriptClaimInventoryRunDto {
+    ManuscriptClaimInventoryRunDto {
+        inventory_run_id: value.id.to_string(),
+        research_case_id: value.research_case_id.to_string(),
+        manuscript_source_id: value.manuscript_source_id.to_string(),
+        document_id: value.document_id,
+        document_version: value.document_version,
+        document_context_hash: research_content_hash_dto(value.document_context_hash),
+        extractor_provider: value.extractor_provider,
+        extractor_version: value.extractor_version,
+        extractor_model_id: value.extractor_model_id,
+        extraction_contract_version: value.extraction_contract_version,
+        coverage_contract_version: value.coverage_contract_version,
+        coverage_scope: value.coverage_scope,
+        coverage_limitations: value.coverage_limitations,
+        status: manuscript_claim_inventory_status_dto(value.status),
+        item_count: value.item_count,
+        covered_block_count: value.covered_block_count,
+        created_at_ms: value.created_at_ms,
+        completed_at_ms: value.completed_at_ms,
+        failure_code: value.failure_code,
+    }
+}
+
+fn manuscript_claim_inventory_item_dto(
+    value: nineprofs_research::ManuscriptClaimInventoryItem,
+) -> ManuscriptClaimInventoryItemDto {
+    ManuscriptClaimInventoryItemDto {
+        item_id: value.id.to_string(),
+        inventory_run_id: value.inventory_run_id.to_string(),
+        ordinal: value.ordinal,
+        document_block_id: value.document_block_id,
+        block_ordinal: value.block_ordinal,
+        block_kind: manuscript_claim_inventory_block_kind_dto(value.block_kind),
+        source_start: value.source_start,
+        source_end: value.source_end,
+        source_excerpt: value.source_excerpt,
+        source_excerpt_hash: research_content_hash_dto(value.source_excerpt_hash),
+        claim_text: value.claim_text,
+        review_kind: claim_review_kind_dto(value.review_kind),
+        overlapping_citation_count: value.overlapping_citation_count,
+    }
+}
+
+fn manuscript_claim_inventory_coverage_dto(
+    value: nineprofs_research::ManuscriptClaimInventoryCoverage,
+) -> ManuscriptClaimInventoryCoverageDto {
+    ManuscriptClaimInventoryCoverageDto {
+        coverage_id: value.id.to_string(),
+        inventory_run_id: value.inventory_run_id.to_string(),
+        document_block_id: value.document_block_id,
+        block_ordinal: value.block_ordinal,
+        block_kind: manuscript_claim_inventory_block_kind_dto(value.block_kind),
+        status: match value.status {
+            nineprofs_research::ManuscriptClaimInventoryCoverageStatus::Processed => {
+                ManuscriptClaimInventoryCoverageStatusDto::Processed
+            }
+            nineprofs_research::ManuscriptClaimInventoryCoverageStatus::NoClaims => {
+                ManuscriptClaimInventoryCoverageStatusDto::NoClaims
+            }
+            nineprofs_research::ManuscriptClaimInventoryCoverageStatus::Excluded => {
+                ManuscriptClaimInventoryCoverageStatusDto::Excluded
+            }
+        },
+        reason: value.reason,
+    }
+}
+
+fn manuscript_claim_inventory_status_dto(
+    value: nineprofs_research::ManuscriptClaimInventoryStatus,
+) -> ManuscriptClaimInventoryStatusDto {
+    match value {
+        nineprofs_research::ManuscriptClaimInventoryStatus::Running => {
+            ManuscriptClaimInventoryStatusDto::Running
+        }
+        nineprofs_research::ManuscriptClaimInventoryStatus::Completed => {
+            ManuscriptClaimInventoryStatusDto::Completed
+        }
+        nineprofs_research::ManuscriptClaimInventoryStatus::Failed => {
+            ManuscriptClaimInventoryStatusDto::Failed
+        }
+    }
+}
+
+fn manuscript_claim_inventory_block_kind(
+    value: ManuscriptClaimInventoryBlockKindDto,
+) -> ManuscriptClaimInventoryBlockKind {
+    match value {
+        ManuscriptClaimInventoryBlockKindDto::Paragraph => {
+            ManuscriptClaimInventoryBlockKind::Paragraph
+        }
+        ManuscriptClaimInventoryBlockKindDto::Heading => ManuscriptClaimInventoryBlockKind::Heading,
+        ManuscriptClaimInventoryBlockKindDto::ListItem => {
+            ManuscriptClaimInventoryBlockKind::ListItem
+        }
+    }
+}
+
+fn manuscript_claim_inventory_block_kind_dto(
+    value: nineprofs_research::ManuscriptClaimInventoryBlockKind,
+) -> ManuscriptClaimInventoryBlockKindDto {
+    match value {
+        ManuscriptClaimInventoryBlockKind::Paragraph => {
+            ManuscriptClaimInventoryBlockKindDto::Paragraph
+        }
+        ManuscriptClaimInventoryBlockKind::Heading => ManuscriptClaimInventoryBlockKindDto::Heading,
+        ManuscriptClaimInventoryBlockKind::ListItem => {
+            ManuscriptClaimInventoryBlockKindDto::ListItem
+        }
+    }
+}
+
+fn claim_review_kind_dto(value: nineprofs_research::ClaimReviewKind) -> ClaimReviewKindDto {
+    match value {
+        nineprofs_research::ClaimReviewKind::ExternalEvidence => {
+            ClaimReviewKindDto::ExternalEvidence
+        }
+        nineprofs_research::ClaimReviewKind::ManuscriptInternal => {
+            ClaimReviewKindDto::ManuscriptInternal
+        }
+        nineprofs_research::ClaimReviewKind::Interpretive => ClaimReviewKindDto::Interpretive,
+        nineprofs_research::ClaimReviewKind::NonEvidentiary => ClaimReviewKindDto::NonEvidentiary,
+        nineprofs_research::ClaimReviewKind::Uncertain => ClaimReviewKindDto::Uncertain,
+    }
 }
 
 pub(crate) fn manuscript_citation_sync_run_dto(
@@ -712,5 +942,21 @@ pub(super) fn router() -> Router<AppState> {
         .route(
             "/api/research/manuscript-claim-extractions/{id}/coverage",
             get(list_manuscript_claim_extraction_coverage),
+        )
+        .route(
+            "/api/research/cases/{case_id}/manuscript-claim-inventories",
+            post(start_manuscript_claim_inventory),
+        )
+        .route(
+            "/api/research/manuscript-claim-inventories/{id}",
+            get(get_manuscript_claim_inventory),
+        )
+        .route(
+            "/api/research/manuscript-claim-inventories/{id}/items",
+            get(list_manuscript_claim_inventory_items),
+        )
+        .route(
+            "/api/research/manuscript-claim-inventories/{id}/coverage",
+            get(list_manuscript_claim_inventory_coverage),
         )
 }

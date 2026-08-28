@@ -51,6 +51,10 @@ import type {
   ManuscriptClaimExtractionRun,
   ManuscriptClaimExtractionCoverage,
   CreateManuscriptClaimExtractionInput,
+  ManuscriptClaimInventoryCoverage,
+  ManuscriptClaimInventoryItem,
+  ManuscriptClaimInventoryRun,
+  StartManuscriptClaimInventoryInput,
   CaptureResearchPdfEvidenceInput,
   CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
@@ -289,6 +293,13 @@ export interface CoreTransport {
   manuscriptClaimExtraction(id: string): Promise<ManuscriptClaimExtractionRun>
   manuscriptClaimExtractionItems(id: string): Promise<ManuscriptClaimExtractionItem[]>
   manuscriptClaimExtractionCoverage(id: string): Promise<ManuscriptClaimExtractionCoverage[]>
+  startManuscriptClaimInventory(
+    researchCaseId: ResearchCaseId,
+    input: StartManuscriptClaimInventoryInput,
+  ): Promise<ManuscriptClaimInventoryRun>
+  manuscriptClaimInventory(id: string): Promise<ManuscriptClaimInventoryRun>
+  manuscriptClaimInventoryItems(id: string): Promise<ManuscriptClaimInventoryItem[]>
+  manuscriptClaimInventoryCoverage(id: string): Promise<ManuscriptClaimInventoryCoverage[]>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -719,6 +730,24 @@ export function createCoreTransport(
     manuscriptClaimExtractionCoverage: (id) =>
       get<ManuscriptClaimExtractionCoverage[]>(
         `/api/research/manuscript-claim-extractions/${encodeURIComponent(id)}/coverage`,
+      ),
+    startManuscriptClaimInventory: (researchCaseId, input) =>
+      trustedRequest<ManuscriptClaimInventoryRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscript-claim-inventories`,
+        'POST',
+        input,
+      ),
+    manuscriptClaimInventory: (id) =>
+      get<ManuscriptClaimInventoryRun>(
+        `/api/research/manuscript-claim-inventories/${encodeURIComponent(id)}`,
+      ),
+    manuscriptClaimInventoryItems: (id) =>
+      get<ManuscriptClaimInventoryItem[]>(
+        `/api/research/manuscript-claim-inventories/${encodeURIComponent(id)}/items`,
+      ),
+    manuscriptClaimInventoryCoverage: (id) =>
+      get<ManuscriptClaimInventoryCoverage[]>(
+        `/api/research/manuscript-claim-inventories/${encodeURIComponent(id)}/coverage`,
       ),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(

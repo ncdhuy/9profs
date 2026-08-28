@@ -12,7 +12,10 @@ use crate::{
     ManuscriptCitationSyncOccurrenceId, ManuscriptCitationSyncRun, ManuscriptCitationSyncRunId,
     ManuscriptCitationSyncTarget, ManuscriptCitationSyncWrite, ManuscriptClaimExtractionCoverage,
     ManuscriptClaimExtractionItem, ManuscriptClaimExtractionRun, ManuscriptClaimExtractionRunId,
-    ManuscriptClaimExtractionWrite, ManuscriptReferenceCatalogRun, ManuscriptReferenceCatalogRunId,
+    ManuscriptClaimExtractionWrite, ManuscriptClaimInventoryCoverage,
+    ManuscriptClaimInventoryCoverageId, ManuscriptClaimInventoryItem,
+    ManuscriptClaimInventoryItemId, ManuscriptClaimInventoryRun, ManuscriptClaimInventoryRunId,
+    ManuscriptClaimInventoryWrite, ManuscriptReferenceCatalogRun, ManuscriptReferenceCatalogRunId,
     ManuscriptReferenceCatalogWrite, ManuscriptReferenceEntry, ManuscriptReferenceEntryId,
     ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
     ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
@@ -130,6 +133,11 @@ impl_delegating_repository! {
     list_manuscript_claim_extraction_items(extraction_run_id: &ManuscriptClaimExtractionRunId) -> Result<Vec<ManuscriptClaimExtractionItem>, ResearchError>;
     list_manuscript_claim_extraction_coverage(extraction_run_id: &ManuscriptClaimExtractionRunId) -> Result<Vec<ManuscriptClaimExtractionCoverage>, ResearchError>;
     persist_manuscript_claim_extraction(value: &ManuscriptClaimExtractionWrite) -> Result<ManuscriptClaimExtractionRun, ResearchError>;
+    get_manuscript_claim_inventory_run(id: &ManuscriptClaimInventoryRunId) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError>;
+    find_completed_manuscript_claim_inventory(research_case_id: &ResearchCaseId, manuscript_source_id: &ResearchSourceId, document_id: &str, document_version: i64, document_context_hash: &ContentHash, extractor_provider: &str, extractor_version: &str, extractor_model_id: Option<&str>, extraction_contract_version: &str) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError>;
+    list_manuscript_claim_inventory_items(inventory_run_id: &ManuscriptClaimInventoryRunId) -> Result<Vec<ManuscriptClaimInventoryItem>, ResearchError>;
+    list_manuscript_claim_inventory_coverage(inventory_run_id: &ManuscriptClaimInventoryRunId) -> Result<Vec<ManuscriptClaimInventoryCoverage>, ResearchError>;
+    persist_manuscript_claim_inventory(value: &ManuscriptClaimInventoryWrite) -> Result<ManuscriptClaimInventoryRun, ResearchError>;
 }
 
 #[test]

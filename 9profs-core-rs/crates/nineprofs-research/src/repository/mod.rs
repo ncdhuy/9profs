@@ -8,7 +8,9 @@ use crate::{
     ManuscriptCitationSyncOccurrenceId, ManuscriptCitationSyncRun, ManuscriptCitationSyncRunId,
     ManuscriptCitationSyncTarget, ManuscriptCitationSyncWrite, ManuscriptClaimExtractionCoverage,
     ManuscriptClaimExtractionItem, ManuscriptClaimExtractionRun, ManuscriptClaimExtractionRunId,
-    ManuscriptClaimExtractionWrite, ManuscriptReferenceCatalogRun, ManuscriptReferenceCatalogRunId,
+    ManuscriptClaimExtractionWrite, ManuscriptClaimInventoryCoverage, ManuscriptClaimInventoryItem,
+    ManuscriptClaimInventoryRun, ManuscriptClaimInventoryRunId, ManuscriptClaimInventoryWrite,
+    ManuscriptReferenceCatalogRun, ManuscriptReferenceCatalogRunId,
     ManuscriptReferenceCatalogWrite, ManuscriptReferenceEntry, ManuscriptReferenceEntryId,
     ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
     ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
@@ -25,6 +27,7 @@ mod common;
 mod evidence_claims;
 mod manuscript_citation_sync;
 mod manuscript_claim_extraction;
+mod manuscript_claim_inventory;
 mod pdf;
 mod reference_catalog;
 mod reference_resolution;
@@ -321,6 +324,34 @@ pub trait ResearchRepository: Send + Sync {
         &self,
         value: &ManuscriptClaimExtractionWrite,
     ) -> Result<ManuscriptClaimExtractionRun, ResearchError>;
+    async fn get_manuscript_claim_inventory_run(
+        &self,
+        id: &ManuscriptClaimInventoryRunId,
+    ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError>;
+    async fn find_completed_manuscript_claim_inventory(
+        &self,
+        research_case_id: &ResearchCaseId,
+        manuscript_source_id: &ResearchSourceId,
+        document_id: &str,
+        document_version: i64,
+        context_hash: &ContentHash,
+        extractor_provider: &str,
+        extractor_version: &str,
+        extractor_model_id: Option<&str>,
+        extraction_contract_version: &str,
+    ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError>;
+    async fn list_manuscript_claim_inventory_items(
+        &self,
+        inventory_run_id: &ManuscriptClaimInventoryRunId,
+    ) -> Result<Vec<ManuscriptClaimInventoryItem>, ResearchError>;
+    async fn list_manuscript_claim_inventory_coverage(
+        &self,
+        inventory_run_id: &ManuscriptClaimInventoryRunId,
+    ) -> Result<Vec<ManuscriptClaimInventoryCoverage>, ResearchError>;
+    async fn persist_manuscript_claim_inventory(
+        &self,
+        value: &ManuscriptClaimInventoryWrite,
+    ) -> Result<ManuscriptClaimInventoryRun, ResearchError>;
 }
 
 #[derive(Clone, Debug)]
@@ -857,5 +888,61 @@ impl ResearchRepository for SqliteResearchRepository {
         value: &ManuscriptClaimExtractionWrite,
     ) -> Result<ManuscriptClaimExtractionRun, ResearchError> {
         self.persist_manuscript_claim_extraction(value).await
+    }
+
+    async fn get_manuscript_claim_inventory_run(
+        &self,
+        id: &ManuscriptClaimInventoryRunId,
+    ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError> {
+        self.get_manuscript_claim_inventory_run(id).await
+    }
+
+    async fn find_completed_manuscript_claim_inventory(
+        &self,
+        research_case_id: &ResearchCaseId,
+        manuscript_source_id: &ResearchSourceId,
+        document_id: &str,
+        document_version: i64,
+        context_hash: &ContentHash,
+        extractor_provider: &str,
+        extractor_version: &str,
+        extractor_model_id: Option<&str>,
+        extraction_contract_version: &str,
+    ) -> Result<Option<ManuscriptClaimInventoryRun>, ResearchError> {
+        self.find_completed_manuscript_claim_inventory(
+            research_case_id,
+            manuscript_source_id,
+            document_id,
+            document_version,
+            context_hash,
+            extractor_provider,
+            extractor_version,
+            extractor_model_id,
+            extraction_contract_version,
+        )
+        .await
+    }
+
+    async fn list_manuscript_claim_inventory_items(
+        &self,
+        inventory_run_id: &ManuscriptClaimInventoryRunId,
+    ) -> Result<Vec<ManuscriptClaimInventoryItem>, ResearchError> {
+        self.list_manuscript_claim_inventory_items(inventory_run_id)
+            .await
+    }
+
+    async fn list_manuscript_claim_inventory_coverage(
+        &self,
+        inventory_run_id: &ManuscriptClaimInventoryRunId,
+    ) -> Result<Vec<ManuscriptClaimInventoryCoverage>, ResearchError> {
+        self.list_manuscript_claim_inventory_coverage(inventory_run_id)
+            .await
+    }
+
+    async fn persist_manuscript_claim_inventory(
+        &self,
+        value: &ManuscriptClaimInventoryWrite,
+    ) -> Result<ManuscriptClaimInventoryRun, ResearchError> {
+        self.persist_manuscript_claim_inventory(value).await
     }
 }
