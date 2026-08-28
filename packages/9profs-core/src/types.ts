@@ -11,6 +11,7 @@ export type ResearchEvidenceId = string
 export type ResearchClaimId = string
 export type ClaimEvidenceLinkId = string
 export type CitationVerificationRunId = string
+export type CitationReviewRunId = string
 export type ManuscriptClaimExtractionRunId = string
 export type ManuscriptClaimExtractionItemId = string
 export type ManuscriptReferenceResolutionRunId = string
@@ -970,6 +971,110 @@ export interface CitationVerificationRun {
   readonly result: CitationVerificationResult | null
   readonly candidates: readonly CitationVerificationCandidate[]
   readonly evidence: readonly CitationVerificationEvidence[]
+}
+
+export type CitationReviewRunStatus = 'running' | 'completed' | 'failed'
+export type CitationReviewItemStatus =
+  | 'unresolved_reference'
+  | 'ambiguous_reference'
+  | 'reference_requires_confirmation'
+  | 'source_matched_not_verification_ready'
+  | 'binding_conflict'
+  | 'ready_for_verification'
+  | 'verification_running'
+  | 'verification_completed'
+  | 'verification_failed'
+  | 'resolution_failed'
+
+export interface CitationReviewRun {
+  readonly reviewRunId: CitationReviewRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly citationSyncRunId: string | null
+  readonly referenceCatalogRunId: string | null
+  readonly referenceResolutionRunId: string | null
+  readonly claimExtractionRunId: string | null
+  readonly status: CitationReviewRunStatus
+  readonly failureStage: string | null
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+}
+
+export interface StartManuscriptCitationReviewInput {
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly citationSyncRunId: string
+  readonly referenceCatalogRunId: string
+  readonly referenceResolutionRunId: string
+  readonly claimExtractionRunId: string
+}
+
+export interface CitationReviewCandidate {
+  readonly candidateId: string
+  readonly resolutionEntryId: string
+  readonly ordinal: number
+  readonly sourceId: ResearchSourceId
+  readonly sourceLabel: string | null
+  readonly sourceSnapshotId: ResearchSourceSnapshotId | null
+  readonly extractionId: ResearchPdfExtractionId | null
+  readonly matchKind: ManuscriptReferenceResolutionMatchKind | null
+  readonly automaticBindingPermitted: boolean
+}
+
+export interface CitationReviewVerification {
+  readonly verificationRunId: CitationVerificationRunId
+  readonly status: CitationVerificationStatus
+  readonly failureCode: string | null
+  readonly relation: ResearchClaimEvidenceRelation | null
+  readonly rationale: string | null
+  readonly assessorProvider: string | null
+  readonly assessorVersion: string | null
+  readonly assessorModelId: string | null
+  readonly completedAtMs: number | null
+}
+
+export interface CitationReviewEvidence {
+  readonly evidenceId: ResearchEvidenceId
+  readonly relation: ResearchClaimEvidenceRelation
+  readonly sourceSnapshotId: ResearchSourceSnapshotId
+  readonly extractionId: ResearchPdfExtractionId | null
+  readonly locator: ResearchEvidenceLocator
+  readonly verbatimExcerpt: string
+}
+
+export interface CitationReviewItem {
+  readonly itemId: string
+  readonly reviewRunId: CitationReviewRunId
+  readonly ordinal: number
+  readonly claimId: ResearchClaimId
+  readonly claimCitationLinkId: string
+  readonly citationOccurrenceId: string
+  readonly citationTargetId: string
+  readonly referenceEntryId: string | null
+  readonly resolutionEntryId: string | null
+  readonly resolutionOutcome: ManuscriptReferenceResolutionOutcome | null
+  readonly documentBlockId: string
+  readonly start: number
+  readonly end: number
+  readonly renderedText: string
+  readonly referenceKey: string
+  readonly citedLocator: string | null
+  readonly claimText: string
+  readonly sourceExcerpt: string | null
+  readonly bindingId: string | null
+  readonly bindingMethod: ResearchCitationBindingMethod | null
+  readonly sourceId: ResearchSourceId | null
+  readonly sourceSnapshotId: ResearchSourceSnapshotId | null
+  readonly extractionId: ResearchPdfExtractionId | null
+  readonly status: CitationReviewItemStatus
+  readonly failureCode: string | null
+  readonly candidates: readonly CitationReviewCandidate[]
+  readonly verification: CitationReviewVerification | null
+  readonly evidence: readonly CitationReviewEvidence[]
 }
 
 export interface CreateCitationVerificationInput {

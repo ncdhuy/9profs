@@ -1025,6 +1025,132 @@ pub struct CitationVerificationRunDto {
     pub evidence: Vec<CitationVerificationEvidenceDto>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationReviewRunStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationReviewItemStatusDto {
+    UnresolvedReference,
+    AmbiguousReference,
+    ReferenceRequiresConfirmation,
+    SourceMatchedNotVerificationReady,
+    BindingConflict,
+    ReadyForVerification,
+    VerificationRunning,
+    VerificationCompleted,
+    VerificationFailed,
+    ResolutionFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartManuscriptCitationReviewRequest {
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub citation_sync_run_id: String,
+    pub reference_catalog_run_id: String,
+    pub reference_resolution_run_id: String,
+    pub claim_extraction_run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewRunDto {
+    pub review_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub citation_sync_run_id: Option<String>,
+    pub reference_catalog_run_id: Option<String>,
+    pub reference_resolution_run_id: Option<String>,
+    pub claim_extraction_run_id: Option<String>,
+    pub status: CitationReviewRunStatusDto,
+    pub failure_stage: Option<String>,
+    pub failure_code: Option<String>,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewCandidateDto {
+    pub candidate_id: String,
+    pub resolution_entry_id: String,
+    pub ordinal: u32,
+    pub source_id: String,
+    pub source_label: Option<String>,
+    pub source_snapshot_id: Option<String>,
+    pub extraction_id: Option<String>,
+    pub match_kind: Option<ManuscriptReferenceResolutionMatchKindDto>,
+    pub automatic_binding_permitted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewVerificationDto {
+    pub verification_run_id: String,
+    pub status: CitationVerificationStatusDto,
+    pub failure_code: Option<String>,
+    pub relation: Option<ResearchClaimEvidenceRelationDto>,
+    pub rationale: Option<String>,
+    pub assessor_provider: Option<String>,
+    pub assessor_version: Option<String>,
+    pub assessor_model_id: Option<String>,
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewEvidenceDto {
+    pub evidence_id: String,
+    pub relation: ResearchClaimEvidenceRelationDto,
+    pub source_snapshot_id: String,
+    pub extraction_id: Option<String>,
+    pub locator: ResearchEvidenceLocatorDto,
+    pub verbatim_excerpt: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationReviewItemDto {
+    pub item_id: String,
+    pub review_run_id: String,
+    pub ordinal: u32,
+    pub claim_id: String,
+    pub claim_citation_link_id: String,
+    pub citation_occurrence_id: String,
+    pub citation_target_id: String,
+    pub reference_entry_id: Option<String>,
+    pub resolution_entry_id: Option<String>,
+    pub resolution_outcome: Option<ManuscriptReferenceResolutionOutcomeDto>,
+    pub document_block_id: String,
+    pub start: u64,
+    pub end: u64,
+    pub rendered_text: String,
+    pub reference_key: String,
+    pub cited_locator: Option<String>,
+    pub claim_text: String,
+    pub source_excerpt: Option<String>,
+    pub binding_id: Option<String>,
+    pub binding_method: Option<ResearchCitationBindingMethodDto>,
+    pub source_id: Option<String>,
+    pub source_snapshot_id: Option<String>,
+    pub extraction_id: Option<String>,
+    pub status: CitationReviewItemStatusDto,
+    pub failure_code: Option<String>,
+    pub candidates: Vec<CitationReviewCandidateDto>,
+    pub verification: Option<CitationReviewVerificationDto>,
+    pub evidence: Vec<CitationReviewEvidenceDto>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateCitationVerificationRequest {

@@ -31,12 +31,14 @@ pub use mcp::{
 };
 pub use research::{
     CaptureResearchPdfEvidenceRequest, CaptureResearchPdfExtractionRequest,
-    CaptureResearchSourceSnapshotRequest, CitationOccurrenceDto, CitationTargetBindingDto,
-    CitationTargetDto, CitationVerificationCandidateDto, CitationVerificationEvidenceDto,
-    CitationVerificationResultDto, CitationVerificationRunDto, CitationVerificationStatusDto,
-    ClaimCitationLinkDto, ClaimEvidenceLinkDto, CreateCitationOccurrenceRequest,
-    CreateCitationTargetBindingRequest, CreateCitationTargetRequest,
-    CreateCitationVerificationRequest, CreateClaimCitationLinkRequest,
+    CaptureResearchSourceSnapshotRequest, CitationOccurrenceDto, CitationReviewCandidateDto,
+    CitationReviewEvidenceDto, CitationReviewItemDto, CitationReviewItemStatusDto,
+    CitationReviewRunDto, CitationReviewRunStatusDto, CitationReviewVerificationDto,
+    CitationTargetBindingDto, CitationTargetDto, CitationVerificationCandidateDto,
+    CitationVerificationEvidenceDto, CitationVerificationResultDto, CitationVerificationRunDto,
+    CitationVerificationStatusDto, ClaimCitationLinkDto, ClaimEvidenceLinkDto,
+    CreateCitationOccurrenceRequest, CreateCitationTargetBindingRequest,
+    CreateCitationTargetRequest, CreateCitationVerificationRequest, CreateClaimCitationLinkRequest,
     CreateClaimEvidenceLinkRequest, CreateManuscriptClaimExtractionRequest,
     CreateManuscriptReferenceCatalogRequest, CreateResearchCaseRequest, CreateResearchClaimRequest,
     CreateResearchEvidenceRequest, CreateResearchSourceRequest, ManuscriptCitationFormatDto,
@@ -65,7 +67,7 @@ pub use research::{
     ResearchRetrievalReadinessStatusDto, ResearchRetrievalScopeDto, ResearchSourceDto,
     ResearchSourceIdentityDto, ResearchSourceIdentityMethodDto, ResearchSourceIdentityRequest,
     ResearchSourceKindDto, ResearchSourceOriginDto, ResearchSourceSnapshotDto,
-    RetrieveResearchRequest, SyncManuscriptCitationsRequest,
+    RetrieveResearchRequest, StartManuscriptCitationReviewRequest, SyncManuscriptCitationsRequest,
 };
 pub use response::{ApiResponse, ErrorResponse};
 pub use runtime::{HealthResponse, RuntimeInfo};

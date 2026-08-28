@@ -3,6 +3,39 @@ import { extractResearchPdfPages } from '../src/research-pdf'
 import { createCoreTransport } from '../src/transport'
 
 describe('Core transport boundary', () => {
+  it('maps manuscript citation review start and read-model endpoints', async () => {
+    const requests: Array<{ input: string; method?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
+      requests.push({ input, method: init?.method })
+      return { ok: true, json: async () => ({ success: true, data: [] }) }
+    })
+
+    await transport.startManuscriptCitationReview('case-1', {
+      manuscriptSourceId: 'source-1',
+      documentId: 'doc-1',
+      documentVersion: 3,
+      citationSyncRunId: 'sync-1',
+      referenceCatalogRunId: 'catalog-1',
+      referenceResolutionRunId: 'resolution-1',
+      claimExtractionRunId: 'claims-1',
+    })
+    await transport.manuscriptCitationReview('review-1')
+    await transport.manuscriptCitationReviewItems('review-1')
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/research/cases/case-1/manuscript-citation-reviews',
+        method: 'POST',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-citation-reviews/review-1',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-citation-reviews/review-1/items',
+      },
+    ])
+  })
+
   it('maps manuscript reference resolution and confirmation endpoints', async () => {
     const requests: Array<{ input: string; method?: string }> = []
     const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {

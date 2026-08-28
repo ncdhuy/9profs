@@ -26,12 +26,11 @@ Inspected:
   `e2e/docs-presentation-parity.spec.ts`;
 - existing architecture documents and a read-only
   `baseline/genoffice..develop` comparison.
-- Phase 5A–5C3B1 Rust Core research domain, SQLite migrations, API DTO/routes, and
+- Phase 5A–5C3C1 Rust Core research domain, SQLite migrations, API DTO/routes, and
   TypeScript Core transport boundary.
 
-This audit records repository facts after the Phase 5C3B1 implementation point.
-It predates later manuscript claim-extraction and reference-catalog work, and
-its statements about unimplemented features are historical status statements.
+This audit records repository facts after the Phase 5C3C1 implementation point.
+Its statements about unimplemented features are historical status statements.
 
 ## Confirmed repository architecture
 
@@ -61,7 +60,7 @@ Docs, Sheets, Shell, Slides, PDF, and Markdown.
 | Phase 4B Rust Core ↔ renderer bridge   | Active-document transport, renderer bridge, versioned inspection/mutation proxy                                                                                                                 | Implemented                                                                                          |
 | Phase 4C1 document proposals           | `nineprofs-document-tools`; explicit active-document tools, bounded proposal store, freshness, safe proposal APIs/events                                                                        | Implemented                                                                                          |
 | Phase 4C2 proposal review/live commit  | Core-owned proposal workflow, trusted decisions, Docs review card, renderer idempotency, and approved live commit through the existing bridge                                                   | Implemented                                                                                          |
-| Phase 5A–5C3B1 research domain         | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/citation occurrences/targets/bindings/claim links and live manuscript citation sync; Core API/transport | Implemented; claim extraction, verification UI, adapters, review, and product services remain future |
+| Phase 5A–5C3C1 research domain         | `nineprofs-research`; SQLite cases/sources/immutable snapshots/evidence/locators/claims/citation occurrences/targets/bindings/claim links, manuscript stage runs, and Core API/transport | Implemented; Docs citation review UI, adapters, and product services remain future |
 | Research/product backend               | Account/billing backend or OfficeCLI resident mode                                                                                                                                              | Future                                                                                               |
 
 Phase 4A status: active DOCX inspection adapter — IMPLEMENTED; active DOCX
@@ -415,9 +414,10 @@ configuration is absent or invalid; verification then returns the existing
 
 Implemented in this phase: production `CitationAssessmentProvider`, model-backed
 structured assessment, assessor-specific provider configuration, strict output
-validation, provider contract tests, and runtime wiring. Still future after
-5C3B1: manuscript claim extraction, verification UI, and Agent citation tools
-(Phases 5C3B2–5C3C).
+validation, provider contract tests, and runtime wiring. Implemented after 5C3B1:
+manuscript claim extraction, reference catalog/resolution, and the Core citation
+review workflow/read model (5C3B2–5C3C1). Docs citation review UI and Agent
+citation tools remain future (5C3C2+).
 
 ## Phase 5C3A inline DOCX citation model and extraction
 
@@ -479,9 +479,10 @@ inconsistencies. Catalog run, entries, and exact target mappings commit in one
 SQLite transaction. Repeating the same sync run and catalog hash reuses the
 completed run; later document versions retain historical observations.
 
-Still future: 5C3B3B identifier parsing and ResearchSource/PDF resolution,
-exact CitationTargetBinding materialization, fuzzy/manual resolution UI, and
-verification UI.
+Implemented: 5C3B3B identifier parsing, ResearchSource/PDF resolution, and exact
+CitationTargetBinding materialization. Still future: fuzzy/manual resolution UI
+and Docs verification UI; 5C3C1 now provides the persisted Core review
+workflow/read model.
 
 ## Pinned OfficeCLI v1.0.144 mutation audit
 

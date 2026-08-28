@@ -8,7 +8,7 @@ use nineprofs_document_tools::ProposalWorkflowError;
 use nineprofs_mcp::McpError;
 use nineprofs_research::ResearchError;
 use nineprofs_research_dify::DifyError;
-use nineprofs_research_verification::CitationVerificationError;
+use nineprofs_research_verification::{CitationReviewError, CitationVerificationError};
 use nineprofs_runtime::AgentExecutionServiceError;
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ pub(crate) enum ApiError {
     Research(ResearchError),
     Dify(DifyError),
     Verification(CitationVerificationError),
+    CitationReview(CitationReviewError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -76,6 +77,12 @@ impl From<DifyError> for ApiError {
 impl From<CitationVerificationError> for ApiError {
     fn from(error: CitationVerificationError) -> Self {
         Self::Verification(error)
+    }
+}
+
+impl From<CitationReviewError> for ApiError {
+    fn from(error: CitationReviewError) -> Self {
+        Self::CitationReview(error)
     }
 }
 
@@ -250,6 +257,22 @@ impl IntoResponse for ApiError {
                     | CitationVerificationError::PersistenceInvalid(_)
                     | CitationVerificationError::Research(_)
                     | CitationVerificationError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                (status, error.code(), error.to_string())
+            }
+            Self::CitationReview(error) => {
+                let status = match error {
+                    CitationReviewError::NotFound(_) => StatusCode::NOT_FOUND,
+                    CitationReviewError::Invalid(_) => StatusCode::BAD_REQUEST,
+                    CitationReviewError::Research(ResearchError::NotFound { .. }) => {
+                        StatusCode::NOT_FOUND
+                    }
+                    CitationReviewError::Research(ResearchError::Invalid(_)) => {
+                        StatusCode::BAD_REQUEST
+                    }
+                    CitationReviewError::Research(_)
+                    | CitationReviewError::Verification(_)
+                    | CitationReviewError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 };
                 (status, error.code(), error.to_string())
             }

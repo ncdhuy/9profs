@@ -21,6 +21,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 
+mod citation_review;
+pub use citation_review::*;
+
 pub const DEFAULT_TOP_K: u32 = 8;
 pub const MAX_TOP_K: u32 = 16;
 pub const ASSESSMENT_CONTRACT_VERSION: &str = "citation-assessment-v1";
@@ -862,6 +865,49 @@ impl CitationVerificationService {
             runs.push(self.load_run(&row.get::<String, _>("id")).await?);
         }
         Ok(runs)
+    }
+
+    pub async fn latest_for_link_and_binding(
+        &self,
+        claim_citation_link_id: &str,
+        citation_target_binding_id: &str,
+    ) -> Result<Option<CitationVerificationRun>, CitationVerificationError> {
+        let row = sqlx::query(
+            "SELECT id FROM research_citation_verification_runs
+             WHERE claim_citation_link_id = ? AND citation_target_binding_id = ?
+             ORDER BY created_at_ms DESC, id DESC LIMIT 1",
+        )
+        .bind(claim_citation_link_id)
+        .bind(citation_target_binding_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(row) => Ok(Some(self.load_run(&row.get::<String, _>("id")).await?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn latest_for_link_and_binding_after(
+        &self,
+        claim_citation_link_id: &str,
+        citation_target_binding_id: &str,
+        created_after_ms: i64,
+    ) -> Result<Option<CitationVerificationRun>, CitationVerificationError> {
+        let row = sqlx::query(
+            "SELECT id FROM research_citation_verification_runs
+             WHERE claim_citation_link_id = ? AND citation_target_binding_id = ?
+               AND created_at_ms >= ?
+             ORDER BY created_at_ms DESC, id DESC LIMIT 1",
+        )
+        .bind(claim_citation_link_id)
+        .bind(citation_target_binding_id)
+        .bind(created_after_ms)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(row) => Ok(Some(self.load_run(&row.get::<String, _>("id")).await?)),
+            None => Ok(None),
+        }
     }
 
     async fn load_run(

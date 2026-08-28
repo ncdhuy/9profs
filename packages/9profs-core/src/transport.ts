@@ -29,6 +29,8 @@ import type {
   DocumentProposal,
   ClaimCitationLink,
   ClaimEvidenceLink,
+  CitationReviewItem,
+  CitationReviewRun,
   CitationVerificationRun,
   CitationOccurrence,
   CitationTarget,
@@ -60,6 +62,7 @@ import type {
   SyncManuscriptReferenceCatalogInput,
   CreateClaimCitationLinkInput,
   CreateCitationVerificationInput,
+  StartManuscriptCitationReviewInput,
   CreateResearchCaseInput,
   CreateResearchClaimInput,
   CreateResearchEvidenceInput,
@@ -238,6 +241,12 @@ export interface CoreTransport {
     manuscriptSourceId: ResearchSourceId,
     input: SyncManuscriptCitationsInput,
   ): Promise<ManuscriptCitationSyncRun>
+  startManuscriptCitationReview(
+    researchCaseId: ResearchCaseId,
+    input: StartManuscriptCitationReviewInput,
+  ): Promise<CitationReviewRun>
+  manuscriptCitationReview(reviewRunId: string): Promise<CitationReviewRun>
+  manuscriptCitationReviewItems(reviewRunId: string): Promise<CitationReviewItem[]>
   manuscriptCitationSync(syncRunId: string): Promise<ManuscriptCitationSyncRun>
   latestManuscriptCitationSync(
     researchCaseId: ResearchCaseId,
@@ -610,6 +619,20 @@ export function createCoreTransport(
         `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscripts/${encodeURIComponent(manuscriptSourceId)}/citations/sync`,
         'POST',
         input,
+      ),
+    startManuscriptCitationReview: (researchCaseId, input) =>
+      trustedRequest<CitationReviewRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscript-citation-reviews`,
+        'POST',
+        input,
+      ),
+    manuscriptCitationReview: (reviewRunId) =>
+      get<CitationReviewRun>(
+        `/api/research/manuscript-citation-reviews/${encodeURIComponent(reviewRunId)}`,
+      ),
+    manuscriptCitationReviewItems: (reviewRunId) =>
+      get<CitationReviewItem[]>(
+        `/api/research/manuscript-citation-reviews/${encodeURIComponent(reviewRunId)}/items`,
       ),
     manuscriptCitationSync: (syncRunId) =>
       get<ManuscriptCitationSyncRun>(

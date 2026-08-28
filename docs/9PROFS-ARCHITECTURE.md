@@ -540,7 +540,8 @@ The following items are not current implementation claims.
 
 ### Later established roadmap
 
-- 5C3C: citation review UI.
+- 5C3C1: Core-owned manuscript citation review workflow and read model.
+- 5C3C2: Docs citation review UI.
 - 5D: whole-manuscript Research review.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.

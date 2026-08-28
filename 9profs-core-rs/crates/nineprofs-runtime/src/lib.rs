@@ -30,7 +30,9 @@ use nineprofs_research_claim_extractor::{
     ClaimExtractorConfig, ClaimExtractorReadiness, ModelClaimExtractionProvider,
 };
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
-use nineprofs_research_verification::{CitationAssessmentProvider, CitationVerificationService};
+use nineprofs_research_verification::{
+    CitationAssessmentProvider, CitationReviewService, CitationVerificationService,
+};
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
 use thiserror::Error;
@@ -158,6 +160,7 @@ pub struct CoreRuntime {
     research_service: Arc<ResearchService>,
     dify_service: Arc<DifyResearchService>,
     citation_verification_service: Arc<CitationVerificationService>,
+    citation_review_service: Arc<CitationReviewService>,
 }
 
 impl CoreRuntime {
@@ -213,6 +216,12 @@ impl CoreRuntime {
             citation_verification_service = citation_verification_service.with_assessor(assessor);
         }
         let citation_verification_service = Arc::new(citation_verification_service);
+        let citation_review_service = Arc::new(CitationReviewService::new(
+            database.pool().clone(),
+            Arc::clone(&research_service),
+            Arc::clone(&citation_verification_service),
+            Arc::clone(&event_bus),
+        ));
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),
@@ -305,6 +314,7 @@ impl CoreRuntime {
             research_service,
             dify_service,
             citation_verification_service,
+            citation_review_service,
         })
     }
 
@@ -400,6 +410,10 @@ impl CoreRuntime {
 
     pub fn citation_verification_service(&self) -> Arc<CitationVerificationService> {
         Arc::clone(&self.citation_verification_service)
+    }
+
+    pub fn citation_review_service(&self) -> Arc<CitationReviewService> {
+        Arc::clone(&self.citation_review_service)
     }
 
     pub fn citation_assessor_readiness(&self) -> CitationAssessorReadiness {
