@@ -1,5 +1,11 @@
 # DOCX presentation-v2 reference map
 
+Status: historical/reference-only comparison. This document is not current
+cross-product architecture authority. Use
+[9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md) for current 9Profs architecture
+and [DOCX-PRESENTATION-V2.md](DOCX-PRESENTATION-V2.md) for the focused current
+V2 boundary.
+
 Audit date: 2026-08-23
 
 This is a source audit, not an implementation proposal to replace GenOffice. The

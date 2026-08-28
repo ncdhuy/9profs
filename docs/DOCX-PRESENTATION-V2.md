@@ -4,6 +4,10 @@ Status: implemented experimental renderer boundary. V1 remains the default
 production path. V2 is available through an internal/test selector and is not a
 user-facing replacement or a new document model.
 
+Scope: focused DOCX presentation reference. This document is not the canonical
+cross-product architecture; use [9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md)
+for current 9Profs component ownership, authority boundaries, and roadmap.
+
 This document records current source status and protected contracts. The
 canonical cross-product architecture is [9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md).
 

@@ -1,11 +1,16 @@
 # 9Profs architecture re-baseline audit
 
+Status: historical audit snapshot. This file records findings at its original
+audit point and is retained as evidence, not as current architecture authority.
+Use [9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md) for current architecture,
+current ownership, and roadmap status.
+
 Audit date: 2026-08-27
 
-This audit records confirmed current-branch facts. Source code, package
-manifests, tests, and read-only Git comparisons are authoritative; older
-architecture prose is not. The accepted target and migration plan are in
-[9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md).
+This audit records confirmed facts from the branch at the audit date. Source
+code, package manifests, tests, and read-only Git comparisons were authoritative
+for that snapshot; older architecture prose was not. The current canonical
+architecture and roadmap are in [9PROFS-ARCHITECTURE.md](9PROFS-ARCHITECTURE.md).
 
 ## Audit scope and method
 
@@ -24,9 +29,9 @@ Inspected:
 - Phase 5A–5C3B1 Rust Core research domain, SQLite migrations, API DTO/routes, and
   TypeScript Core transport boundary.
 
-This audit records repository facts after Phase 5C3B1 implementation. It does
-not claim manuscript claim extraction, verification UI, or Agent research
-tools.
+This audit records repository facts after the Phase 5C3B1 implementation point.
+It predates later manuscript claim-extraction and reference-catalog work, and
+its statements about unimplemented features are historical status statements.
 
 ## Confirmed repository architecture
 
