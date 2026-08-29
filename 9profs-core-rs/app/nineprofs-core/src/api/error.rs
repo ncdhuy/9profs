@@ -10,6 +10,7 @@ use nineprofs_research::ResearchError;
 use nineprofs_research_dify::DifyError;
 use nineprofs_research_verification::{
     CitationReviewError, CitationVerificationError, CrossClaimCandidateDiscoveryError,
+    CrossClaimConsistencyAssessmentError,
 };
 use nineprofs_runtime::AgentExecutionServiceError;
 
@@ -31,6 +32,7 @@ pub(crate) enum ApiError {
     Verification(CitationVerificationError),
     CitationReview(CitationReviewError),
     CrossClaimCandidates(CrossClaimCandidateDiscoveryError),
+    CrossClaimAssessment(CrossClaimConsistencyAssessmentError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -92,6 +94,12 @@ impl From<CitationReviewError> for ApiError {
 impl From<CrossClaimCandidateDiscoveryError> for ApiError {
     fn from(error: CrossClaimCandidateDiscoveryError) -> Self {
         Self::CrossClaimCandidates(error)
+    }
+}
+
+impl From<CrossClaimConsistencyAssessmentError> for ApiError {
+    fn from(error: CrossClaimConsistencyAssessmentError) -> Self {
+        Self::CrossClaimAssessment(error)
     }
 }
 
@@ -324,6 +332,52 @@ impl IntoResponse for ApiError {
                     }
                     CrossClaimCandidateDiscoveryError::Research(_)
                     | CrossClaimCandidateDiscoveryError::Database(_) => {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                };
+                (status, error.code(), error.to_string())
+            }
+            Self::CrossClaimAssessment(error) => {
+                let status = match &error {
+                    CrossClaimConsistencyAssessmentError::NotFound(_) => StatusCode::NOT_FOUND,
+                    CrossClaimConsistencyAssessmentError::Invalid(_)
+                    | CrossClaimConsistencyAssessmentError::CandidateRunNotCompleted
+                    | CrossClaimConsistencyAssessmentError::InventoryNotCompleted
+                    | CrossClaimConsistencyAssessmentError::ClosedSetViolation(_)
+                    | CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::Invalid(_)
+                        | CrossClaimCandidateDiscoveryError::InventoryNotCompleted
+                        | CrossClaimCandidateDiscoveryError::ClaimCountLimitExceeded
+                        | CrossClaimCandidateDiscoveryError::BatchCountLimitExceeded
+                        | CrossClaimCandidateDiscoveryError::BatchPairLimitExceeded
+                        | CrossClaimCandidateDiscoveryError::ComparisonInputTooLarge
+                        | CrossClaimCandidateDiscoveryError::CandidateCountLimitExceeded
+                        | CrossClaimCandidateDiscoveryError::ClosedSetViolation(_)
+                        | CrossClaimCandidateDiscoveryError::RunNotCompleted,
+                    ) => StatusCode::CONFLICT,
+                    CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::NotFound(_),
+                    ) => StatusCode::NOT_FOUND,
+                    CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::ProviderNotConfigured,
+                    ) => StatusCode::SERVICE_UNAVAILABLE,
+                    CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::ProviderFailed(_),
+                    ) => StatusCode::BAD_GATEWAY,
+                    CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::Research(ResearchError::NotFound {
+                            ..
+                        }),
+                    ) => StatusCode::NOT_FOUND,
+                    CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::Research(ResearchError::Invalid(_)),
+                    ) => StatusCode::BAD_REQUEST,
+                    CrossClaimConsistencyAssessmentError::CandidateDiscovery(
+                        CrossClaimCandidateDiscoveryError::Research(_)
+                        | CrossClaimCandidateDiscoveryError::Database(_),
+                    )
+                    | CrossClaimConsistencyAssessmentError::Research(_)
+                    | CrossClaimConsistencyAssessmentError::Database(_) => {
                         StatusCode::INTERNAL_SERVER_ERROR
                     }
                 };

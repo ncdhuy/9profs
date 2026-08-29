@@ -25,6 +25,8 @@ export type ManuscriptCitationExpectationItemId = string
 export type ManuscriptCrossClaimCandidateRunId = string
 export type ManuscriptCrossClaimComparisonWindowId = string
 export type ManuscriptCrossClaimCandidateId = string
+export type ManuscriptCrossClaimAssessmentRunId = string
+export type ManuscriptCrossClaimAssessmentItemId = string
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string
@@ -1192,6 +1194,92 @@ export interface ManuscriptCrossClaimCandidate {
   readonly rightOrdinal: number
   readonly candidateKinds: readonly ManuscriptCrossClaimCandidateKind[]
   readonly rationale: string
+}
+
+export type ManuscriptCrossClaimAssessmentRunStatus = 'running' | 'completed' | 'failed'
+export type CrossClaimAssessmentStatus = 'assessed' | 'assessment_failed'
+export type CrossClaimConsistencyRelation =
+  | 'conflict'
+  | 'compatible'
+  | 'qualification_or_refinement'
+  | 'equivalent_or_restatement'
+  | 'not_meaningfully_comparable'
+  | 'insufficient_context'
+export type CrossClaimDifferenceDimension =
+  | 'proposition'
+  | 'quantitative'
+  | 'direction'
+  | 'modality_or_certainty'
+  | 'causal_strength'
+  | 'scope_or_population'
+  | 'temporal'
+  | 'definition'
+  | 'other'
+export type CrossClaimConsistencyAttentionState =
+  | 'no_internal_consistency_attention_detected'
+  | 'review_suggested'
+  | 'context_review_needed'
+  | 'assessment_unavailable'
+export type CrossClaimConsistencyAttentionReason =
+  | 'assessed_internal_conflict'
+  | 'quantitative_conflict_observed'
+  | 'direction_conflict_observed'
+  | 'modality_conflict_observed'
+  | 'causal_strength_conflict_observed'
+  | 'scope_conflict_observed'
+  | 'temporal_conflict_observed'
+  | 'definition_conflict_observed'
+  | 'propositional_conflict_observed'
+  | 'consistency_context_insufficient'
+  | 'consistency_assessment_failed'
+
+export interface CreateManuscriptCrossClaimAssessmentInput {
+  readonly candidateRunId: ManuscriptCrossClaimCandidateRunId
+}
+
+export interface ManuscriptCrossClaimAssessmentRun {
+  readonly assessmentRunId: ManuscriptCrossClaimAssessmentRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly candidateRunId: ManuscriptCrossClaimCandidateRunId
+  readonly claimInventoryRunId: ManuscriptClaimInventoryRunId
+  readonly providerId: string
+  readonly modelId: string | null
+  readonly assessorImplementationVersion: string
+  readonly assessmentContractVersion: string
+  readonly candidateCount: number
+  readonly assessedCount: number
+  readonly failedItemCount: number
+  readonly conflictCount: number
+  readonly compatibleCount: number
+  readonly qualificationCount: number
+  readonly equivalentCount: number
+  readonly notComparableCount: number
+  readonly insufficientContextCount: number
+  readonly failedAssessmentCount: number
+  readonly status: ManuscriptCrossClaimAssessmentRunStatus
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+}
+
+export interface ManuscriptCrossClaimAssessmentItem {
+  readonly assessmentItemId: ManuscriptCrossClaimAssessmentItemId
+  readonly assessmentRunId: ManuscriptCrossClaimAssessmentRunId
+  readonly candidateId: ManuscriptCrossClaimCandidateId
+  readonly leftInventoryItemId: ManuscriptClaimInventoryItemId
+  readonly rightInventoryItemId: ManuscriptClaimInventoryItemId
+  readonly leftOrdinal: number
+  readonly rightOrdinal: number
+  readonly assessmentStatus: CrossClaimAssessmentStatus
+  readonly relation: CrossClaimConsistencyRelation | null
+  readonly dimensions: readonly CrossClaimDifferenceDimension[]
+  readonly rationale: string | null
+  readonly failureCode: string | null
+  readonly attention: CrossClaimConsistencyAttentionState
+  readonly attentionReasons: readonly CrossClaimConsistencyAttentionReason[]
 }
 
 export interface ManuscriptClaimCoverageTarget {

@@ -570,7 +570,16 @@ For original audit evidence and phase-specific rationale, see
   discovery only: it does not assert contradiction, truth, evidence, provenance,
   or final review judgment. Because 5D1 has no canonical semantic section
   hierarchy, this is claim-global rather than a typed Abstract/Methods/Results
-  section-consistency engine. 5D3B final cross-claim assessment is next.
+  section-consistency engine.
+- 5D3B Cross-Claim Consistency Assessment (IMPLEMENTED): Core loads one immutable
+  completed 5D3A candidate run and its pinned 5D1 inventory, then sends only the
+  candidate ID and two semantic claim records to a dedicated optional assessor.
+  The assessor returns one closed relation and bounded difference dimensions;
+  Core validates the closed set, persists each item including failures, and
+  composes deterministic attention. It does not fact-check, retrieve evidence,
+  judge citation quality, reuse discovery kinds/rationale, or infer conflict from
+  a difference dimension. Assessment runs are versioned, retryable after item
+  failure, and idempotent for the same candidate/provider/model/contract identity.
 - 5D4 Whole Review UI (FUTURE): whole-manuscript review experience.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.

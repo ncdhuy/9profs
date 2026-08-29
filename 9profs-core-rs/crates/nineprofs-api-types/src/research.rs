@@ -1595,3 +1595,123 @@ pub struct ManuscriptCrossClaimCandidateDto {
     pub candidate_kinds: Vec<ManuscriptCrossClaimCandidateKindDto>,
     pub rationale: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptCrossClaimAssessmentRequest {
+    pub candidate_run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCrossClaimAssessmentRunStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossClaimAssessmentStatusDto {
+    Assessed,
+    AssessmentFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossClaimConsistencyRelationDto {
+    Conflict,
+    Compatible,
+    QualificationOrRefinement,
+    EquivalentOrRestatement,
+    NotMeaningfullyComparable,
+    InsufficientContext,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossClaimDifferenceDimensionDto {
+    Proposition,
+    Quantitative,
+    Direction,
+    ModalityOrCertainty,
+    CausalStrength,
+    ScopeOrPopulation,
+    Temporal,
+    Definition,
+    Other,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossClaimConsistencyAttentionStateDto {
+    NoInternalConsistencyAttentionDetected,
+    ReviewSuggested,
+    ContextReviewNeeded,
+    AssessmentUnavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossClaimConsistencyAttentionReasonDto {
+    AssessedInternalConflict,
+    QuantitativeConflictObserved,
+    DirectionConflictObserved,
+    ModalityConflictObserved,
+    CausalStrengthConflictObserved,
+    ScopeConflictObserved,
+    TemporalConflictObserved,
+    DefinitionConflictObserved,
+    PropositionalConflictObserved,
+    ConsistencyContextInsufficient,
+    ConsistencyAssessmentFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCrossClaimAssessmentRunDto {
+    pub assessment_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub candidate_run_id: String,
+    pub claim_inventory_run_id: String,
+    pub provider_id: String,
+    pub model_id: Option<String>,
+    pub assessor_implementation_version: String,
+    pub assessment_contract_version: String,
+    pub candidate_count: u32,
+    pub assessed_count: u32,
+    pub failed_item_count: u32,
+    pub conflict_count: u32,
+    pub compatible_count: u32,
+    pub qualification_count: u32,
+    pub equivalent_count: u32,
+    pub not_comparable_count: u32,
+    pub insufficient_context_count: u32,
+    pub failed_assessment_count: u32,
+    pub status: ManuscriptCrossClaimAssessmentRunStatusDto,
+    pub failure_code: Option<String>,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCrossClaimAssessmentItemDto {
+    pub assessment_item_id: String,
+    pub assessment_run_id: String,
+    pub candidate_id: String,
+    pub left_inventory_item_id: String,
+    pub right_inventory_item_id: String,
+    pub left_ordinal: u32,
+    pub right_ordinal: u32,
+    pub assessment_status: CrossClaimAssessmentStatusDto,
+    pub relation: Option<CrossClaimConsistencyRelationDto>,
+    pub dimensions: Vec<CrossClaimDifferenceDimensionDto>,
+    pub rationale: Option<String>,
+    pub failure_code: Option<String>,
+    pub attention: CrossClaimConsistencyAttentionStateDto,
+    pub attention_reasons: Vec<CrossClaimConsistencyAttentionReasonDto>,
+}

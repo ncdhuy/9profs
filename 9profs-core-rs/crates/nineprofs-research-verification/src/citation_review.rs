@@ -242,6 +242,8 @@ pub struct CitationReviewService {
     events: Arc<BroadcastEventBus>,
     expectation_assessor: Option<Arc<dyn crate::CitationExpectationProvider>>,
     cross_claim_candidate_provider: Option<Arc<dyn crate::CrossClaimCandidateDiscoveryProvider>>,
+    cross_claim_consistency_assessor:
+        Option<Arc<dyn crate::CrossClaimConsistencyAssessmentProvider>>,
 }
 
 impl CitationReviewService {
@@ -258,6 +260,7 @@ impl CitationReviewService {
             events,
             expectation_assessor: None,
             cross_claim_candidate_provider: None,
+            cross_claim_consistency_assessor: None,
         }
     }
 
@@ -274,6 +277,14 @@ impl CitationReviewService {
         provider: Arc<dyn crate::CrossClaimCandidateDiscoveryProvider>,
     ) -> Self {
         self.cross_claim_candidate_provider = Some(provider);
+        self
+    }
+
+    pub fn with_cross_claim_consistency_assessor(
+        mut self,
+        assessor: Arc<dyn crate::CrossClaimConsistencyAssessmentProvider>,
+    ) -> Self {
+        self.cross_claim_consistency_assessor = Some(assessor);
         self
     }
 
@@ -316,6 +327,33 @@ impl CitationReviewService {
         &self,
     ) -> Option<Arc<dyn crate::CrossClaimCandidateDiscoveryProvider>> {
         self.cross_claim_candidate_provider.clone()
+    }
+
+    pub(crate) fn cross_claim_consistency_assessor(
+        &self,
+    ) -> Option<Arc<dyn crate::CrossClaimConsistencyAssessmentProvider>> {
+        self.cross_claim_consistency_assessor.clone()
+    }
+
+    pub(crate) fn publish_cross_claim_assessment_event(
+        &self,
+        event: &str,
+        run: &crate::ManuscriptCrossClaimAssessmentRun,
+    ) {
+        let _ = self.events.publish(EventEnvelope::new(
+            event,
+            serde_json::json!({
+                "assessment_run_id": run.assessment_run_id,
+                "research_case_id": run.research_case_id,
+                "candidate_run_id": run.candidate_run_id,
+                "candidate_count": run.candidate_count,
+                "assessed_count": run.assessed_count,
+                "failed_item_count": run.failed_item_count,
+                "conflict_count": run.conflict_count,
+                "status": run.status,
+                "failure_code": run.failure_code,
+            }),
+        ));
     }
 
     pub async fn start(

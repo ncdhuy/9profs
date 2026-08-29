@@ -25,8 +25,9 @@ use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
 use nineprofs_research_assessor::{
     CitationAssessorConfig, CitationAssessorReadiness, CitationExpectationAssessorConfig,
-    CrossClaimCandidateDiscoveryConfig, ModelCitationAssessor, ModelCitationExpectationAssessor,
-    ModelCrossClaimCandidateDiscovery,
+    CrossClaimCandidateDiscoveryConfig, CrossClaimConsistencyAssessorConfig, ModelCitationAssessor,
+    ModelCitationExpectationAssessor, ModelCrossClaimCandidateDiscovery,
+    ModelCrossClaimConsistencyAssessor,
 };
 use nineprofs_research_claim_extractor::{
     ClaimExtractorConfig, ClaimExtractorReadiness, ModelClaimExtractionProvider,
@@ -36,6 +37,7 @@ use nineprofs_research_dify::{DifyConfig, DifyResearchService};
 use nineprofs_research_verification::{
     CitationAssessmentProvider, CitationExpectationProvider, CitationReviewService,
     CitationVerificationService, CrossClaimCandidateDiscoveryProvider,
+    CrossClaimConsistencyAssessmentProvider,
 };
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
@@ -74,6 +76,8 @@ pub struct RuntimeConfig {
     pub claim_extractor: ClaimExtractorConfig,
     /// Launch-scoped cross-claim candidate discovery configuration. Credential value is never stored.
     pub cross_claim_candidate_discovery: CrossClaimCandidateDiscoveryConfig,
+    /// Launch-scoped cross-claim consistency assessor configuration. Credential value is never stored.
+    pub cross_claim_consistency_assessor: CrossClaimConsistencyAssessorConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -91,6 +95,7 @@ impl Default for RuntimeConfig {
             citation_expectation_assessor: CitationExpectationAssessorConfig::default(),
             claim_extractor: ClaimExtractorConfig::default(),
             cross_claim_candidate_discovery: CrossClaimCandidateDiscoveryConfig::default(),
+            cross_claim_consistency_assessor: CrossClaimConsistencyAssessorConfig::default(),
         }
     }
 }
@@ -118,6 +123,7 @@ impl RuntimeConfig {
         config.citation_expectation_assessor = CitationExpectationAssessorConfig::from_env();
         config.claim_extractor = ClaimExtractorConfig::from_env();
         config.cross_claim_candidate_discovery = CrossClaimCandidateDiscoveryConfig::from_env();
+        config.cross_claim_consistency_assessor = CrossClaimConsistencyAssessorConfig::from_env();
         if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
             config.custom_skill_roots = value
                 .split(';')
@@ -250,6 +256,14 @@ impl CoreRuntime {
                 ));
             citation_review_service =
                 citation_review_service.with_cross_claim_candidate_provider(provider);
+        }
+        if config.cross_claim_consistency_assessor.is_ready() {
+            let assessor: Arc<dyn CrossClaimConsistencyAssessmentProvider> =
+                Arc::new(ModelCrossClaimConsistencyAssessor::new(
+                    config.cross_claim_consistency_assessor.clone(),
+                ));
+            citation_review_service =
+                citation_review_service.with_cross_claim_consistency_assessor(assessor);
         }
         let citation_review_service = Arc::new(citation_review_service);
         let document_bridge = Arc::new(DocumentBridgeService::new(
