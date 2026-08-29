@@ -57,6 +57,9 @@ import type {
   ManuscriptClaimCoverageItem,
   ManuscriptClaimCoverageRun,
   ManuscriptClaimCoverageTarget,
+  CreateManuscriptCitationExpectationInput,
+  ManuscriptCitationExpectationItem,
+  ManuscriptCitationExpectationRun,
   StartManuscriptClaimInventoryInput,
   StartManuscriptClaimCoverageInput,
   CaptureResearchPdfEvidenceInput,
@@ -314,6 +317,12 @@ export interface CoreTransport {
     coverageRunId: string,
     coverageItemId: string,
   ): Promise<ManuscriptClaimCoverageTarget[]>
+  startManuscriptCitationExpectation(
+    researchCaseId: ResearchCaseId,
+    input: CreateManuscriptCitationExpectationInput,
+  ): Promise<ManuscriptCitationExpectationRun>
+  manuscriptCitationExpectation(id: string): Promise<ManuscriptCitationExpectationRun>
+  manuscriptCitationExpectationItems(id: string): Promise<ManuscriptCitationExpectationItem[]>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -780,6 +789,20 @@ export function createCoreTransport(
     manuscriptClaimCoverageTargets: (coverageRunId, coverageItemId) =>
       get<ManuscriptClaimCoverageTarget[]>(
         `/api/research/manuscript-claim-coverages/${encodeURIComponent(coverageRunId)}/items/${encodeURIComponent(coverageItemId)}/targets`,
+      ),
+    startManuscriptCitationExpectation: (researchCaseId, input) =>
+      trustedRequest<ManuscriptCitationExpectationRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscript-citation-expectations`,
+        'POST',
+        input,
+      ),
+    manuscriptCitationExpectation: (id) =>
+      get<ManuscriptCitationExpectationRun>(
+        `/api/research/manuscript-citation-expectations/${encodeURIComponent(id)}`,
+      ),
+    manuscriptCitationExpectationItems: (id) =>
+      get<ManuscriptCitationExpectationItem[]>(
+        `/api/research/manuscript-citation-expectations/${encodeURIComponent(id)}/items`,
       ),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(

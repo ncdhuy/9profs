@@ -20,6 +20,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
+mod citation_expectation;
+pub use citation_expectation::*;
+
 pub const ASSESSMENT_IMPLEMENTATION_VERSION: &str = "model-citation-assessor-v1";
 pub const ASSESSMENT_INSTRUCTION: &str = r#"You are citation-assessor-v1, a bounded scientific citation assessor.
 

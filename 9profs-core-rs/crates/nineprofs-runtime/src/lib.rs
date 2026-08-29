@@ -24,7 +24,8 @@ use nineprofs_officecli::{
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
 use nineprofs_research_assessor::{
-    CitationAssessorConfig, CitationAssessorReadiness, ModelCitationAssessor,
+    CitationAssessorConfig, CitationAssessorReadiness, CitationExpectationAssessorConfig,
+    ModelCitationAssessor, ModelCitationExpectationAssessor,
 };
 use nineprofs_research_claim_extractor::{
     ClaimExtractorConfig, ClaimExtractorReadiness, ModelClaimExtractionProvider,
@@ -32,7 +33,8 @@ use nineprofs_research_claim_extractor::{
 };
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
 use nineprofs_research_verification::{
-    CitationAssessmentProvider, CitationReviewService, CitationVerificationService,
+    CitationAssessmentProvider, CitationExpectationProvider, CitationReviewService,
+    CitationVerificationService,
 };
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
@@ -65,6 +67,8 @@ pub struct RuntimeConfig {
     pub dify: Option<DifyConfig>,
     /// Launch-scoped citation assessor configuration. Credential value is never stored.
     pub citation_assessor: CitationAssessorConfig,
+    /// Launch-scoped citation expectation configuration. Credential value is never stored.
+    pub citation_expectation_assessor: CitationExpectationAssessorConfig,
     /// Launch-scoped manuscript claim extractor configuration. Credential value is never stored.
     pub claim_extractor: ClaimExtractorConfig,
 }
@@ -81,6 +85,7 @@ impl Default for RuntimeConfig {
             session_secret: None,
             dify: None,
             citation_assessor: CitationAssessorConfig::default(),
+            citation_expectation_assessor: CitationExpectationAssessorConfig::default(),
             claim_extractor: ClaimExtractorConfig::default(),
         }
     }
@@ -106,6 +111,7 @@ impl RuntimeConfig {
         }
         config.dify = DifyConfig::from_env();
         config.citation_assessor = CitationAssessorConfig::from_env();
+        config.citation_expectation_assessor = CitationExpectationAssessorConfig::from_env();
         config.claim_extractor = ClaimExtractorConfig::from_env();
         if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
             config.custom_skill_roots = value
@@ -220,12 +226,19 @@ impl CoreRuntime {
             citation_verification_service = citation_verification_service.with_assessor(assessor);
         }
         let citation_verification_service = Arc::new(citation_verification_service);
-        let citation_review_service = Arc::new(CitationReviewService::new(
+        let mut citation_review_service = CitationReviewService::new(
             database.pool().clone(),
             Arc::clone(&research_service),
             Arc::clone(&citation_verification_service),
             Arc::clone(&event_bus),
-        ));
+        );
+        if config.citation_expectation_assessor.is_ready() {
+            let assessor: Arc<dyn CitationExpectationProvider> = Arc::new(
+                ModelCitationExpectationAssessor::new(config.citation_expectation_assessor.clone()),
+            );
+            citation_review_service = citation_review_service.with_expectation_assessor(assessor);
+        }
+        let citation_review_service = Arc::new(citation_review_service);
         let document_bridge = Arc::new(DocumentBridgeService::new(
             nineprofs_documents::DocumentBridgeConfig {
                 session_secret: config.session_secret.clone(),

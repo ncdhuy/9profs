@@ -20,6 +20,8 @@ export type ManuscriptClaimInventoryCoverageId = string
 export type ManuscriptClaimCoverageRunId = string
 export type ManuscriptClaimCoverageItemId = string
 export type ManuscriptClaimCoverageTargetId = string
+export type ManuscriptCitationExpectationRunId = string
+export type ManuscriptCitationExpectationItemId = string
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string
@@ -1056,6 +1058,74 @@ export interface ManuscriptClaimCoverageItem {
   readonly insufficientCount: number
   readonly unverifiedCount: number
   readonly blockedCount: number
+}
+
+export interface CreateManuscriptCitationExpectationInput {
+  readonly claimCoverageRunId: ManuscriptClaimCoverageRunId
+}
+
+export type CitationExpectation =
+  | 'external_evidence_expected'
+  | 'external_evidence_context_dependent'
+  | 'manuscript_internal_support'
+  | 'no_external_citation_expected'
+  | 'uncertain'
+
+export type ManuscriptCitationExpectationRunStatus = 'running' | 'completed' | 'failed'
+export type CitationExpectationAssessmentStatus = 'assessed' | 'assessment_failed'
+export type CoverageAttentionState =
+  | 'no_coverage_attention_detected'
+  | 'review_suggested'
+  | 'expectation_review_needed'
+  | 'assessment_unavailable'
+export type CoverageAttentionReason =
+  | 'expected_external_evidence_no_exact_citation_link'
+  | 'ambiguous_claim_citation_bridge'
+  | 'citation_verification_blocked'
+  | 'citation_verification_incomplete'
+  | 'citation_verification_insufficient'
+  | 'citation_verification_contextualizes'
+  | 'expected_external_evidence_no_supporting_verification'
+  | 'contradictory_evidence_observed'
+  | 'mixed_evidence_relations'
+  | 'expectation_context_dependent'
+  | 'expectation_uncertain'
+  | 'expectation_assessment_failed'
+
+export interface ManuscriptCitationExpectationRun {
+  readonly expectationRunId: ManuscriptCitationExpectationRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly claimCoverageRunId: ManuscriptClaimCoverageRunId
+  readonly providerId: string
+  readonly assessorVersion: string
+  readonly modelId: string | null
+  readonly expectationContractVersion: string
+  readonly coverageContractVersion: string
+  readonly coverageScope: string
+  readonly coverageLimitations: readonly string[]
+  readonly status: ManuscriptCitationExpectationRunStatus
+  readonly itemCount: number
+  readonly failedItemCount: number
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+}
+
+export interface ManuscriptCitationExpectationItem {
+  readonly expectationItemId: ManuscriptCitationExpectationItemId
+  readonly expectationRunId: ManuscriptCitationExpectationRunId
+  readonly coverageItemId: ManuscriptClaimCoverageItemId
+  readonly inventoryItemId: ManuscriptClaimInventoryItemId
+  readonly ordinal: number
+  readonly claimText: string
+  readonly sourceExcerpt: string
+  readonly reviewKind: ClaimReviewKind
+  readonly blockKind: ManuscriptClaimInventoryBlockKind
+  readonly assessmentStatus: CitationExpectationAssessmentStatus
+  readonly expectation: CitationExpectation | null
+  readonly attention: CoverageAttentionState
+  readonly attentionReasons: readonly CoverageAttentionReason[]
+  readonly rationale: string | null
+  readonly failureCode: string | null
 }
 
 export interface ManuscriptClaimCoverageTarget {

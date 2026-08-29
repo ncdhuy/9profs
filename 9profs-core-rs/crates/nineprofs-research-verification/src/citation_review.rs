@@ -240,6 +240,7 @@ pub struct CitationReviewService {
     research: Arc<ResearchService>,
     verification: Arc<CitationVerificationService>,
     events: Arc<BroadcastEventBus>,
+    expectation_assessor: Option<Arc<dyn crate::CitationExpectationProvider>>,
 }
 
 impl CitationReviewService {
@@ -254,7 +255,16 @@ impl CitationReviewService {
             research,
             verification,
             events,
+            expectation_assessor: None,
         }
+    }
+
+    pub fn with_expectation_assessor(
+        mut self,
+        assessor: Arc<dyn crate::CitationExpectationProvider>,
+    ) -> Self {
+        self.expectation_assessor = Some(assessor);
+        self
     }
 
     pub(crate) fn pool(&self) -> &SqlitePool {
@@ -263,6 +273,12 @@ impl CitationReviewService {
 
     pub(crate) fn research_service(&self) -> &Arc<ResearchService> {
         &self.research
+    }
+
+    pub(crate) fn expectation_assessor(
+        &self,
+    ) -> Option<Arc<dyn crate::CitationExpectationProvider>> {
+        self.expectation_assessor.clone()
     }
 
     pub async fn start(

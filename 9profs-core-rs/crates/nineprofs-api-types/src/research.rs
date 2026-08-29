@@ -1410,3 +1410,100 @@ pub struct ManuscriptClaimCoverageTargetDto {
     pub evidence_count: u32,
     pub evidence: Vec<CitationReviewEvidenceDto>,
 }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptCitationExpectationRequest {
+    pub claim_coverage_run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationExpectationDto {
+    ExternalEvidenceExpected,
+    ExternalEvidenceContextDependent,
+    ManuscriptInternalSupport,
+    NoExternalCitationExpected,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCitationExpectationRunStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationExpectationAssessmentStatusDto {
+    Assessed,
+    AssessmentFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageAttentionStateDto {
+    NoCoverageAttentionDetected,
+    ReviewSuggested,
+    ExpectationReviewNeeded,
+    AssessmentUnavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageAttentionReasonDto {
+    ExpectedExternalEvidenceNoExactCitationLink,
+    AmbiguousClaimCitationBridge,
+    CitationVerificationBlocked,
+    CitationVerificationIncomplete,
+    CitationVerificationInsufficient,
+    CitationVerificationContextualizes,
+    ExpectedExternalEvidenceNoSupportingVerification,
+    ContradictoryEvidenceObserved,
+    MixedEvidenceRelations,
+    ExpectationContextDependent,
+    ExpectationUncertain,
+    ExpectationAssessmentFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCitationExpectationRunDto {
+    pub expectation_run_id: String,
+    pub research_case_id: String,
+    pub claim_coverage_run_id: String,
+    pub provider_id: String,
+    pub assessor_version: String,
+    pub model_id: Option<String>,
+    pub expectation_contract_version: String,
+    pub coverage_contract_version: String,
+    pub coverage_scope: String,
+    pub coverage_limitations: Vec<String>,
+    pub status: ManuscriptCitationExpectationRunStatusDto,
+    pub item_count: u32,
+    pub failed_item_count: u32,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCitationExpectationItemDto {
+    pub expectation_item_id: String,
+    pub expectation_run_id: String,
+    pub coverage_item_id: String,
+    pub inventory_item_id: String,
+    pub ordinal: u32,
+    pub claim_text: String,
+    pub source_excerpt: String,
+    pub review_kind: ClaimReviewKindDto,
+    pub block_kind: ManuscriptClaimInventoryBlockKindDto,
+    pub assessment_status: CitationExpectationAssessmentStatusDto,
+    pub expectation: Option<CitationExpectationDto>,
+    pub attention: CoverageAttentionStateDto,
+    pub attention_reasons: Vec<CoverageAttentionReasonDto>,
+    pub rationale: Option<String>,
+    pub failure_code: Option<String>,
+}

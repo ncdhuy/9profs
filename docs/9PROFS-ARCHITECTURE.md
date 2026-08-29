@@ -556,9 +556,13 @@ For original audit evidence and phase-specific rationale, see
   observations, target-level Citation Review states, and existing evidence
   relations. Structural citation observation, citation expectation, and
   evidence relation remain separate; citation expectation/judgment is 5D2B.
-- 5D2B Citation Expectation + Coverage Judgment (NEXT): decide when a claim
-  kind is expected to have external evidence and whether structural coverage
-  warrants attention.
+- 5D2B Citation Expectation + Coverage Judgment (IMPLEMENTED): Core preserves
+  deterministic 5D2A structural coverage, sends only blind claim semantics to
+  an optional model-backed citation-expectation assessor, and composes the
+  closed-set attention state deterministically from expectation plus coverage
+  facts. It does not retrieve evidence, create provenance, or assert truth;
+  failed item assessments remain retryable and scope limitations are carried
+  forward. 5D3 is next.
 - 5D3 Cross-Claim Review (FUTURE): cross-claim contradiction and consistency review.
 - 5D4 Whole Review UI (FUTURE): whole-manuscript review experience.
 - 5E: manuscript and Sheets/data consistency.

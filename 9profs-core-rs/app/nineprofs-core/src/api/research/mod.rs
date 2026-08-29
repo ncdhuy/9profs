@@ -3,6 +3,7 @@ use axum::Router;
 use super::AppState;
 
 pub(super) mod cases;
+pub(super) mod citation_expectation;
 pub(super) mod citation_review;
 pub(super) mod citations;
 pub(super) mod claim_coverage;
@@ -21,6 +22,7 @@ pub(super) fn router() -> Router<AppState> {
         .merge(cases::router())
         .merge(claim_coverage::router())
         .merge(citation_review::router())
+        .merge(citation_expectation::router())
         .merge(sources::router())
         .merge(pdf::router())
         .merge(evidence::router())

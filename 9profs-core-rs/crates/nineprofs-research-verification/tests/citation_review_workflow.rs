@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use nineprofs_db::Database;
@@ -16,13 +16,16 @@ use nineprofs_research::{
 };
 use nineprofs_research_verification::{
     CitationAssessment, CitationAssessmentInput, CitationAssessmentProvider,
-    CitationAssessmentProviderError, CitationAssessmentProviderIdentity,
-    CitationRetrievalCandidate, CitationRetrievalError, CitationRetrievalProvider,
-    CitationReviewBlockInput, CitationReviewCitationInput, CitationReviewError,
-    CitationReviewItemStatus, CitationReviewRunStatus, CitationReviewService,
-    CitationReviewTargetInput, ManuscriptClaimCoverageBridgeStatus,
+    CitationAssessmentProviderError, CitationAssessmentProviderIdentity, CitationExpectation,
+    CitationExpectationAssessment, CitationExpectationAssessmentStatus, CitationExpectationInput,
+    CitationExpectationProvider, CitationExpectationProviderError,
+    CitationExpectationProviderIdentity, CitationRetrievalCandidate, CitationRetrievalError,
+    CitationRetrievalProvider, CitationReviewBlockInput, CitationReviewCitationInput,
+    CitationReviewError, CitationReviewItemStatus, CitationReviewRunStatus, CitationReviewService,
+    CitationReviewTargetInput, CoverageAttentionState, ManuscriptClaimCoverageBridgeStatus,
     ManuscriptClaimCoverageRunStatus, ManuscriptClaimCoverageStructuralCitationState,
-    SelectedCitationCandidate, StartManuscriptCitationReview, StartManuscriptClaimCoverage,
+    SelectedCitationCandidate, StartManuscriptCitationExpectation, StartManuscriptCitationReview,
+    StartManuscriptClaimCoverage,
 };
 use sha2::{Digest, Sha256};
 
@@ -152,6 +155,39 @@ impl CitationAssessmentProvider for MixedAssessor {
                 relation,
                 rationale: None,
             }],
+        })
+    }
+}
+
+struct CapturingExpectationProvider {
+    seen: Arc<Mutex<Vec<CitationExpectationInput>>>,
+    expectation: CitationExpectation,
+    fail_item_id: Option<String>,
+    assessor_version: String,
+}
+
+#[async_trait]
+impl CitationExpectationProvider for CapturingExpectationProvider {
+    fn identity(&self) -> CitationExpectationProviderIdentity {
+        CitationExpectationProviderIdentity {
+            provider_id: "expectation-fixture".to_owned(),
+            assessor_version: self.assessor_version.clone(),
+            model_id: Some("fixture-model".to_owned()),
+        }
+    }
+
+    async fn assess(
+        &self,
+        input: CitationExpectationInput,
+    ) -> Result<CitationExpectationAssessment, CitationExpectationProviderError> {
+        self.seen.lock().unwrap().push(input.clone());
+        if self.fail_item_id.as_deref() == Some(input.item_id.as_str()) {
+            return Err(CitationExpectationProviderError::ProviderUnavailable);
+        }
+        Ok(CitationExpectationAssessment {
+            item_id: input.item_id,
+            expectation: self.expectation.clone(),
+            rationale: "fixture scholarly expectation".to_owned(),
         })
     }
 }
@@ -498,11 +534,258 @@ async fn seed_completed_inventory(
     }
 }
 
+async fn seed_expectation_coverage(
+    database: &Database,
+    case_id: &str,
+    manuscript_source_id: &str,
+    inventory_run_id: &str,
+    citation_review_run_id: &str,
+    coverage_run_id: &str,
+    inventory_item_id: &str,
+    exact_link_count: i64,
+    support_count: i64,
+) {
+    sqlx::query(
+        "INSERT INTO research_manuscript_citation_review_runs
+         (id, research_case_id, manuscript_source_id, document_id, document_version, status, created_at_ms, completed_at_ms)
+         VALUES (?, ?, ?, 'doc-7', 7, 'completed', 1, 1)",
+    )
+    .bind(citation_review_run_id)
+    .bind(case_id)
+    .bind(manuscript_source_id)
+    .execute(database.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO research_manuscript_claim_coverage_runs
+         (coverage_run_id, research_case_id, manuscript_source_id, document_id, document_version,
+          claim_inventory_run_id, citation_review_run_id, analysis_contract_version,
+          coverage_contract_version, coverage_scope, coverage_limitations_json, status,
+          item_count, created_at_ms, completed_at_ms)
+         VALUES (?, ?, ?, 'doc-7', 7, ?, ?, 'coverage-v1', 'inventory-coverage-v1',
+                 'visible_paragraphs', '[\"tables\"]', 'completed', 1, 1, 1)",
+    )
+    .bind(coverage_run_id)
+    .bind(case_id)
+    .bind(manuscript_source_id)
+    .bind(inventory_run_id)
+    .bind(citation_review_run_id)
+    .execute(database.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO research_manuscript_claim_coverage_items
+         (coverage_item_id, coverage_run_id, inventory_item_id, ordinal, bridge_status,
+          structural_citation_state, inventory_overlapping_citation_count,
+          same_block_citation_count, claim_range_citation_count, exact_claim_citation_link_count,
+          target_count, support_count, contradiction_count, contextualize_count,
+          insufficient_count, unverified_count, blocked_count)
+         VALUES ('coverage-item', ?, ?, 0, 'exact_claim_bridge', 'exact_citation_linked',
+                 1, 1, 1, ?, ?, ?, 0, 0, 0, 0, 0)",
+    )
+    .bind(coverage_run_id)
+    .bind(inventory_item_id)
+    .bind(exact_link_count)
+    .bind(exact_link_count)
+    .bind(support_count)
+    .execute(database.pool())
+    .await
+    .unwrap();
+}
+
 async fn count_rows(database: &Database, table: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
         .fetch_one(database.pool())
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn citation_expectation_is_blind_and_idempotent() {
+    let (database, research, case, manuscript, _) = base(None).await;
+    seed_completed_inventory(
+        &database,
+        case.id.as_str(),
+        manuscript.id.as_str(),
+        "doc-7",
+        7,
+        "expectation-inventory",
+        &[("inventory-item", "Claim", 0, 5, "Claim", 1)],
+    )
+    .await;
+    seed_expectation_coverage(
+        &database,
+        case.id.as_str(),
+        manuscript.id.as_str(),
+        "expectation-inventory",
+        "expectation-review",
+        "expectation-coverage",
+        "inventory-item",
+        1,
+        1,
+    )
+    .await;
+    let (service, _) = review_service(
+        &database,
+        research,
+        FixtureRetrieval { candidate: None },
+        None,
+    )
+    .await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let service = service.with_expectation_assessor(Arc::new(CapturingExpectationProvider {
+        seen: Arc::clone(&seen),
+        expectation: CitationExpectation::ExternalEvidenceContextDependent,
+        fail_item_id: None,
+        assessor_version: "1".to_owned(),
+    }));
+    let input = StartManuscriptCitationExpectation {
+        research_case_id: case.id.to_string(),
+        claim_coverage_run_id: "expectation-coverage".to_owned(),
+    };
+    let run = service
+        .start_manuscript_citation_expectation(input.clone())
+        .await
+        .unwrap();
+    assert_eq!(run.failed_item_count, 0);
+    let items = service
+        .list_manuscript_citation_expectation_items(&run.expectation_run_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        items[0].expectation,
+        Some(CitationExpectation::ExternalEvidenceContextDependent)
+    );
+    assert_eq!(
+        items[0].attention,
+        CoverageAttentionState::ExpectationReviewNeeded
+    );
+    let captured = seen.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    let input_json = serde_json::to_string(&captured[0]).unwrap();
+    assert!(input_json.contains("claimText"));
+    assert!(input_json.contains("sourceExcerpt"));
+    assert!(input_json.contains("reviewKind"));
+    assert!(input_json.contains("blockKind"));
+    assert!(!input_json.contains("supportCount"));
+    assert!(!input_json.contains("citationOccurrenceId"));
+    assert!(!input_json.contains("evidenceCount"));
+    assert!(!input_json.contains("structuralCitationState"));
+    drop(captured);
+
+    let reused = service
+        .start_manuscript_citation_expectation(input.clone())
+        .await
+        .unwrap();
+    assert_eq!(reused.expectation_run_id, run.expectation_run_id);
+    assert_eq!(
+        count_rows(&database, "research_manuscript_citation_expectation_runs").await,
+        1
+    );
+
+    let changed = service
+        .with_expectation_assessor(Arc::new(CapturingExpectationProvider {
+            seen: Arc::clone(&seen),
+            expectation: CitationExpectation::ExternalEvidenceContextDependent,
+            fail_item_id: None,
+            assessor_version: "2".to_owned(),
+        }))
+        .start_manuscript_citation_expectation(input)
+        .await
+        .unwrap();
+    assert_ne!(changed.expectation_run_id, run.expectation_run_id);
+    assert_eq!(
+        count_rows(&database, "research_manuscript_citation_expectation_runs").await,
+        2
+    );
+}
+
+#[tokio::test]
+async fn citation_expectation_failures_are_item_scoped_and_retryable() {
+    let (database, research, case, manuscript, _) = base(None).await;
+    seed_completed_inventory(
+        &database,
+        case.id.as_str(),
+        manuscript.id.as_str(),
+        "doc-7",
+        7,
+        "retry-inventory",
+        &[("inventory-item", "Claim", 0, 5, "Claim", 1)],
+    )
+    .await;
+    seed_expectation_coverage(
+        &database,
+        case.id.as_str(),
+        manuscript.id.as_str(),
+        "retry-inventory",
+        "retry-review",
+        "retry-coverage",
+        "inventory-item",
+        0,
+        0,
+    )
+    .await;
+    let (service, _) = review_service(
+        &database,
+        research,
+        FixtureRetrieval { candidate: None },
+        None,
+    )
+    .await;
+    let failed = service
+        .clone()
+        .with_expectation_assessor(Arc::new(CapturingExpectationProvider {
+            seen: Arc::new(Mutex::new(Vec::new())),
+            expectation: CitationExpectation::ExternalEvidenceExpected,
+            fail_item_id: Some("inventory-item".to_owned()),
+            assessor_version: "1".to_owned(),
+        }))
+        .start_manuscript_citation_expectation(StartManuscriptCitationExpectation {
+            research_case_id: case.id.to_string(),
+            claim_coverage_run_id: "retry-coverage".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(failed.failed_item_count, 1);
+    let failed_item = service
+        .clone()
+        .with_expectation_assessor(Arc::new(CapturingExpectationProvider {
+            seen: Arc::new(Mutex::new(Vec::new())),
+            expectation: CitationExpectation::ExternalEvidenceExpected,
+            fail_item_id: None,
+            assessor_version: "1".to_owned(),
+        }))
+        .list_manuscript_citation_expectation_items(&failed.expectation_run_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        failed_item[0].assessment_status,
+        CitationExpectationAssessmentStatus::AssessmentFailed
+    );
+    assert_eq!(
+        failed_item[0].attention,
+        CoverageAttentionState::AssessmentUnavailable
+    );
+
+    let retried = service
+        .with_expectation_assessor(Arc::new(CapturingExpectationProvider {
+            seen: Arc::new(Mutex::new(Vec::new())),
+            expectation: CitationExpectation::ExternalEvidenceExpected,
+            fail_item_id: None,
+            assessor_version: "1".to_owned(),
+        }))
+        .start_manuscript_citation_expectation(StartManuscriptCitationExpectation {
+            research_case_id: case.id.to_string(),
+            claim_coverage_run_id: "retry-coverage".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_ne!(retried.expectation_run_id, failed.expectation_run_id);
+    assert_eq!(retried.failed_item_count, 0);
+    assert_eq!(
+        count_rows(&database, "research_manuscript_citation_expectation_runs").await,
+        2
+    );
 }
 
 #[tokio::test]
