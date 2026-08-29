@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createCoreTransport } from '@genoffice/9profs-core'
+import { coreWebsocketUrlFromHttpBaseUrl } from '../src/main/core-bridge-config'
 import type { CoreFetchRequest } from '../src/shared/ipc'
 import { performCoreFetch, type CoreNetworkFetch } from '../src/main/core-fetch'
 
@@ -25,6 +26,15 @@ function bridgeFetcher(network: CoreNetworkFetch) {
 }
 
 describe('Docs Electron Core fetch bridge', () => {
+  it('derives the document bridge URL from the configured Core URL', () => {
+    expect(coreWebsocketUrlFromHttpBaseUrl('http://127.0.0.1:39761')).toBe(
+      'ws://127.0.0.1:39761/ws/documents',
+    )
+    expect(coreWebsocketUrlFromHttpBaseUrl('https://core.example.test/')).toBe(
+      'wss://core.example.test/ws/documents',
+    )
+  })
+
   it('loads empty ResearchCase list as successful CoreTransport data', async () => {
     const network = vi.fn<CoreNetworkFetch>(async () => response([]))
     const transport = createCoreTransport(baseUrl, bridgeFetcher(network))
@@ -99,8 +109,14 @@ describe('Docs Electron Core fetch bridge', () => {
 
   it('does not use renderer global fetch for CoreTransport construction', () => {
     const source = readFileSync(join(__dirname, '../src/renderer/App.tsx'), 'utf8')
+    const main = readFileSync(join(__dirname, '../src/main/docs-main.ts'), 'utf8')
     const preload = readFileSync(join(__dirname, '../src/preload/index.ts'), 'utf8')
     expect(source).toContain('window.desktop.coreFetch')
+    expect(source).toContain('new GenOfficeDocsBridgeClient')
+    expect(source).toContain('bridge.connect()')
+    expect(source).toContain('if (tornDown || !editor || !doc?.documentId)')
+    expect(source).toContain('}, [doc?.documentId, editor, tornDown])')
+    expect(main).toContain('coreWebsocketUrlFromHttpBaseUrl(configuredCoreHttpBaseUrl())')
     expect(source).not.toMatch(/window\.fetch\s*\(/)
     expect(preload).toContain("ipcRenderer.invoke('docs:core-fetch', request)")
   })

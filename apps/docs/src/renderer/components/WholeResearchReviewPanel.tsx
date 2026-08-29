@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
-import type {
-  CitationReviewCandidate,
-  CoreTransport,
-  CoverageAttentionReason,
-  CrossClaimConsistencyAttentionReason,
-  ManuscriptResearchReviewClaimItem,
-  ManuscriptResearchReviewConsistencyClaim,
-  ManuscriptResearchReviewConsistencyItem,
-  ManuscriptResearchReviewRun,
-  ResearchCase,
-  ResearchSource,
+import {
+  CoreTransportError,
+  type CitationReviewCandidate,
+  type CoreTransport,
+  type CoverageAttentionReason,
+  type CrossClaimConsistencyAttentionReason,
+  type ManuscriptResearchReviewClaimItem,
+  type ManuscriptResearchReviewConsistencyClaim,
+  type ManuscriptResearchReviewConsistencyItem,
+  type ManuscriptResearchReviewRun,
+  type ResearchCase,
+  type ResearchSource,
 } from '@genoffice/9profs-core'
 import {
   buildManuscriptResearchReviewInput,
@@ -263,7 +264,7 @@ export function WholeResearchReviewPanel({
       })
       .catch(() => {
         if (!disposed) {
-          setMessage(errorMessage(translateRef.current('researchReviewUnavailable')))
+          setMessage(errorMessage(translateRef.current('researchReviewApiUnavailable')))
         }
       })
     return () => {
@@ -283,7 +284,7 @@ export function WholeResearchReviewPanel({
         setSources(next.filter((source) => source.researchCaseId === caseId && source.kind === 'manuscript'))
       })
       .catch(() => {
-        if (!disposed) setMessage(translateRef.current('researchReviewSourcesUnavailable'))
+        if (!disposed) setMessage(translateRef.current('researchReviewApiUnavailable'))
       })
     return () => {
       disposed = true
@@ -337,14 +338,30 @@ export function WholeResearchReviewPanel({
     setConfirmedEntries(new Set())
     resolutionRunIdRef.current = null
     try {
-      const active = await transport.activeDocument(documentId)
+      let active
+      try {
+        active = await transport.activeDocument(documentId)
+      } catch (error) {
+        setReview({
+          kind: 'error',
+          message:
+            error instanceof CoreTransportError && error.code === 'not_found'
+              ? translateRef.current('researchReviewDocumentUnavailable')
+              : translateRef.current('researchReviewApiUnavailable'),
+        })
+        return
+      }
       if (
         active.documentId !== documentId ||
         active.availability !== 'available' ||
         !Number.isInteger(active.version) ||
         active.version < 0
       ) {
-        throw new Error('active document unavailable')
+        setReview({
+          kind: 'error',
+          message: translateRef.current('researchReviewDocumentUnavailable'),
+        })
+        return
       }
       setCurrentVersion(active.version)
       const input = buildManuscriptResearchReviewInput({

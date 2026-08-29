@@ -78,16 +78,21 @@ describe('GenOffice Docs bridge client', () => {
       adapter,
       websocketUrl: 'ws://test/ws/documents',
       createWebSocket: () => socket as unknown as WebSocket,
+      sessionSecret: 'test-session-secret',
       reconnect: false,
     })
     bridge.connect()
     socket.open()
     expect(sent(socket)[0]).toMatchObject({
       type: 'register',
+      protocolVersion: '1',
       documentId: 'doc-1',
       documentType: 'docx',
       version: 0,
+      capabilities: ['inspect', 'commitApprovedChangeSet'],
+      auth: { sessionSecret: 'test-session-secret' },
     })
+    expect((sent(socket)[0] as { documentId: string }).documentId).toBe(adapter.documentId)
     socket.deliver({ type: 'registered', documentId: 'doc-1', version: 0 })
 
     socket.deliver({ type: 'inspect', requestId: 'inspect-1', documentId: 'doc-1' })
@@ -176,4 +181,43 @@ describe('GenOffice Docs bridge client', () => {
     bridge.dispose()
     adapter.dispose()
   })
+
+  it('reconnects the same document session without resetting its version', async () => {
+    const { adapter, emit } = harness()
+    adapter.resetVersion(5)
+    const sockets: FakeSocket[] = []
+    const bridge = new GenOfficeDocsBridgeClient({
+      adapter,
+      websocketUrl: 'ws://test/ws/documents',
+      createWebSocket: () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        return socket as unknown as WebSocket
+      },
+      reconnect: true,
+      reconnectDelayMs: 1,
+    })
+    bridge.connect()
+    sockets[0].open()
+    sockets[0].deliver({ type: 'registered', documentId: 'doc-1', version: 5 })
+    const staleClose = sockets[0].onclose
+    sockets[0].close()
+    adapter.resetVersion(6)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(sockets).toHaveLength(2)
+    sockets[1].open()
+    sockets[1].deliver({ type: 'registered', documentId: 'doc-1', version: 6 })
+    staleClose?.()
+    emit(true)
+    expect(sent(sockets[1])[0]).toMatchObject({ type: 'register', documentId: 'doc-1', version: 6 })
+    expect(sent(sockets[1]).at(-1)).toMatchObject({
+      type: 'versionChanged',
+      documentId: 'doc-1',
+      version: 7,
+    })
+    bridge.dispose()
+    adapter.dispose()
+  })
+
+
 })

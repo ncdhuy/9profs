@@ -95,6 +95,7 @@ import {
 import { isExternallyModified, type DiskFileState } from './external-change'
 import { initDocsAutoUpdater } from './updater'
 import { performCoreFetch } from './core-fetch'
+import { coreWebsocketUrlFromHttpBaseUrl } from './core-bridge-config'
 
 /**
  * Docs main-process logic as an embeddable module: no top-level side effects.
@@ -2941,7 +2942,9 @@ export function registerDocsIpc(): void {
   ipcMain.handle('app:get-language', () => getUiLang())
   ipcMain.removeHandler('docs:core-bridge-config')
   ipcMain.handle('docs:core-bridge-config', () => ({
-    websocketUrl: process.env.NINEPROFS_DOCUMENT_BRIDGE_URL || undefined,
+    websocketUrl:
+      process.env.NINEPROFS_DOCUMENT_BRIDGE_URL ||
+      coreWebsocketUrlFromHttpBaseUrl(configuredCoreHttpBaseUrl()),
     httpBaseUrl: configuredCoreHttpBaseUrl(),
     sessionSecret: process.env.NINEPROFS_SESSION_SECRET || undefined,
   }))

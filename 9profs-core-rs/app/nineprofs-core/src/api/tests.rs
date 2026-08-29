@@ -529,6 +529,20 @@ mod document_proposal_api_tests {
 
         let response = router
             .clone()
+            .oneshot(Request::get("/api/documents/api-doc").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["data"]["documentId"], "api-doc");
+        assert_eq!(payload["data"]["documentType"], "docx");
+        assert_eq!(payload["data"]["authority"], "genoffice-active");
+        assert_eq!(payload["data"]["version"], 5);
+        assert_eq!(payload["data"]["availability"], "available");
+
+        let response = router
+            .clone()
             .oneshot(
                 Request::get("/api/document-proposals?documentId=api-doc")
                     .body(Body::empty())

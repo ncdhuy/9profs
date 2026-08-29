@@ -796,7 +796,7 @@ export function App() {
   // Phase 4A adapter: bind one opaque document session to existing Docs
   // command/read primitives. No save or presentation API crosses this seam.
   useEffect(() => {
-    if (!editor || !doc?.documentId) {
+    if (tornDown || !editor || !doc?.documentId) {
       activeDocsAdapterRef.current = null
       setCoreTransport(null)
       return
@@ -847,7 +847,7 @@ export function App() {
                   headers: init?.headers,
                   body: init?.rawBody ?? init?.body,
                 })
-                return { ok: response.ok, json: async () => response.json }
+                return { ok: response.ok, status: response.status, json: async () => response.json }
               },
               { sessionSecret: config.sessionSecret },
             ),
@@ -873,7 +873,7 @@ export function App() {
       if (activeDocsAdapterRef.current === adapter) activeDocsAdapterRef.current = null
       setCoreTransport(null)
     }
-  }, [doc?.documentId, editor])
+  }, [doc?.documentId, editor, tornDown])
 
   // textbox sub-editors: re-render the ribbon on focus/selection changes and
   // mark the document dirty when their content changes

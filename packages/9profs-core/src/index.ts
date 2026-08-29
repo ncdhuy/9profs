@@ -237,7 +237,7 @@ export type {
   ReferencePdfIngestion,
 } from './types'
 
-export { createCoreTransport } from './transport'
+export { createCoreTransport, CoreTransportError } from './transport'
 export { createCoreEventClient, parseCoreAgentEvent } from './event-client'
 export { createCoreAssistantRegistry, createCoreSkillProvider } from './adapters'
 export type {

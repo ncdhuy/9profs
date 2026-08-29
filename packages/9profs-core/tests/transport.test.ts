@@ -3,6 +3,25 @@ import { extractResearchPdfPages } from '../src/research-pdf'
 import { createCoreTransport } from '../src/transport'
 
 describe('Core transport boundary', () => {
+  it('preserves typed Core errors for missing active documents', async () => {
+    const transport = createCoreTransport('http://127.0.0.1:39761', async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        success: false,
+        error: 'active document not found: doc-1',
+        code: 'not_found',
+      }),
+    }))
+
+    await expect(transport.activeDocument('doc-1')).rejects.toMatchObject({
+      name: 'CoreTransportError',
+      path: '/api/documents/doc-1',
+      status: 404,
+      code: 'not_found',
+    })
+  })
+
   it('maps manuscript citation review start and read-model endpoints', async () => {
     const requests: Array<{ input: string; method?: string; body?: string }> = []
     const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {

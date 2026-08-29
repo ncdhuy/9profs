@@ -6,6 +6,7 @@ import type {
 import { GenOfficeDocsMutationError, type GenOfficeDocsAdapter } from './docs'
 
 const OPEN = 1
+const MAX_RECONNECT_DELAY_MS = 30_000
 
 export interface GenOfficeDocsBridgeOptions {
   readonly adapter: GenOfficeDocsAdapter
@@ -50,6 +51,7 @@ export class GenOfficeDocsBridgeClient {
   private readonly createWebSocket: (url: string) => WebSocket
   private readonly reconnect: boolean
   private readonly reconnectDelayMs: number
+  private reconnectAttempt = 0
   private readonly unsubscribeVersion: () => void
   private socket: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -62,7 +64,7 @@ export class GenOfficeDocsBridgeClient {
     this.sessionSecret = options.sessionSecret
     this.createWebSocket = options.createWebSocket ?? ((url) => new WebSocket(url))
     this.reconnect = options.reconnect ?? true
-    this.reconnectDelayMs = options.reconnectDelayMs ?? 1000
+    this.reconnectDelayMs = Math.max(1, options.reconnectDelayMs ?? 1000)
     this.unsubscribeVersion = this.adapter.versionTracker.subscribe((version) => {
       if (this.registered) {
         this.send({
@@ -80,6 +82,8 @@ export class GenOfficeDocsBridgeClient {
       const socket = this.createWebSocket(this.websocketUrl)
       this.socket = socket
       socket.onopen = () => {
+        if (this.disposed || this.socket !== socket) return
+        this.reconnectAttempt = 0
         this.send({
           type: 'register',
           protocolVersion: '1',
@@ -92,10 +96,13 @@ export class GenOfficeDocsBridgeClient {
             : { auth: { sessionSecret: this.sessionSecret } }),
         })
       }
-      socket.onmessage = (event) => this.handleMessage(event.data)
+      socket.onmessage = (event) => {
+        if (this.socket === socket) this.handleMessage(event.data)
+      }
       socket.onerror = () => undefined
       socket.onclose = () => {
-        if (this.socket === socket) this.socket = null
+        if (this.socket !== socket) return
+        this.socket = null
         this.registered = false
         this.scheduleReconnect()
       }
@@ -118,10 +125,15 @@ export class GenOfficeDocsBridgeClient {
 
   private scheduleReconnect(): void {
     if (this.disposed || !this.reconnect || this.reconnectTimer !== null) return
+    const delay = Math.min(
+      this.reconnectDelayMs * 2 ** this.reconnectAttempt,
+      MAX_RECONNECT_DELAY_MS,
+    )
+    this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 30)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.connect()
-    }, this.reconnectDelayMs)
+    }, delay)
   }
 
   private handleMessage(raw: unknown): void {

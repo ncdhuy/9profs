@@ -148,8 +148,23 @@ export type CoreFetch = (
   init?: CoreRequestInit,
 ) => Promise<{
   ok: boolean
+  status?: number
   json(): Promise<unknown>
 }>
+
+export class CoreTransportError extends Error {
+  readonly path: string
+  readonly status?: number
+  readonly code?: string
+
+  constructor(path: string, status: number | undefined, code: string | undefined, message: string) {
+    super(message)
+    this.name = 'CoreTransportError'
+    this.path = path
+    this.status = status
+    this.code = code
+  }
+}
 
 export interface CoreTransport {
   health(): Promise<CoreHealth>
@@ -386,14 +401,49 @@ export function createCoreTransport(
 ): CoreTransport {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
 
+  function coreErrorDetails(body: unknown): { code?: string; message?: string } {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return {}
+    const record = body as Record<string, unknown>
+    return {
+      code: typeof record.code === 'string' ? record.code : undefined,
+      message:
+        typeof record.error === 'string'
+          ? record.error
+          : typeof record.message === 'string'
+            ? record.message
+            : undefined,
+    }
+  }
+
+  async function readResponse<T>(
+    path: string,
+    response: Awaited<ReturnType<CoreFetch>>,
+  ): Promise<T> {
+    const rawBody = await response.json()
+    const details = coreErrorDetails(rawBody)
+    if (!response.ok) {
+      throw new CoreTransportError(
+        path,
+        response.status,
+        details.code,
+        details.message ?? `9Profs Core request failed: ${path}`,
+      )
+    }
+    const body = rawBody as CoreResponse<T>
+    if (!body.success || body.data === undefined) {
+      throw new CoreTransportError(
+        path,
+        response.status,
+        details.code,
+        details.message ?? `9Profs Core response failed: ${path}`,
+      )
+    }
+    return body.data
+  }
+
   async function get<T>(path: string): Promise<T> {
     const response = await fetcher(`${normalizedBaseUrl}${path}`)
-    if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
-
-    const body = (await response.json()) as CoreResponse<T>
-    if (!body.success || body.data === undefined)
-      throw new Error(`9Profs Core response failed: ${path}`)
-    return body.data
+    return readResponse<T>(path, response)
   }
 
   async function request<T>(path: string, method: string, value?: unknown): Promise<T> {
@@ -402,12 +452,7 @@ export function createCoreTransport(
       headers: value === undefined ? undefined : { 'content-type': 'application/json' },
       body: value === undefined ? undefined : JSON.stringify(value),
     })
-    if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
-
-    const body = (await response.json()) as CoreResponse<T>
-    if (!body.success || body.data === undefined)
-      throw new Error(`9Profs Core response failed: ${path}`)
-    return body.data
+    return readResponse<T>(path, response)
   }
 
   async function trustedRequest<T>(path: string, method: string, value?: unknown): Promise<T> {
@@ -421,12 +466,7 @@ export function createCoreTransport(
       headers: Object.keys(headers).length === 0 ? undefined : headers,
       body: value === undefined ? undefined : JSON.stringify(value),
     })
-    if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
-
-    const body = (await response.json()) as CoreResponse<T>
-    if (!body.success || body.data === undefined)
-      throw new Error(`9Profs Core response failed: ${path}`)
-    return body.data
+    return readResponse<T>(path, response)
   }
 
   async function trustedBinaryRequest<T>(
@@ -445,12 +485,7 @@ export function createCoreTransport(
       },
       rawBody: bytes,
     })
-    if (!response.ok) throw new Error(`9Profs Core request failed: ${path}`)
-
-    const body = (await response.json()) as CoreResponse<T>
-    if (!body.success || body.data === undefined)
-      throw new Error(`9Profs Core response failed: ${path}`)
-    return body.data
+    return readResponse<T>(path, response)
   }
 
   function queryPath(path: string, values: Array<[string, string | undefined]>): string {

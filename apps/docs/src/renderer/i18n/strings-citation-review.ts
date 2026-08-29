@@ -24,6 +24,9 @@ const shared = {
   researchReviewAnalyzing:
     'Analyzing claims, citation/evidence coverage, and internal consistency.',
   researchReviewCoreUnavailable: 'Research Core is unavailable. Research review cannot start.',
+  researchReviewApiUnavailable: '9Profs Research API is unavailable. Check Core and try again.',
+  researchReviewDocumentUnavailable:
+    'Current document is not connected to 9Profs Core. Reopen the document or restart 9Profs.',
   researchReviewUnavailable: 'Research review is temporarily unavailable.',
   researchReviewSourcesUnavailable: 'Research sources are temporarily unavailable.',
   researchReviewCreateFailed: 'The Research context could not be created.',

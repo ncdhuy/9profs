@@ -9,6 +9,7 @@ import type {
   ManuscriptResearchReviewConsistencyItem,
   ManuscriptResearchReviewRun,
 } from '@genoffice/9profs-core'
+import { CoreTransportError } from '@genoffice/9profs-core'
 import type { Run } from '@genoffice/docx-engine'
 import { blocksToPmDoc } from '../src/renderer/editor/convert'
 import { editorExtensions } from '../src/renderer/editor/extensions'
@@ -277,6 +278,33 @@ describe('WholeResearchReviewPanel', () => {
     expect(rendered.container.querySelector('#whole-research-review-case')).not.toBeNull()
     expect(rendered.container.textContent).toContain('Create a ResearchCase to choose a review context.')
     expect(rendered.container.textContent).not.toContain('Research review is temporarily unavailable.')
+    rendered.unmount()
+  })
+
+  it('shows actionable active-document guidance when Core has no bridge session', async () => {
+    const harness = transportFor({
+      activeDocument: vi
+        .fn()
+        .mockRejectedValue(
+          new CoreTransportError(
+            '/api/documents/doc-1',
+            404,
+            'not_found',
+            'active document not found',
+          ),
+        ),
+    })
+    const rendered = renderPanel(harness.transport, editorFor())
+    await chooseContext(rendered.container)
+    await act(async () => {
+      rendered.container.querySelector<HTMLButtonElement>('.citation-review-start')?.click()
+    })
+    await flush()
+
+    expect(rendered.container.textContent).toContain(
+      'Current document is not connected to 9Profs Core. Reopen the document or restart 9Profs.',
+    )
+    expect(harness.startManuscriptResearchReview).not.toHaveBeenCalled()
     rendered.unmount()
   })
 
