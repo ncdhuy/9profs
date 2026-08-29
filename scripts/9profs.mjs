@@ -346,19 +346,31 @@ export async function waitForCore(
   throw new Error(`Timed out waiting for 9Profs Core at ${baseUrl}.`)
 }
 
-export function buildNpmCommand(script) {
-  return {
-    command: process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    args: ['run', script],
+export function buildNpmCommand(
+  script,
+  {
+    platform = process.platform,
+    execPath = process.execPath,
+    npmExecPath = process.env.npm_execpath,
+    comSpec = process.env.ComSpec || 'cmd.exe',
+    extraArgs = [],
+  } = {},
+) {
+  const npmArgs = ['run', script, ...extraArgs]
+  if (npmExecPath) return { command: execPath, args: [npmExecPath, ...npmArgs] }
+  if (platform === 'win32') {
+    return { command: comSpec, args: ['/d', '/s', '/c', 'npm.cmd', ...npmArgs] }
   }
+  return { command: 'npm', args: npmArgs }
 }
 
-function launchNpm(script, rootDir, env, spawnImpl = defaultSpawn) {
-  const command = buildNpmCommand(script)
+export function launchNpm(script, rootDir, env, spawnImpl = defaultSpawn, commandOptions = {}) {
+  const command = buildNpmCommand(script, commandOptions)
   return spawnImpl(command.command, command.args, {
     cwd: rootDir,
     env,
     stdio: 'inherit',
+    shell: false,
     detached: process.platform !== 'win32',
     windowsHide: false,
   })

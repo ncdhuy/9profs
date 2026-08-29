@@ -14,6 +14,8 @@ import {
   formatDoctorReport,
   loadDogfoodingEnv,
   parseEnvFile,
+  launchNpm,
+  runDev,
   setupLocalEnv,
   superviseChildren,
   waitForCore,
@@ -88,21 +90,27 @@ test('doctor distinguishes provider readiness states', () => {
 })
 
 test('doctor reports healthy Core, missing providers, and missing Dify without secrets', async () => {
-  const report = await createDoctorReport({
-    baseEnv: { NINEPROFS_CORE_ADDR: '127.0.0.1:39761' },
-    probe: healthyCoreProbe,
-    fetchImpl: async () => {
-      throw new Error('Dify should not be called when unconfigured')
-    },
-  })
-  const output = formatDoctorReport(report)
-  assert.equal(report.exitCode, 0)
-  assert.match(output, /Core configuration\s+OK/)
-  assert.match(output, /Core reachable\s+OK/)
-  assert.match(output, /Claim extractor\s+NOT CONFIGURED/)
-  assert.match(output, /Dify\s+NOT CONFIGURED/)
-  assert.match(output, /Citation verification unavailable/)
-  assert.doesNotMatch(output, /test-value|OPENAI_API_KEY=/)
+  const rootDir = tempDirectory()
+  try {
+    const report = await createDoctorReport({
+      rootDir,
+      baseEnv: { NINEPROFS_CORE_ADDR: '127.0.0.1:39761' },
+      probe: healthyCoreProbe,
+      fetchImpl: async () => {
+        throw new Error('Dify should not be called when unconfigured')
+      },
+    })
+    const output = formatDoctorReport(report)
+    assert.equal(report.exitCode, 0)
+    assert.match(output, /Core configuration\s+OK/)
+    assert.match(output, /Core reachable\s+OK/)
+    assert.match(output, /Claim extractor\s+NOT CONFIGURED/)
+    assert.match(output, /Dify\s+NOT CONFIGURED/)
+    assert.match(output, /Citation verification unavailable/)
+    assert.doesNotMatch(output, /test-value|OPENAI_API_KEY=/)
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true })
+  }
 })
 
 test('doctor reports unavailable Core and does not treat it as ready', async () => {
@@ -139,6 +147,48 @@ test('doctor uses retrieval readiness API for configured Dify', async () => {
   assert.equal(report.dify.status, 'READY')
 })
 
+test('Windows npm execution uses Node and npm CLI without spawning npm.cmd', () => {
+  const launches = []
+  launchNpm(
+    'dev',
+    'C:\\repo',
+    {},
+    (command, args, options) => {
+      launches.push({ command, args, options })
+      return new EventEmitter()
+    },
+    {
+      platform: 'win32',
+      execPath: 'C:\\node.exe',
+      npmExecPath: 'C:\\npm\\npm-cli.js',
+    },
+  )
+  assert.equal(launches[0].command, 'C:\\node.exe')
+  assert.deepEqual(launches[0].args, ['C:\\npm\\npm-cli.js', 'run', 'dev'])
+  assert.equal(launches[0].options.shell, false)
+  assert.notEqual(launches[0].command, 'npm.cmd')
+})
+
+test('Unix npm execution remains valid without npm_execpath', () => {
+  assert.deepEqual(buildNpmCommand('dev', { platform: 'linux', npmExecPath: null }), {
+    command: 'npm',
+    args: ['run', 'dev'],
+  })
+})
+
+test('Windows npm fallback invokes cmd.exe with fixed arguments', () => {
+  const command = buildNpmCommand('dev', {
+    platform: 'win32',
+    npmExecPath: null,
+    comSpec: 'C:\\Windows\\System32\\cmd.exe',
+  })
+  assert.deepEqual(command, {
+    command: 'C:\\Windows\\System32\\cmd.exe',
+    args: ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev'],
+  })
+  assert.notEqual(command.command, 'npm.cmd')
+})
+
 test('dev launcher waits for Core and builds cross-platform npm commands', async () => {
   const env = { NINEPROFS_CORE_ADDR: '127.0.0.1:39761' }
   const probes = [
@@ -160,8 +210,64 @@ test('dev launcher waits for Core and builds cross-platform npm commands', async
     log: () => {},
   })
   assert.equal(result.started, true)
-  assert.deepEqual(launches[0].args, ['run', 'core:run'])
-  assert.equal(buildNpmCommand('dev').args.join(' '), 'run dev')
+  assert.deepEqual(launches[0].args.slice(-2), ['run', 'core:run'])
+  assert.deepEqual(buildNpmCommand('dev', { platform: 'linux', npmExecPath: null }), {
+    command: 'npm',
+    args: ['run', 'dev'],
+  })
+})
+
+test('dev launcher passes loaded env to Core and app dev commands', async () => {
+  const rootDir = tempDirectory()
+  try {
+    writeFileSync(
+      join(rootDir, '.env.9profs'),
+      'NINEPROFS_CORE_ADDR=127.0.0.1:39761\nDOGFOODING_VALUE=from-file\n',
+    )
+    const probes = [
+      { reachable: false, compatible: false, reason: 'Core did not answer' },
+      { reachable: true, compatible: true, reason: '' },
+    ]
+    const children = []
+    const launches = []
+    const resultPromise = runDev({
+      rootDir,
+      baseEnv: { BASE_VALUE: 'from-process' },
+      probe: async () => probes.shift(),
+      portOpen: async () => false,
+      spawnImpl: (command, args, options) => {
+        const child = new EventEmitter()
+        child.exitCode = null
+        children.push(child)
+        launches.push({ command, args, options })
+        return child
+      },
+      sleepImpl: async () => {},
+      log: () => {},
+    })
+    await new Promise((resolveResult) => setImmediate(resolveResult))
+    assert.equal(launches.length, 2)
+    assert.equal(launches[0].args.slice(-2).join(' '), 'run core:run')
+    assert.equal(launches[1].args.slice(-2).join(' '), 'run dev')
+    assert.strictEqual(launches[0].options.env, launches[1].options.env)
+    assert.equal(launches[0].options.env.DOGFOODING_VALUE, 'from-file')
+    assert.equal(launches[0].options.env.BASE_VALUE, 'from-process')
+    children[1].emit('exit', 0, null)
+    assert.equal(await resultPromise, 0)
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true })
+  }
+})
+
+test('root dev command uses cross-platform shell environment construction', () => {
+  const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const dev = packageJson.scripts.dev
+  assert.match(
+    dev,
+    /concurrently .*npm run dev:renderer -w @genoffice\/(docs|sheets|slides|pdf|markdown)/,
+  )
+  assert.match(dev, /node scripts\/dev-shell\.mjs/)
+  assert.doesNotMatch(dev, /(?:DOCS|SHEETS|SLIDES|PDF|MARKDOWN)_RENDERER_URL=/)
 })
 
 test('dev launcher rejects an occupied non-Core port', async () => {
