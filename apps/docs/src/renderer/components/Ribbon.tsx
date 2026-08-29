@@ -215,6 +215,7 @@ interface RibbonProps {
   protectActive: boolean
   onProtectDoc: () => void
   onCompare: () => void
+  onResearchReview?: () => void
   /** current document path (View → New Window opens it in another window) */
   filePath: string | null
   viewMode: ViewMode
@@ -619,6 +620,7 @@ function RibbonInner({
   protectActive,
   onProtectDoc,
   onCompare,
+  onResearchReview,
   filePath,
   viewMode,
   onViewMode,
@@ -3298,6 +3300,7 @@ function RibbonInner({
             protectActive={protectActive}
             onProtectDoc={onProtectDoc}
             onCompare={onCompare}
+            onResearchReview={onResearchReview}
           />
         ) : (
           <ViewTab

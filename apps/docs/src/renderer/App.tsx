@@ -49,6 +49,7 @@ import { buildDocumentContext } from './ai/protocol'
 import { asianCharCount, countWords, nonAsianWordCount } from './word-count'
 import { CommentsPanel } from './components/CommentsPanel'
 import { CitationReviewPanel } from './components/CitationReviewPanel'
+import { WholeResearchReviewPanel } from './components/WholeResearchReviewPanel'
 import { EquationModal } from './components/EquationModal'
 import { HeaderFooterArea } from './components/HeaderFooterArea'
 import { PageFootnotes, PageEndnotes } from './components/PageNoteAreas'
@@ -588,6 +589,7 @@ export function App() {
   const [showFind, setShowFind] = useState(false)
   const [showComments, setShowComments] = useState(false)
   const [showCitationReview, setShowCitationReview] = useState(false)
+  const [showWholeResearchReview, setShowWholeResearchReview] = useState(false)
   /** Style definitions pending write-back (key = styleId), saved via SaveOptions.styleUpserts */
   const [styleUpserts, setStyleUpserts] = useState<Record<string, StyleUpsert>>({})
   const [comments, setComments] = useState<CommentInfo[]>([])
@@ -3630,6 +3632,7 @@ export function App() {
     onShowNav: setShowNav,
     onShowComments: () => {
       setShowCitationReview(false)
+      setShowWholeResearchReview(false)
       setShowComments(true)
     },
     onNewComment: startNewComment,
@@ -3643,13 +3646,22 @@ export function App() {
     onProtectDoc: () => setShowProtectDialog(true),
     onCompare: () => {
       setShowCitationReview(false)
+      setShowWholeResearchReview(false)
       void compareWithFile()
     },
     onCitationReview: () => {
       cancelNewComment()
       setShowComments(false)
       setCompareResult(null)
+      setShowWholeResearchReview(false)
       setShowCitationReview(true)
+    },
+    onResearchReview: () => {
+      cancelNewComment()
+      setShowComments(false)
+      setCompareResult(null)
+      setShowCitationReview(false)
+      setShowWholeResearchReview(true)
     },
     onViewMode: setViewMode,
     onReadMode: setReadMode,
@@ -3665,6 +3677,10 @@ export function App() {
 
   const closeCitationReviewPanel = useCallback(() => {
     setShowCitationReview(false)
+  }, [])
+
+  const closeWholeResearchReviewPanel = useCallback(() => {
+    setShowWholeResearchReview(false)
   }, [])
 
   const hasDoc = !!doc
@@ -4062,6 +4078,15 @@ export function App() {
                 documentId={doc.documentId}
                 transport={coreTransport}
                 onClose={closeCitationReviewPanel}
+              />
+            )}
+            {doc && editor && showWholeResearchReview && (
+              <WholeResearchReviewPanel
+                key={doc.documentId}
+                editor={editor}
+                documentId={doc.documentId}
+                transport={coreTransport}
+                onClose={closeWholeResearchReviewPanel}
               />
             )}
           </div>

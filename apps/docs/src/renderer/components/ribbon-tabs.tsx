@@ -534,6 +534,7 @@ interface ReviewTabProps extends TabProps {
   protectActive: boolean
   onProtectDoc: () => void
   onCompare: () => void
+  onResearchReview?: () => void
 }
 
 export function ReviewTab({
@@ -559,6 +560,7 @@ export function ReviewTab({
   protectActive,
   onProtectDoc,
   onCompare,
+  onResearchReview,
 }: ReviewTabProps) {
   const { t } = useI18n()
   // One-time acknowledgement before whole-document AI rewrites:
@@ -827,6 +829,25 @@ export function ReviewTab({
           </button>
         </div>
         <div className="ribbon-group-label">{t('ribbonCompare')}</div>
+      </div>
+
+      <div className="ribbon-sep" />
+
+      <div className="ribbon-group">
+        <div className="ribbon-group-items">
+          <button
+            className="rb-big"
+            disabled={!hasDoc}
+            data-tip={t('ribbonResearchReviewTip')}
+            onClick={onResearchReview}
+          >
+            <span className="rb-big-icon">
+              <IconOutlineView size={BIG} />
+            </span>
+            <span>{t('ribbonResearchReview')}</span>
+          </button>
+        </div>
+        <div className="ribbon-group-label">{t('ribbonResearchReview')}</div>
       </div>
 
       <div className="ribbon-sep" />

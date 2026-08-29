@@ -592,7 +592,13 @@ For original audit evidence and phase-specific rationale, see
   all material child workflows; changing a provider, model, or semantic contract
   produces a distinct immutable Whole Review history. 5D4B remains the
   whole-manuscript review UI phase.
-- 5D4B Whole Review UI (FUTURE): whole-manuscript review experience.
+- 5D4B Whole Review UI (IMPLEMENTED): Docs exposes Research Review from the
+  Review ribbon in a dedicated read-only panel. Docs sends one exact live
+  document observation snapshot and starts one Whole Review workflow; Core
+  owns all child-stage orchestration and scholarly analysis. Docs renders the
+  unified claim/evidence and consistency read models and may perform only
+  trusted user decisions such as persisted citation-candidate confirmation.
+  No overall research-quality score or manuscript-validity verdict exists.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.
 
