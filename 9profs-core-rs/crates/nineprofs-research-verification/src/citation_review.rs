@@ -241,6 +241,7 @@ pub struct CitationReviewService {
     verification: Arc<CitationVerificationService>,
     events: Arc<BroadcastEventBus>,
     expectation_assessor: Option<Arc<dyn crate::CitationExpectationProvider>>,
+    cross_claim_candidate_provider: Option<Arc<dyn crate::CrossClaimCandidateDiscoveryProvider>>,
 }
 
 impl CitationReviewService {
@@ -256,6 +257,7 @@ impl CitationReviewService {
             verification,
             events,
             expectation_assessor: None,
+            cross_claim_candidate_provider: None,
         }
     }
 
@@ -264,6 +266,14 @@ impl CitationReviewService {
         assessor: Arc<dyn crate::CitationExpectationProvider>,
     ) -> Self {
         self.expectation_assessor = Some(assessor);
+        self
+    }
+
+    pub fn with_cross_claim_candidate_provider(
+        mut self,
+        provider: Arc<dyn crate::CrossClaimCandidateDiscoveryProvider>,
+    ) -> Self {
+        self.cross_claim_candidate_provider = Some(provider);
         self
     }
 
@@ -279,6 +289,33 @@ impl CitationReviewService {
         &self,
     ) -> Option<Arc<dyn crate::CitationExpectationProvider>> {
         self.expectation_assessor.clone()
+    }
+
+    pub(crate) fn publish_cross_claim_event(
+        &self,
+        event: &str,
+        run: &crate::ManuscriptCrossClaimCandidateRun,
+    ) {
+        let _ = self.events.publish(EventEnvelope::new(
+            event,
+            serde_json::json!({
+                "candidate_run_id": run.candidate_run_id,
+                "research_case_id": run.research_case_id,
+                "claim_inventory_run_id": run.claim_inventory_run_id,
+                "status": run.status,
+                "failure_code": run.failure_code,
+                "claim_count": run.claim_count,
+                "expected_window_count": run.expected_window_count,
+                "processed_window_count": run.processed_window_count,
+                "candidate_pair_count": run.candidate_pair_count,
+            }),
+        ));
+    }
+
+    pub(crate) fn cross_claim_candidate_provider(
+        &self,
+    ) -> Option<Arc<dyn crate::CrossClaimCandidateDiscoveryProvider>> {
+        self.cross_claim_candidate_provider.clone()
     }
 
     pub async fn start(

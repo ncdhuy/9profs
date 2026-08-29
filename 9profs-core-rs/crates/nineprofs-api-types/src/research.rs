@@ -1507,3 +1507,91 @@ pub struct ManuscriptCitationExpectationItemDto {
     pub rationale: Option<String>,
     pub failure_code: Option<String>,
 }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptCrossClaimCandidatesRequest {
+    pub claim_inventory_run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCrossClaimCandidateRunStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCrossClaimComparisonWindowStatusDto {
+    Pending,
+    Processed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptCrossClaimCandidateKindDto {
+    PotentialDirectConflict,
+    PotentialQuantitativeMismatch,
+    PotentialDirectionMismatch,
+    PotentialModalityMismatch,
+    PotentialCausalStrengthMismatch,
+    PotentialScopeMismatch,
+    PotentialTemporalMismatch,
+    PotentialDefinitionMismatch,
+    PotentialDuplicateOrRestatement,
+    OtherConsistencyCandidate,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCrossClaimCandidateRunDto {
+    pub candidate_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub claim_inventory_run_id: String,
+    pub provider_id: String,
+    pub model_id: Option<String>,
+    pub discovery_implementation_version: String,
+    pub discovery_contract_version: String,
+    pub claim_count: u32,
+    pub batch_count: u32,
+    pub expected_window_count: u32,
+    pub processed_window_count: u32,
+    pub candidate_pair_count: u32,
+    pub status: ManuscriptCrossClaimCandidateRunStatusDto,
+    pub failure_code: Option<String>,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCrossClaimComparisonWindowDto {
+    pub window_id: String,
+    pub candidate_run_id: String,
+    pub left_batch_ordinal: u32,
+    pub right_batch_ordinal: u32,
+    pub same_batch: bool,
+    pub status: ManuscriptCrossClaimComparisonWindowStatusDto,
+    pub candidate_count: u32,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptCrossClaimCandidateDto {
+    pub candidate_id: String,
+    pub candidate_run_id: String,
+    pub comparison_window_id: String,
+    pub left_inventory_item_id: String,
+    pub right_inventory_item_id: String,
+    pub left_ordinal: u32,
+    pub right_ordinal: u32,
+    pub candidate_kinds: Vec<ManuscriptCrossClaimCandidateKindDto>,
+    pub rationale: String,
+}

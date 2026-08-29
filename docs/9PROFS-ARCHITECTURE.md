@@ -562,8 +562,15 @@ For original audit evidence and phase-specific rationale, see
   closed-set attention state deterministically from expectation plus coverage
   facts. It does not retrieve evidence, create provenance, or assert truth;
   failed item assessments remain retryable and scope limitations are carried
-  forward. 5D3 is next.
-- 5D3 Cross-Claim Review (FUTURE): cross-claim contradiction and consistency review.
+  forward.
+- 5D3A Cross-Claim Consistency Candidate Discovery (IMPLEMENTED): Core schedules
+  deterministic same-batch and cross-batch comparisons over one completed 5D1
+  inventory, persists resumable window/run state, and validates model output as a
+  closed set of bounded potential consistency candidates. It is candidate
+  discovery only: it does not assert contradiction, truth, evidence, provenance,
+  or final review judgment. Because 5D1 has no canonical semantic section
+  hierarchy, this is claim-global rather than a typed Abstract/Methods/Results
+  section-consistency engine. 5D3B final cross-claim assessment is next.
 - 5D4 Whole Review UI (FUTURE): whole-manuscript review experience.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.

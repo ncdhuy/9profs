@@ -25,7 +25,8 @@ use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{ResearchArtifactStore, ResearchService, SqliteResearchRepository};
 use nineprofs_research_assessor::{
     CitationAssessorConfig, CitationAssessorReadiness, CitationExpectationAssessorConfig,
-    ModelCitationAssessor, ModelCitationExpectationAssessor,
+    CrossClaimCandidateDiscoveryConfig, ModelCitationAssessor, ModelCitationExpectationAssessor,
+    ModelCrossClaimCandidateDiscovery,
 };
 use nineprofs_research_claim_extractor::{
     ClaimExtractorConfig, ClaimExtractorReadiness, ModelClaimExtractionProvider,
@@ -34,7 +35,7 @@ use nineprofs_research_claim_extractor::{
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
 use nineprofs_research_verification::{
     CitationAssessmentProvider, CitationExpectationProvider, CitationReviewService,
-    CitationVerificationService,
+    CitationVerificationService, CrossClaimCandidateDiscoveryProvider,
 };
 use nineprofs_skills::{SkillCatalog, SkillError};
 use nineprofs_tools::ToolRegistry;
@@ -71,6 +72,8 @@ pub struct RuntimeConfig {
     pub citation_expectation_assessor: CitationExpectationAssessorConfig,
     /// Launch-scoped manuscript claim extractor configuration. Credential value is never stored.
     pub claim_extractor: ClaimExtractorConfig,
+    /// Launch-scoped cross-claim candidate discovery configuration. Credential value is never stored.
+    pub cross_claim_candidate_discovery: CrossClaimCandidateDiscoveryConfig,
 }
 
 impl Default for RuntimeConfig {
@@ -87,6 +90,7 @@ impl Default for RuntimeConfig {
             citation_assessor: CitationAssessorConfig::default(),
             citation_expectation_assessor: CitationExpectationAssessorConfig::default(),
             claim_extractor: ClaimExtractorConfig::default(),
+            cross_claim_candidate_discovery: CrossClaimCandidateDiscoveryConfig::default(),
         }
     }
 }
@@ -113,6 +117,7 @@ impl RuntimeConfig {
         config.citation_assessor = CitationAssessorConfig::from_env();
         config.citation_expectation_assessor = CitationExpectationAssessorConfig::from_env();
         config.claim_extractor = ClaimExtractorConfig::from_env();
+        config.cross_claim_candidate_discovery = CrossClaimCandidateDiscoveryConfig::from_env();
         if let Ok(value) = std::env::var("NINEPROFS_CUSTOM_SKILL_ROOTS") {
             config.custom_skill_roots = value
                 .split(';')
@@ -237,6 +242,14 @@ impl CoreRuntime {
                 ModelCitationExpectationAssessor::new(config.citation_expectation_assessor.clone()),
             );
             citation_review_service = citation_review_service.with_expectation_assessor(assessor);
+        }
+        if config.cross_claim_candidate_discovery.is_ready() {
+            let provider: Arc<dyn CrossClaimCandidateDiscoveryProvider> =
+                Arc::new(ModelCrossClaimCandidateDiscovery::new(
+                    config.cross_claim_candidate_discovery.clone(),
+                ));
+            citation_review_service =
+                citation_review_service.with_cross_claim_candidate_provider(provider);
         }
         let citation_review_service = Arc::new(citation_review_service);
         let document_bridge = Arc::new(DocumentBridgeService::new(

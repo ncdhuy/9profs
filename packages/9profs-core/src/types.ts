@@ -22,6 +22,9 @@ export type ManuscriptClaimCoverageItemId = string
 export type ManuscriptClaimCoverageTargetId = string
 export type ManuscriptCitationExpectationRunId = string
 export type ManuscriptCitationExpectationItemId = string
+export type ManuscriptCrossClaimCandidateRunId = string
+export type ManuscriptCrossClaimComparisonWindowId = string
+export type ManuscriptCrossClaimCandidateId = string
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string
@@ -1126,6 +1129,69 @@ export interface ManuscriptCitationExpectationItem {
   readonly attentionReasons: readonly CoverageAttentionReason[]
   readonly rationale: string | null
   readonly failureCode: string | null
+}
+
+export type ManuscriptCrossClaimCandidateRunStatus = 'running' | 'completed' | 'failed'
+export type ManuscriptCrossClaimComparisonWindowStatus = 'pending' | 'processed' | 'failed'
+export type ManuscriptCrossClaimCandidateKind =
+  | 'potential_direct_conflict'
+  | 'potential_quantitative_mismatch'
+  | 'potential_direction_mismatch'
+  | 'potential_modality_mismatch'
+  | 'potential_causal_strength_mismatch'
+  | 'potential_scope_mismatch'
+  | 'potential_temporal_mismatch'
+  | 'potential_definition_mismatch'
+  | 'potential_duplicate_or_restatement'
+  | 'other_consistency_candidate'
+
+export interface CreateManuscriptCrossClaimCandidatesInput {
+  readonly claimInventoryRunId: ManuscriptClaimInventoryRunId
+}
+
+export interface ManuscriptCrossClaimCandidateRun {
+  readonly candidateRunId: ManuscriptCrossClaimCandidateRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly claimInventoryRunId: ManuscriptClaimInventoryRunId
+  readonly providerId: string
+  readonly modelId: string | null
+  readonly discoveryImplementationVersion: string
+  readonly discoveryContractVersion: string
+  readonly claimCount: number
+  readonly batchCount: number
+  readonly expectedWindowCount: number
+  readonly processedWindowCount: number
+  readonly candidatePairCount: number
+  readonly status: ManuscriptCrossClaimCandidateRunStatus
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+}
+
+export interface ManuscriptCrossClaimComparisonWindow {
+  readonly windowId: ManuscriptCrossClaimComparisonWindowId
+  readonly candidateRunId: ManuscriptCrossClaimCandidateRunId
+  readonly leftBatchOrdinal: number
+  readonly rightBatchOrdinal: number
+  readonly sameBatch: boolean
+  readonly status: ManuscriptCrossClaimComparisonWindowStatus
+  readonly candidateCount: number
+  readonly failureCode: string | null
+}
+
+export interface ManuscriptCrossClaimCandidate {
+  readonly candidateId: ManuscriptCrossClaimCandidateId
+  readonly candidateRunId: ManuscriptCrossClaimCandidateRunId
+  readonly comparisonWindowId: ManuscriptCrossClaimComparisonWindowId
+  readonly leftInventoryItemId: ManuscriptClaimInventoryItemId
+  readonly rightInventoryItemId: ManuscriptClaimInventoryItemId
+  readonly leftOrdinal: number
+  readonly rightOrdinal: number
+  readonly candidateKinds: readonly ManuscriptCrossClaimCandidateKind[]
+  readonly rationale: string
 }
 
 export interface ManuscriptClaimCoverageTarget {

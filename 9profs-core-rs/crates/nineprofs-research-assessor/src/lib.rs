@@ -22,6 +22,8 @@ use thiserror::Error;
 
 mod citation_expectation;
 pub use citation_expectation::*;
+mod cross_claim_candidates;
+pub use cross_claim_candidates::*;
 
 pub const ASSESSMENT_IMPLEMENTATION_VERSION: &str = "model-citation-assessor-v1";
 pub const ASSESSMENT_INSTRUCTION: &str = r#"You are citation-assessor-v1, a bounded scientific citation assessor.

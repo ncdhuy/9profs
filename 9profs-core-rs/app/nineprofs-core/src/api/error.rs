@@ -8,7 +8,9 @@ use nineprofs_document_tools::ProposalWorkflowError;
 use nineprofs_mcp::McpError;
 use nineprofs_research::ResearchError;
 use nineprofs_research_dify::DifyError;
-use nineprofs_research_verification::{CitationReviewError, CitationVerificationError};
+use nineprofs_research_verification::{
+    CitationReviewError, CitationVerificationError, CrossClaimCandidateDiscoveryError,
+};
 use nineprofs_runtime::AgentExecutionServiceError;
 
 #[derive(Debug)]
@@ -28,6 +30,7 @@ pub(crate) enum ApiError {
     Dify(DifyError),
     Verification(CitationVerificationError),
     CitationReview(CitationReviewError),
+    CrossClaimCandidates(CrossClaimCandidateDiscoveryError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -83,6 +86,12 @@ impl From<CitationVerificationError> for ApiError {
 impl From<CitationReviewError> for ApiError {
     fn from(error: CitationReviewError) -> Self {
         Self::CitationReview(error)
+    }
+}
+
+impl From<CrossClaimCandidateDiscoveryError> for ApiError {
+    fn from(error: CrossClaimCandidateDiscoveryError) -> Self {
+        Self::CrossClaimCandidates(error)
     }
 }
 
@@ -288,6 +297,35 @@ impl IntoResponse for ApiError {
                     CitationReviewError::Research(_)
                     | CitationReviewError::Verification(_)
                     | CitationReviewError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                (status, error.code(), error.to_string())
+            }
+            Self::CrossClaimCandidates(error) => {
+                let status = match error {
+                    CrossClaimCandidateDiscoveryError::NotFound(_) => StatusCode::NOT_FOUND,
+                    CrossClaimCandidateDiscoveryError::Invalid(_)
+                    | CrossClaimCandidateDiscoveryError::InventoryNotCompleted
+                    | CrossClaimCandidateDiscoveryError::ClaimCountLimitExceeded
+                    | CrossClaimCandidateDiscoveryError::BatchCountLimitExceeded
+                    | CrossClaimCandidateDiscoveryError::BatchPairLimitExceeded
+                    | CrossClaimCandidateDiscoveryError::ComparisonInputTooLarge
+                    | CrossClaimCandidateDiscoveryError::CandidateCountLimitExceeded
+                    | CrossClaimCandidateDiscoveryError::ClosedSetViolation(_)
+                    | CrossClaimCandidateDiscoveryError::RunNotCompleted => StatusCode::CONFLICT,
+                    CrossClaimCandidateDiscoveryError::ProviderNotConfigured => {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                    CrossClaimCandidateDiscoveryError::ProviderFailed(_) => StatusCode::BAD_GATEWAY,
+                    CrossClaimCandidateDiscoveryError::Research(ResearchError::NotFound {
+                        ..
+                    }) => StatusCode::NOT_FOUND,
+                    CrossClaimCandidateDiscoveryError::Research(ResearchError::Invalid(_)) => {
+                        StatusCode::BAD_REQUEST
+                    }
+                    CrossClaimCandidateDiscoveryError::Research(_)
+                    | CrossClaimCandidateDiscoveryError::Database(_) => {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
                 };
                 (status, error.code(), error.to_string())
             }

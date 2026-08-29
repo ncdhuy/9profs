@@ -60,6 +60,11 @@ import type {
   CreateManuscriptCitationExpectationInput,
   ManuscriptCitationExpectationItem,
   ManuscriptCitationExpectationRun,
+  CreateManuscriptCrossClaimCandidatesInput,
+  ManuscriptCrossClaimCandidate,
+  ManuscriptCrossClaimCandidateRunId,
+  ManuscriptCrossClaimCandidateRun,
+  ManuscriptCrossClaimComparisonWindow,
   StartManuscriptClaimInventoryInput,
   StartManuscriptClaimCoverageInput,
   CaptureResearchPdfEvidenceInput,
@@ -323,6 +328,13 @@ export interface CoreTransport {
   ): Promise<ManuscriptCitationExpectationRun>
   manuscriptCitationExpectation(id: string): Promise<ManuscriptCitationExpectationRun>
   manuscriptCitationExpectationItems(id: string): Promise<ManuscriptCitationExpectationItem[]>
+  startManuscriptCrossClaimCandidates(
+    researchCaseId: ResearchCaseId,
+    input: CreateManuscriptCrossClaimCandidatesInput,
+  ): Promise<ManuscriptCrossClaimCandidateRun>
+  manuscriptCrossClaimCandidateRun(id: ManuscriptCrossClaimCandidateRunId): Promise<ManuscriptCrossClaimCandidateRun>
+  manuscriptCrossClaimCandidates(id: ManuscriptCrossClaimCandidateRunId): Promise<ManuscriptCrossClaimCandidate[]>
+  manuscriptCrossClaimCandidateWindows(id: ManuscriptCrossClaimCandidateRunId): Promise<ManuscriptCrossClaimComparisonWindow[]>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -803,6 +815,24 @@ export function createCoreTransport(
     manuscriptCitationExpectationItems: (id) =>
       get<ManuscriptCitationExpectationItem[]>(
         `/api/research/manuscript-citation-expectations/${encodeURIComponent(id)}/items`,
+      ),
+    startManuscriptCrossClaimCandidates: (researchCaseId, input) =>
+      trustedRequest<ManuscriptCrossClaimCandidateRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscript-cross-claim-candidates`,
+        'POST',
+        input,
+      ),
+    manuscriptCrossClaimCandidateRun: (id) =>
+      get<ManuscriptCrossClaimCandidateRun>(
+        `/api/research/manuscript-cross-claim-candidates/${encodeURIComponent(id)}`,
+      ),
+    manuscriptCrossClaimCandidates: (id) =>
+      get<ManuscriptCrossClaimCandidate[]>(
+        `/api/research/manuscript-cross-claim-candidates/${encodeURIComponent(id)}/candidates`,
+      ),
+    manuscriptCrossClaimCandidateWindows: (id) =>
+      get<ManuscriptCrossClaimComparisonWindow[]>(
+        `/api/research/manuscript-cross-claim-candidates/${encodeURIComponent(id)}/windows`,
       ),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(

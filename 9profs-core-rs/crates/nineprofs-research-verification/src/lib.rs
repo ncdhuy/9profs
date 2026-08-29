@@ -27,6 +27,8 @@ mod manuscript_claim_coverage;
 pub use manuscript_claim_coverage::*;
 mod manuscript_claim_expectation;
 pub use manuscript_claim_expectation::*;
+mod manuscript_cross_claim_candidates;
+pub use manuscript_cross_claim_candidates::*;
 
 pub const DEFAULT_TOP_K: u32 = 8;
 pub const MAX_TOP_K: u32 = 16;

@@ -9,6 +9,7 @@ pub(super) mod citations;
 pub(super) mod claim_coverage;
 pub(super) mod claims;
 pub(super) mod common;
+pub(super) mod cross_claim_candidates;
 pub(super) mod evidence;
 pub(super) mod manuscript;
 pub(super) mod pdf;
@@ -21,6 +22,7 @@ pub(super) fn router() -> Router<AppState> {
     Router::new()
         .merge(cases::router())
         .merge(claim_coverage::router())
+        .merge(cross_claim_candidates::router())
         .merge(citation_review::router())
         .merge(citation_expectation::router())
         .merge(sources::router())
