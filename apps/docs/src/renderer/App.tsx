@@ -841,16 +841,13 @@ export function App() {
             createCoreTransport(
               config.httpBaseUrl,
               async (input, init) => {
-                const body =
-                  init?.rawBody === undefined
-                    ? init?.body
-                    : (Uint8Array.from(init.rawBody).buffer as ArrayBuffer)
-                const response = await fetch(input, {
+                const response = await window.desktop.coreFetch({
+                  url: input,
                   method: init?.method,
                   headers: init?.headers,
-                  body,
+                  body: init?.rawBody ?? init?.body,
                 })
-                return { ok: response.ok, json: () => response.json() }
+                return { ok: response.ok, json: async () => response.json }
               },
               { sessionSecret: config.sessionSecret },
             ),

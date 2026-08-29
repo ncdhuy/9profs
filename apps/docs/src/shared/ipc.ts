@@ -156,6 +156,20 @@ export type MenuCommand =
 
 export type UiTheme = 'light' | 'dark' | 'system'
 
+export interface CoreFetchRequest {
+  url: string
+  method?: string
+  headers?: Record<string, string>
+  body?: string | Uint8Array
+}
+
+export interface CoreFetchResponse {
+  ok: boolean
+  status: number
+  /** Parsed JSON when possible; otherwise a bounded response body. */
+  json: unknown
+}
+
 export interface DesktopApi {
   /** Optional host-provided active Docs bridge configuration; absent means bridge disabled. */
   getCoreBridgeConfig(): Promise<{
@@ -163,6 +177,7 @@ export interface DesktopApi {
     httpBaseUrl?: string
     sessionSecret?: string
   }>
+  coreFetch(request: CoreFetchRequest): Promise<CoreFetchResponse>
   /** current UI language (persisted by the shell in app-settings.json) */
   getLanguage(): Promise<'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar'>
   /** language switched from the shell home page */

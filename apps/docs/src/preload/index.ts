@@ -5,6 +5,7 @@ import type {
   AiSettings,
   AiStreamChunk,
   AiStreamRequest,
+  CoreFetchRequest,
   DesktopApi,
   MenuCommand,
   UiTheme,
@@ -13,6 +14,7 @@ import type { ProjectApi } from '@genoffice/project-store'
 
 const api: DesktopApi = {
   getCoreBridgeConfig: () => ipcRenderer.invoke('docs:core-bridge-config'),
+  coreFetch: (request: CoreFetchRequest) => ipcRenderer.invoke('docs:core-fetch', request),
   getLanguage: () => ipcRenderer.invoke('app:get-language'),
   onLanguageChanged: (handler) => {
     const listener = (

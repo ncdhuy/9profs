@@ -172,6 +172,7 @@ function consistency(overrides: Partial<ManuscriptResearchReviewConsistencyItem>
 }
 
 function transportFor(options: {
+  researchCases?: Array<{ caseId: string; title: string }>
   run?: ManuscriptResearchReviewRun
   claims?: ManuscriptResearchReviewClaimItem[]
   consistency?: ManuscriptResearchReviewConsistencyItem[]
@@ -196,7 +197,7 @@ function transportFor(options: {
     startManuscriptCrossClaimAssessment: vi.fn(),
   }
   const transport = {
-    researchCases: vi.fn().mockResolvedValue([{ caseId: 'case-1', title: 'Clinical review' }]),
+    researchCases: vi.fn().mockResolvedValue(options.researchCases ?? [{ caseId: 'case-1', title: 'Clinical review' }]),
     researchSources: vi.fn().mockResolvedValue([
       { sourceId: 'source-1', researchCaseId: 'case-1', kind: 'manuscript', label: 'Draft', identity: null },
       { sourceId: 'legacy', researchCaseId: 'case-1', kind: 'pdf', label: 'Legacy source', identity: null },
@@ -269,6 +270,16 @@ async function chooseContext(container: HTMLElement) {
 }
 
 describe('WholeResearchReviewPanel', () => {
+  it('treats an empty Core ResearchCase list as usable setup state', async () => {
+    const rendered = renderPanel(transportFor({ researchCases: [] }).transport, editorFor())
+    await flush()
+
+    expect(rendered.container.querySelector('#whole-research-review-case')).not.toBeNull()
+    expect(rendered.container.textContent).toContain('Create a ResearchCase to choose a review context.')
+    expect(rendered.container.textContent).not.toContain('Research review is temporarily unavailable.')
+    rendered.unmount()
+  })
+
   it('runs one high-level review with one exact active-document snapshot, including zero citations', async () => {
     const editor = editorFor()
     const harness = transportFor()

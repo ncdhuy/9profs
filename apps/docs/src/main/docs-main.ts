@@ -94,6 +94,7 @@ import {
 } from './docx-encryption'
 import { isExternallyModified, type DiskFileState } from './external-change'
 import { initDocsAutoUpdater } from './updater'
+import { performCoreFetch } from './core-fetch'
 
 /**
  * Docs main-process logic as an embeddable module: no top-level side effects.
@@ -103,6 +104,13 @@ import { initDocsAutoUpdater } from './updater'
  */
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL
+
+function configuredCoreHttpBaseUrl(): string {
+  return (
+    process.env.NINEPROFS_CORE_URL ||
+    `http://${process.env.NINEPROFS_CORE_ADDR || '127.0.0.1:39761'}`
+  )
+}
 
 const tMain = createI18n({
   zh: {
@@ -2934,11 +2942,20 @@ export function registerDocsIpc(): void {
   ipcMain.removeHandler('docs:core-bridge-config')
   ipcMain.handle('docs:core-bridge-config', () => ({
     websocketUrl: process.env.NINEPROFS_DOCUMENT_BRIDGE_URL || undefined,
-    httpBaseUrl:
-      process.env.NINEPROFS_CORE_URL ||
-      `http://${process.env.NINEPROFS_CORE_ADDR || '127.0.0.1:39761'}`,
+    httpBaseUrl: configuredCoreHttpBaseUrl(),
     sessionSecret: process.env.NINEPROFS_SESSION_SECRET || undefined,
   }))
+  ipcMain.removeHandler('docs:core-fetch')
+  ipcMain.handle('docs:core-fetch', (_event, request: unknown) =>
+    performCoreFetch(request, configuredCoreHttpBaseUrl(), (url, init) =>
+      net.fetch(url, {
+        method: init.method,
+        headers: init.headers,
+        body: init.body instanceof Uint8Array ? Buffer.from(init.body) : init.body,
+        redirect: 'error',
+      }),
+    ),
+  )
 
   configureMetricsCache(userDataPath('font-metrics'))
   ipcMain.handle('docs:font-metrics', (_event, family: string) =>
@@ -3747,6 +3764,7 @@ export function createDocsWindow(openPath?: string): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
       backgroundThrottling: false,
     },
   })
@@ -3974,6 +3992,7 @@ export function createDocsView(openPath?: string): WebContentsView {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
       backgroundThrottling: false,
     },
   })
