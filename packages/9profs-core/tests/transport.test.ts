@@ -1140,4 +1140,51 @@ describe('Core transport boundary', () => {
       },
     ])
   })
+
+  it('maps whole-manuscript research review orchestration and read models', async () => {
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
+      requests.push({
+        input,
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      })
+      return { ok: true, json: async () => ({ success: true, data: {} }) }
+    })
+
+    await transport.startManuscriptResearchReview('case/1', {
+      manuscriptSourceId: 'source/1',
+      documentId: 'doc-1',
+      documentVersion: 4,
+      citationReviewObservations: { citations: [], citationBlocks: [] },
+      claimInventoryObservations: { wholeManuscriptBlocks: [] },
+    })
+    await transport.manuscriptResearchReview('review/1')
+    await transport.manuscriptResearchReviewClaims('review/1')
+    await transport.manuscriptResearchReviewConsistency('review/1')
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/research/cases/case%2F1/manuscript-research-reviews',
+        method: 'POST',
+        body: JSON.stringify({
+          manuscriptSourceId: 'source/1',
+          documentId: 'doc-1',
+          documentVersion: 4,
+          citationReviewObservations: { citations: [], citationBlocks: [] },
+          claimInventoryObservations: { wholeManuscriptBlocks: [] },
+        }),
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-research-reviews/review%2F1',
+      },
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-research-reviews/review%2F1/claims',
+      },
+      {
+        input:
+          'http://127.0.0.1:39761/api/research/manuscript-research-reviews/review%2F1/consistency',
+      },
+    ])
+  })
 })

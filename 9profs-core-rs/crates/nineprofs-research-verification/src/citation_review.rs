@@ -296,6 +296,12 @@ impl CitationReviewService {
         &self.research
     }
 
+    pub(crate) fn citation_assessor_identity(
+        &self,
+    ) -> Option<crate::CitationAssessmentProviderIdentity> {
+        self.verification.assessor_identity()
+    }
+
     pub(crate) fn expectation_assessor(
         &self,
     ) -> Option<Arc<dyn crate::CitationExpectationProvider>> {
@@ -319,6 +325,32 @@ impl CitationReviewService {
                 "expected_window_count": run.expected_window_count,
                 "processed_window_count": run.processed_window_count,
                 "candidate_pair_count": run.candidate_pair_count,
+            }),
+        ));
+    }
+
+    pub(crate) fn publish_manuscript_research_review_event(
+        &self,
+        event: &str,
+        run: &crate::ManuscriptResearchReviewRun,
+    ) {
+        let _ = self.events.publish(EventEnvelope::new(
+            event,
+            serde_json::json!({
+                "review_run_id": run.review_run_id,
+                "research_case_id": run.research_case_id,
+                "manuscript_source_id": run.manuscript_source_id,
+                "document_id": run.document_id,
+                "document_version": run.document_version,
+                "status": run.status,
+                "failure_stage": run.failure_stage,
+                "failure_code": run.failure_code,
+                "citation_review_run_id": run.citation_review_run_id,
+                "claim_inventory_run_id": run.claim_inventory_run_id,
+                "claim_coverage_run_id": run.claim_coverage_run_id,
+                "citation_expectation_run_id": run.citation_expectation_run_id,
+                "cross_claim_candidate_run_id": run.cross_claim_candidate_run_id,
+                "cross_claim_assessment_run_id": run.cross_claim_assessment_run_id,
             }),
         ));
     }

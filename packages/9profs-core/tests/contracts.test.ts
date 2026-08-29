@@ -55,6 +55,21 @@ test('active-document proposal transport stays read-only and typed', () => {
   >()
 })
 
+test('whole-manuscript research review transport stays pinned and typed', () => {
+  expectTypeOf<CoreTransport['startManuscriptResearchReview']>().toEqualTypeOf<
+    (
+      researchCaseId: string,
+      input: import('../src').StartManuscriptResearchReviewInput,
+    ) => Promise<import('../src').ManuscriptResearchReviewRun>
+  >()
+  expectTypeOf<CoreTransport['manuscriptResearchReviewClaims']>().returns.toEqualTypeOf<
+    Promise<import('../src').ManuscriptResearchReviewClaimItem[]>
+  >()
+  expectTypeOf<CoreTransport['manuscriptResearchReviewConsistency']>().returns.toEqualTypeOf<
+    Promise<import('../src').ManuscriptResearchReviewConsistencyItem[]>
+  >()
+})
+
 test('MCP boundary stays transport-neutral and redacted', () => {
   expectTypeOf<McpServer>().toMatchTypeOf<{
     id: string

@@ -31,6 +31,8 @@ mod manuscript_cross_claim_candidates;
 pub use manuscript_cross_claim_candidates::*;
 mod manuscript_cross_claim_assessment;
 pub use manuscript_cross_claim_assessment::*;
+mod manuscript_research_review;
+pub use manuscript_research_review::*;
 
 pub const DEFAULT_TOP_K: u32 = 8;
 pub const MAX_TOP_K: u32 = 16;
@@ -393,6 +395,10 @@ impl CitationVerificationService {
     pub fn with_top_k(mut self, top_k: u32) -> Self {
         self.top_k = top_k.clamp(1, MAX_TOP_K);
         self
+    }
+
+    pub(crate) fn assessor_identity(&self) -> Option<CitationAssessmentProviderIdentity> {
+        self.assessor.as_ref().map(|assessor| assessor.identity())
     }
 
     pub async fn verify(

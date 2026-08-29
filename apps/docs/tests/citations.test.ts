@@ -18,6 +18,7 @@ import {
   buildManuscriptReferenceCatalogInput,
   buildManuscriptClaimExtractionInput,
   buildManuscriptClaimInventoryInput,
+  buildManuscriptResearchReviewInput,
 } from '../src/renderer/editor/manuscript-citations'
 
 const editors = new Set<Editor>()
@@ -183,6 +184,28 @@ describe('Docs inline citation atom', () => {
           citations: [],
         },
       ],
+    })
+  })
+
+  it('composes the whole-manuscript review input from one document identity', () => {
+    const editor = editorForCitation()
+    expect(
+      buildManuscriptResearchReviewInput({
+        editor,
+        activeDocument: { documentId: 'doc-1', version: 7 },
+        manuscriptSourceId: 'source-1',
+      }),
+    ).toMatchObject({
+      manuscriptSourceId: 'source-1',
+      documentId: 'doc-1',
+      documentVersion: 7,
+      citationReviewObservations: {
+        citations: [{ blockId: 'b7', start: 13, end: 20 }],
+        citationBlocks: [{ blockId: 'b7' }],
+      },
+      claimInventoryObservations: {
+        wholeManuscriptBlocks: [{ blockId: 'b7', blockOrdinal: 0 }],
+      },
     })
   })
 

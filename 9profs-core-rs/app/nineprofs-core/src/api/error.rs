@@ -10,7 +10,7 @@ use nineprofs_research::ResearchError;
 use nineprofs_research_dify::DifyError;
 use nineprofs_research_verification::{
     CitationReviewError, CitationVerificationError, CrossClaimCandidateDiscoveryError,
-    CrossClaimConsistencyAssessmentError,
+    CrossClaimConsistencyAssessmentError, ManuscriptResearchReviewError,
 };
 use nineprofs_runtime::AgentExecutionServiceError;
 
@@ -33,6 +33,7 @@ pub(crate) enum ApiError {
     CitationReview(CitationReviewError),
     CrossClaimCandidates(CrossClaimCandidateDiscoveryError),
     CrossClaimAssessment(CrossClaimConsistencyAssessmentError),
+    ManuscriptResearchReview(ManuscriptResearchReviewError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -100,6 +101,12 @@ impl From<CrossClaimCandidateDiscoveryError> for ApiError {
 impl From<CrossClaimConsistencyAssessmentError> for ApiError {
     fn from(error: CrossClaimConsistencyAssessmentError) -> Self {
         Self::CrossClaimAssessment(error)
+    }
+}
+
+impl From<ManuscriptResearchReviewError> for ApiError {
+    fn from(error: ManuscriptResearchReviewError) -> Self {
+        Self::ManuscriptResearchReview(error)
     }
 }
 
@@ -378,6 +385,26 @@ impl IntoResponse for ApiError {
                     )
                     | CrossClaimConsistencyAssessmentError::Research(_)
                     | CrossClaimConsistencyAssessmentError::Database(_) => {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                };
+                (status, error.code(), error.to_string())
+            }
+            Self::ManuscriptResearchReview(error) => {
+                let status = match &error {
+                    ManuscriptResearchReviewError::NotFound(_) => StatusCode::NOT_FOUND,
+                    ManuscriptResearchReviewError::Invalid(_) => StatusCode::BAD_REQUEST,
+                    ManuscriptResearchReviewError::Research(ResearchError::NotFound { .. }) => {
+                        StatusCode::NOT_FOUND
+                    }
+                    ManuscriptResearchReviewError::Research(ResearchError::Invalid(_)) => {
+                        StatusCode::BAD_REQUEST
+                    }
+                    ManuscriptResearchReviewError::Research(_)
+                    | ManuscriptResearchReviewError::CitationReview(_)
+                    | ManuscriptResearchReviewError::CrossClaimCandidates(_)
+                    | ManuscriptResearchReviewError::CrossClaimAssessment(_)
+                    | ManuscriptResearchReviewError::Database(_) => {
                         StatusCode::INTERNAL_SERVER_ERROR
                     }
                 };

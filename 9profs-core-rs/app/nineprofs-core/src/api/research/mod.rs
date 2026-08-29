@@ -13,6 +13,7 @@ pub(super) mod cross_claim_assessment;
 pub(super) mod cross_claim_candidates;
 pub(super) mod evidence;
 pub(super) mod manuscript;
+pub(super) mod manuscript_research_review;
 pub(super) mod pdf;
 pub(super) mod reference_resolution;
 pub(super) mod retrieval;
@@ -33,6 +34,7 @@ pub(super) fn router() -> Router<AppState> {
         .merge(claims::router())
         .merge(citations::router())
         .merge(manuscript::router())
+        .merge(manuscript_research_review::router())
         .merge(verification::router())
         .merge(retrieval::router())
         .merge(reference_resolution::router())

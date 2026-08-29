@@ -69,8 +69,13 @@ import type {
   ManuscriptCrossClaimAssessmentRunId,
   ManuscriptCrossClaimAssessmentRun,
   ManuscriptCrossClaimAssessmentItem,
+  ManuscriptResearchReviewRun,
+  ManuscriptResearchReviewRunId,
+  ManuscriptResearchReviewClaimItem,
+  ManuscriptResearchReviewConsistencyItem,
   StartManuscriptClaimInventoryInput,
   StartManuscriptClaimCoverageInput,
+  StartManuscriptResearchReviewInput,
   CaptureResearchPdfEvidenceInput,
   CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
@@ -345,6 +350,13 @@ export interface CoreTransport {
   ): Promise<ManuscriptCrossClaimAssessmentRun>
   manuscriptCrossClaimAssessment(id: ManuscriptCrossClaimAssessmentRunId): Promise<ManuscriptCrossClaimAssessmentRun>
   manuscriptCrossClaimAssessmentItems(id: ManuscriptCrossClaimAssessmentRunId): Promise<ManuscriptCrossClaimAssessmentItem[]>
+  startManuscriptResearchReview(
+    researchCaseId: ResearchCaseId,
+    input: StartManuscriptResearchReviewInput,
+  ): Promise<ManuscriptResearchReviewRun>
+  manuscriptResearchReview(id: ManuscriptResearchReviewRunId): Promise<ManuscriptResearchReviewRun>
+  manuscriptResearchReviewClaims(id: ManuscriptResearchReviewRunId): Promise<ManuscriptResearchReviewClaimItem[]>
+  manuscriptResearchReviewConsistency(id: ManuscriptResearchReviewRunId): Promise<ManuscriptResearchReviewConsistencyItem[]>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -857,6 +869,24 @@ export function createCoreTransport(
     manuscriptCrossClaimAssessmentItems: (id) =>
       get<ManuscriptCrossClaimAssessmentItem[]>(
         `/api/research/manuscript-cross-claim-assessments/${encodeURIComponent(id)}/items`,
+      ),
+    startManuscriptResearchReview: (researchCaseId, input) =>
+      trustedRequest<ManuscriptResearchReviewRun>(
+        `/api/research/cases/${encodeURIComponent(researchCaseId)}/manuscript-research-reviews`,
+        'POST',
+        input,
+      ),
+    manuscriptResearchReview: (id) =>
+      get<ManuscriptResearchReviewRun>(
+        `/api/research/manuscript-research-reviews/${encodeURIComponent(id)}`,
+      ),
+    manuscriptResearchReviewClaims: (id) =>
+      get<ManuscriptResearchReviewClaimItem[]>(
+        `/api/research/manuscript-research-reviews/${encodeURIComponent(id)}/claims`,
+      ),
+    manuscriptResearchReviewConsistency: (id) =>
+      get<ManuscriptResearchReviewConsistencyItem[]>(
+        `/api/research/manuscript-research-reviews/${encodeURIComponent(id)}/consistency`,
       ),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(

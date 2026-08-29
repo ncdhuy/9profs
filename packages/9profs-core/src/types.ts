@@ -27,6 +27,9 @@ export type ManuscriptCrossClaimComparisonWindowId = string
 export type ManuscriptCrossClaimCandidateId = string
 export type ManuscriptCrossClaimAssessmentRunId = string
 export type ManuscriptCrossClaimAssessmentItemId = string
+export type ManuscriptResearchReviewRunId = string
+export type ManuscriptResearchReviewClaimItemId = string
+export type ManuscriptResearchReviewConsistencyItemId = string
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string
@@ -1490,6 +1493,150 @@ export interface CitationReviewItem {
   readonly candidates: readonly CitationReviewCandidate[]
   readonly verification: CitationReviewVerification | null
   readonly evidence: readonly CitationReviewEvidence[]
+}
+
+export interface StartManuscriptResearchReviewInput {
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly citationReviewObservations: {
+    readonly citations: readonly CitationReviewCitationInput[]
+    readonly citationBlocks: readonly CitationReviewBlockInput[]
+  }
+  readonly claimInventoryObservations: {
+    readonly wholeManuscriptBlocks: readonly ManuscriptClaimInventoryBlockInput[]
+  }
+}
+
+export type ManuscriptResearchReviewRunStatus = 'running' | 'completed' | 'failed'
+
+export interface ManuscriptResearchReviewSummary {
+  readonly totalInventoryClaims: number
+  readonly coverageReviewSuggestedCount: number
+  readonly expectationReviewNeededCount: number
+  readonly assessmentUnavailableCount: number
+  readonly claimsWithSupportCount: number
+  readonly claimsWithContradictionCount: number
+  readonly claimsWithBlockedVerificationCount: number
+  readonly claimsWithUnverifiedVerificationCount: number
+  readonly consistencyAssessedCount: number
+  readonly consistencyConflictCount: number
+  readonly consistencyCompatibleCount: number
+  readonly consistencyQualificationCount: number
+  readonly consistencyEquivalentCount: number
+  readonly consistencyNotComparableCount: number
+  readonly consistencyInsufficientContextCount: number
+  readonly consistencyAssessmentFailureCount: number
+  readonly coverageContractVersion: string
+  readonly coverageScope: string
+  readonly coverageLimitations: readonly string[]
+  readonly candidateClaimCount: number
+  readonly candidateBatchCount: number
+  readonly candidateExpectedWindowCount: number
+  readonly candidateProcessedWindowCount: number
+  readonly candidatePairCount: number
+}
+
+export interface ManuscriptResearchReviewRun {
+  readonly reviewRunId: ManuscriptResearchReviewRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly citationReviewRunId: CitationReviewRunId | null
+  readonly claimInventoryRunId: ManuscriptClaimInventoryRunId | null
+  readonly claimCoverageRunId: ManuscriptClaimCoverageRunId | null
+  readonly citationExpectationRunId: ManuscriptCitationExpectationRunId | null
+  readonly crossClaimCandidateRunId: ManuscriptCrossClaimCandidateRunId | null
+  readonly crossClaimAssessmentRunId: ManuscriptCrossClaimAssessmentRunId | null
+  readonly reviewContractVersion: string
+  readonly status: ManuscriptResearchReviewRunStatus
+  readonly failureStage: string | null
+  readonly failureCode: string | null
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+  readonly summary: ManuscriptResearchReviewSummary | null
+}
+
+export interface ManuscriptResearchReviewClaimTarget {
+  readonly coverageTargetId: string
+  readonly claimCitationLinkId: string
+  readonly citationOccurrenceId: string
+  readonly citationTargetId: string
+  readonly citationReviewItemId: string
+  readonly bindingId: string | null
+  readonly sourceId: string | null
+  readonly sourceSnapshotId: string | null
+  readonly extractionId: string | null
+  readonly verificationRunId: string | null
+  readonly reviewStatus: CitationReviewItemStatus
+  readonly failureCode: string | null
+  readonly verificationStatus: CitationVerificationStatus | null
+  readonly verificationFailureCode: string | null
+  readonly relation: ResearchClaimEvidenceRelation | null
+  readonly rationale: string | null
+  readonly evidenceCount: number
+  readonly evidence: readonly CitationReviewEvidence[]
+  readonly citationReviewItem: CitationReviewItem
+}
+
+export interface ManuscriptResearchReviewClaimItem {
+  readonly wholeReviewRunId: ManuscriptResearchReviewRunId
+  readonly inventoryItemId: ManuscriptClaimInventoryItemId
+  readonly ordinal: number
+  readonly documentBlockId: string
+  readonly blockOrdinal: number
+  readonly blockKind: ManuscriptClaimInventoryBlockKind
+  readonly sourceStart: number
+  readonly sourceEnd: number
+  readonly sourceExcerpt: string
+  readonly claimText: string
+  readonly claimReviewKind: ClaimReviewKind
+  readonly bridgeStatus: ManuscriptClaimCoverageBridgeStatus
+  readonly structuralCitationState: ManuscriptClaimCoverageStructuralCitationState
+  readonly sameBlockCitationCount: number
+  readonly exactClaimCitationLinkCount: number
+  readonly targetCount: number
+  readonly assessmentStatus: CitationExpectationAssessmentStatus
+  readonly expectation: CitationExpectation | null
+  readonly expectationRationale: string | null
+  readonly attentionState: CoverageAttentionState
+  readonly attentionReasons: readonly CoverageAttentionReason[]
+  readonly supportCount: number
+  readonly contradictionCount: number
+  readonly contextualizeCount: number
+  readonly insufficientCount: number
+  readonly blockedCount: number
+  readonly unverifiedCount: number
+  readonly targets: readonly ManuscriptResearchReviewClaimTarget[]
+}
+
+export interface ManuscriptResearchReviewConsistencyClaim {
+  readonly inventoryItemId: ManuscriptClaimInventoryItemId
+  readonly ordinal: number
+  readonly documentBlockId: string
+  readonly blockOrdinal: number
+  readonly blockKind: ManuscriptClaimInventoryBlockKind
+  readonly sourceStart: number
+  readonly sourceEnd: number
+  readonly sourceExcerpt: string
+  readonly claimText: string
+  readonly claimReviewKind: ClaimReviewKind
+}
+
+export interface ManuscriptResearchReviewConsistencyItem {
+  readonly wholeReviewRunId: ManuscriptResearchReviewRunId
+  readonly assessmentItemId: ManuscriptCrossClaimAssessmentItemId
+  readonly candidateId: ManuscriptCrossClaimCandidateId
+  readonly left: ManuscriptResearchReviewConsistencyClaim
+  readonly right: ManuscriptResearchReviewConsistencyClaim
+  readonly assessmentStatus: CrossClaimAssessmentStatus
+  readonly relation: CrossClaimConsistencyRelation | null
+  readonly dimensions: readonly CrossClaimDifferenceDimension[]
+  readonly rationale: string | null
+  readonly failureCode: string | null
+  readonly attentionState: CrossClaimConsistencyAttentionState
+  readonly attentionReasons: readonly CrossClaimConsistencyAttentionReason[]
 }
 
 export interface CreateCitationVerificationInput {

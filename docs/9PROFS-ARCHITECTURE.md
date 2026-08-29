@@ -580,7 +580,16 @@ For original audit evidence and phase-specific rationale, see
   judge citation quality, reuse discovery kinds/rationale, or infer conflict from
   a difference dimension. Assessment runs are versioned, retryable after item
   failure, and idempotent for the same candidate/provider/model/contract identity.
-- 5D4 Whole Review UI (FUTURE): whole-manuscript review experience.
+- 5D4A Whole-Manuscript Research Review Workflow (IMPLEMENTED): Core sequences
+  the existing Citation Review, whole-manuscript claim inventory, structural
+  coverage, citation expectation, cross-claim candidate discovery, and
+  cross-claim assessment histories behind one immutable, document-version-pinned
+  run. It persists every successful child-run identity, fails closed on systemic
+  stage failures, and exposes one transparent claim/consistency read model with
+  carried-forward coverage scope and candidate-discovery limitations. It adds no
+  scholarly judgment, retrieval, mutation, or UI behavior; 5D4B remains the
+  whole-manuscript review UI phase.
+- 5D4B Whole Review UI (FUTURE): whole-manuscript review experience.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.
 

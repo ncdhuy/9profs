@@ -7,6 +7,7 @@ import type {
   ManuscriptCitationSyncTarget,
   StartManuscriptClaimInventoryInput,
   StartManuscriptCitationReviewInput,
+  StartManuscriptResearchReviewInput,
   SyncManuscriptReferenceCatalogInput,
   SyncManuscriptCitationsInput,
 } from '@genoffice/9profs-core'
@@ -72,14 +73,17 @@ export interface BuildManuscriptCitationReviewInputOptions {
   readonly editor: Pick<Editor, 'state'>
   readonly activeDocument: Pick<ActiveDocument, 'documentId' | 'version'>
   readonly manuscriptSourceId: string
+  readonly pmDoc?: PmNode
 }
 
 export function buildManuscriptCitationReviewInput({
   editor,
   activeDocument,
   manuscriptSourceId,
+  pmDoc,
 }: BuildManuscriptCitationReviewInputOptions): StartManuscriptCitationReviewInput {
-  const citations = extractDocxCitationsFromPmDoc(pmDocFromEditor(editor)).flatMap((citation) => {
+  const doc = pmDoc ?? pmDocFromEditor(editor)
+  const citations = extractDocxCitationsFromPmDoc(doc).flatMap((citation) => {
     const format = manuscriptCitationFormat(citation.format)
     if (format === undefined) return []
     return [
@@ -123,7 +127,7 @@ export function buildManuscriptCitationReviewInput({
     documentId: activeDocument.documentId,
     documentVersion: activeDocument.version,
     citations,
-    blocks: extractDocxClaimBlocksFromPmDoc(pmDocFromEditor(editor)).map((block) => ({
+    blocks: extractDocxClaimBlocksFromPmDoc(doc).map((block) => ({
       blockId: block.blockId,
       text: block.text,
       citations: block.citations
@@ -143,18 +147,21 @@ export interface BuildManuscriptClaimInventoryInputOptions {
   readonly editor: Pick<Editor, 'state'>
   readonly activeDocument: Pick<ActiveDocument, 'documentId' | 'version'>
   readonly manuscriptSourceId: string
+  readonly pmDoc?: PmNode
 }
 
 export function buildManuscriptClaimInventoryInput({
   editor,
   activeDocument,
   manuscriptSourceId,
+  pmDoc,
 }: BuildManuscriptClaimInventoryInputOptions): StartManuscriptClaimInventoryInput {
+  const doc = pmDoc ?? pmDocFromEditor(editor)
   return {
     manuscriptSourceId,
     documentId: activeDocument.documentId,
     documentVersion: activeDocument.version,
-    blocks: extractWholeManuscriptClaimBlocksFromPmDoc(pmDocFromEditor(editor)).map((block) => ({
+    blocks: extractWholeManuscriptClaimBlocksFromPmDoc(doc).map((block) => ({
       blockId: block.blockId,
       blockOrdinal: block.blockOrdinal,
       blockKind: block.blockKind,
@@ -165,6 +172,44 @@ export function buildManuscriptClaimInventoryInput({
         renderedText: citation.renderedText,
       })),
     })),
+  }
+}
+
+export interface BuildManuscriptResearchReviewInputOptions {
+  readonly editor: Pick<Editor, 'state'>
+  readonly activeDocument: Pick<ActiveDocument, 'documentId' | 'version'>
+  readonly manuscriptSourceId: string
+}
+
+export function buildManuscriptResearchReviewInput({
+  editor,
+  activeDocument,
+  manuscriptSourceId,
+}: BuildManuscriptResearchReviewInputOptions): StartManuscriptResearchReviewInput {
+  const pmDoc = pmDocFromEditor(editor)
+  const citationReview = buildManuscriptCitationReviewInput({
+    editor,
+    activeDocument,
+    manuscriptSourceId,
+    pmDoc,
+  })
+  const claimInventory = buildManuscriptClaimInventoryInput({
+    editor,
+    activeDocument,
+    manuscriptSourceId,
+    pmDoc,
+  })
+  return {
+    manuscriptSourceId,
+    documentId: activeDocument.documentId,
+    documentVersion: activeDocument.version,
+    citationReviewObservations: {
+      citations: citationReview.citations,
+      citationBlocks: citationReview.blocks,
+    },
+    claimInventoryObservations: {
+      wholeManuscriptBlocks: claimInventory.blocks,
+    },
   }
 }
 
