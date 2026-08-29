@@ -7,6 +7,8 @@ release/
 .refs/
 .env
 .env.*
+.env.9profs
+!.env.9profs.example
 electron-builder.env
 ~$*
 
