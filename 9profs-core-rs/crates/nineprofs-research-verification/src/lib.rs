@@ -23,6 +23,8 @@ use thiserror::Error;
 
 mod citation_review;
 pub use citation_review::*;
+mod manuscript_claim_coverage;
+pub use manuscript_claim_coverage::*;
 
 pub const DEFAULT_TOP_K: u32 = 8;
 pub const MAX_TOP_K: u32 = 16;

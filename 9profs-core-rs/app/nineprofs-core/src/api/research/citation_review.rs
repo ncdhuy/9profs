@@ -173,7 +173,7 @@ pub(crate) fn citation_review_run_dto(value: CitationReviewRun) -> CitationRevie
     }
 }
 
-fn citation_review_item_dto(value: CitationReviewItem) -> CitationReviewItemDto {
+pub(crate) fn citation_review_item_dto(value: CitationReviewItem) -> CitationReviewItemDto {
     CitationReviewItemDto {
         item_id: value.item_id,
         review_run_id: value.review_run_id,
@@ -230,7 +230,7 @@ fn citation_review_candidate_dto(value: CitationReviewCandidate) -> CitationRevi
     }
 }
 
-fn citation_review_verification_dto(
+pub(crate) fn citation_review_verification_dto(
     value: CitationReviewVerification,
 ) -> CitationReviewVerificationDto {
     CitationReviewVerificationDto {
@@ -246,7 +246,9 @@ fn citation_review_verification_dto(
     }
 }
 
-fn citation_review_evidence_dto(value: CitationReviewEvidence) -> CitationReviewEvidenceDto {
+pub(crate) fn citation_review_evidence_dto(
+    value: CitationReviewEvidence,
+) -> CitationReviewEvidenceDto {
     CitationReviewEvidenceDto {
         evidence_id: value.evidence_id,
         relation: claim_evidence_relation_dto(value.relation),
@@ -265,7 +267,9 @@ fn citation_review_run_status_dto(value: CitationReviewRunStatus) -> CitationRev
     }
 }
 
-fn citation_review_item_status_dto(value: CitationReviewItemStatus) -> CitationReviewItemStatusDto {
+pub(crate) fn citation_review_item_status_dto(
+    value: CitationReviewItemStatus,
+) -> CitationReviewItemStatusDto {
     match value {
         CitationReviewItemStatus::UnresolvedReference => {
             CitationReviewItemStatusDto::UnresolvedReference

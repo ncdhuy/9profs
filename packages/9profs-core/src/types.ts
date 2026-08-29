@@ -17,6 +17,9 @@ export type ManuscriptClaimExtractionItemId = string
 export type ManuscriptClaimInventoryRunId = string
 export type ManuscriptClaimInventoryItemId = string
 export type ManuscriptClaimInventoryCoverageId = string
+export type ManuscriptClaimCoverageRunId = string
+export type ManuscriptClaimCoverageItemId = string
+export type ManuscriptClaimCoverageTargetId = string
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string
@@ -995,6 +998,89 @@ export interface StartManuscriptClaimInventoryInput {
   readonly documentVersion: number
   readonly blocks: readonly ManuscriptClaimInventoryBlockInput[]
 }
+
+export interface CreateManuscriptClaimCoverageInput {
+  readonly claimInventoryRunId: ManuscriptClaimInventoryRunId
+  readonly citationReviewRunId: CitationReviewRunId
+}
+
+export type ManuscriptClaimCoverageRunStatus = 'running' | 'completed' | 'failed'
+export type ManuscriptClaimCoverageBridgeStatus =
+  | 'exact_claim_bridge'
+  | 'no_citation_scoped_claim_match'
+  | 'same_span_different_claim'
+  | 'multiple_exact_candidates'
+  | 'invalid_cross_history'
+export type ManuscriptClaimCoverageStructuralCitationState =
+  | 'exact_citation_linked'
+  | 'citation_observed_in_claim_range'
+  | 'citation_observed_in_block'
+  | 'no_citation_observed_in_block'
+  | 'ambiguous_claim_bridge'
+
+export interface ManuscriptClaimCoverageRun {
+  readonly coverageRunId: ManuscriptClaimCoverageRunId
+  readonly researchCaseId: ResearchCaseId
+  readonly manuscriptSourceId: ResearchSourceId
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly claimInventoryRunId: ManuscriptClaimInventoryRunId
+  readonly citationReviewRunId: CitationReviewRunId
+  readonly analysisContractVersion: string
+  readonly coverageContractVersion: string
+  readonly coverageScope: string
+  readonly coverageLimitations: readonly string[]
+  readonly status: ManuscriptClaimCoverageRunStatus
+  readonly itemCount: number
+  readonly createdAtMs: number
+  readonly completedAtMs: number | null
+}
+
+export interface ManuscriptClaimCoverageItem {
+  readonly coverageItemId: ManuscriptClaimCoverageItemId
+  readonly coverageRunId: ManuscriptClaimCoverageRunId
+  readonly inventoryItemId: ManuscriptClaimInventoryItemId
+  readonly ordinal: number
+  readonly bridgeStatus: ManuscriptClaimCoverageBridgeStatus
+  readonly structuralCitationState: ManuscriptClaimCoverageStructuralCitationState
+  readonly matchedClaimExtractionItemId: ManuscriptClaimExtractionItemId | null
+  readonly matchedResearchClaimId: ResearchClaimId | null
+  readonly inventoryOverlappingCitationCount: number
+  readonly sameBlockCitationCount: number
+  readonly claimRangeCitationCount: number
+  readonly exactClaimCitationLinkCount: number
+  readonly targetCount: number
+  readonly supportCount: number
+  readonly contradictionCount: number
+  readonly contextualizeCount: number
+  readonly insufficientCount: number
+  readonly unverifiedCount: number
+  readonly blockedCount: number
+}
+
+export interface ManuscriptClaimCoverageTarget {
+  readonly coverageTargetId: ManuscriptClaimCoverageTargetId
+  readonly coverageItemId: ManuscriptClaimCoverageItemId
+  readonly claimCitationLinkId: string
+  readonly citationOccurrenceId: string
+  readonly citationTargetId: string
+  readonly citationReviewItemId: string
+  readonly bindingId: string | null
+  readonly sourceId: ResearchSourceId | null
+  readonly sourceSnapshotId: ResearchSourceSnapshotId | null
+  readonly extractionId: ResearchPdfExtractionId | null
+  readonly verificationRunId: CitationVerificationRunId | null
+  readonly reviewStatus: CitationReviewItemStatus
+  readonly failureCode: string | null
+  readonly verificationStatus: CitationVerificationStatus | null
+  readonly verificationFailureCode: string | null
+  readonly relation: ResearchClaimEvidenceRelation | null
+  readonly rationale: string | null
+  readonly evidenceCount: number
+  readonly evidence: readonly CitationReviewEvidence[]
+}
+
+export interface StartManuscriptClaimCoverageInput extends CreateManuscriptClaimCoverageInput {}
 
 export type CitationVerificationStatus = 'running' | 'completed' | 'failed'
 

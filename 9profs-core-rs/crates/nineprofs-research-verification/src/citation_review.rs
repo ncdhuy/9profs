@@ -257,6 +257,14 @@ impl CitationReviewService {
         }
     }
 
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub(crate) fn research_service(&self) -> &Arc<ResearchService> {
+        &self.research
+    }
+
     pub async fn start(
         &self,
         input: StartManuscriptCitationReview,

@@ -1307,3 +1307,106 @@ pub struct CreateCitationVerificationRequest {
     pub claim_citation_link_id: String,
     pub citation_target_binding_id: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateManuscriptClaimCoverageRequest {
+    pub claim_inventory_run_id: String,
+    pub citation_review_run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimCoverageRunStatusDto {
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimCoverageBridgeStatusDto {
+    ExactClaimBridge,
+    NoCitationScopedClaimMatch,
+    SameSpanDifferentClaim,
+    MultipleExactCandidates,
+    InvalidCrossHistory,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManuscriptClaimCoverageStructuralCitationStateDto {
+    ExactCitationLinked,
+    CitationObservedInClaimRange,
+    CitationObservedInBlock,
+    NoCitationObservedInBlock,
+    AmbiguousClaimBridge,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimCoverageRunDto {
+    pub coverage_run_id: String,
+    pub research_case_id: String,
+    pub manuscript_source_id: String,
+    pub document_id: String,
+    pub document_version: i64,
+    pub claim_inventory_run_id: String,
+    pub citation_review_run_id: String,
+    pub analysis_contract_version: String,
+    pub coverage_contract_version: String,
+    pub coverage_scope: String,
+    pub coverage_limitations: Vec<String>,
+    pub status: ManuscriptClaimCoverageRunStatusDto,
+    pub item_count: u32,
+    pub created_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimCoverageItemDto {
+    pub coverage_item_id: String,
+    pub coverage_run_id: String,
+    pub inventory_item_id: String,
+    pub ordinal: u32,
+    pub bridge_status: ManuscriptClaimCoverageBridgeStatusDto,
+    pub structural_citation_state: ManuscriptClaimCoverageStructuralCitationStateDto,
+    pub matched_claim_extraction_item_id: Option<String>,
+    pub matched_research_claim_id: Option<String>,
+    pub inventory_overlapping_citation_count: u32,
+    pub same_block_citation_count: u32,
+    pub claim_range_citation_count: u32,
+    pub exact_claim_citation_link_count: u32,
+    pub target_count: u32,
+    pub support_count: u32,
+    pub contradiction_count: u32,
+    pub contextualize_count: u32,
+    pub insufficient_count: u32,
+    pub unverified_count: u32,
+    pub blocked_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptClaimCoverageTargetDto {
+    pub coverage_target_id: String,
+    pub coverage_item_id: String,
+    pub claim_citation_link_id: String,
+    pub citation_occurrence_id: String,
+    pub citation_target_id: String,
+    pub citation_review_item_id: String,
+    pub binding_id: Option<String>,
+    pub source_id: Option<String>,
+    pub source_snapshot_id: Option<String>,
+    pub extraction_id: Option<String>,
+    pub verification_run_id: Option<String>,
+    pub review_status: CitationReviewItemStatusDto,
+    pub failure_code: Option<String>,
+    pub verification_status: Option<CitationVerificationStatusDto>,
+    pub verification_failure_code: Option<String>,
+    pub relation: Option<ResearchClaimEvidenceRelationDto>,
+    pub rationale: Option<String>,
+    pub evidence_count: u32,
+    pub evidence: Vec<CitationReviewEvidenceDto>,
+}
