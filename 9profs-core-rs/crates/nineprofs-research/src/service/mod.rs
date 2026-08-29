@@ -80,6 +80,12 @@ impl ResearchService {
             .map(|provider| provider.identity())
     }
 
+    pub fn claim_extractor_identity(&self) -> Option<crate::ManuscriptClaimExtractionIdentity> {
+        self.claim_extractor
+            .as_ref()
+            .map(|provider| provider.identity())
+    }
+
     async fn ensure_case(&self, id: &ResearchCaseId) -> Result<(), ResearchError> {
         if self.repository.get_case(id).await?.is_none() {
             return Err(not_found("case", id.as_str()));

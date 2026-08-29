@@ -587,7 +587,10 @@ For original audit evidence and phase-specific rationale, see
   run. It persists every successful child-run identity, fails closed on systemic
   stage failures, and exposes one transparent claim/consistency read model with
   carried-forward coverage scope and candidate-discovery limitations. It adds no
-  scholarly judgment, retrieval, mutation, or UI behavior; 5D4B remains the
+  scholarly judgment, retrieval, mutation, or UI behavior. Whole Review reuse is
+  keyed by exact document observations plus the semantic execution identity of
+  all material child workflows; changing a provider, model, or semantic contract
+  produces a distinct immutable Whole Review history. 5D4B remains the
   whole-manuscript review UI phase.
 - 5D4B Whole Review UI (FUTURE): whole-manuscript review experience.
 - 5E: manuscript and Sheets/data consistency.

@@ -162,6 +162,7 @@ pub struct CitationReviewVerification {
     pub assessor_provider: Option<String>,
     pub assessor_version: Option<String>,
     pub assessor_model_id: Option<String>,
+    pub assessment_contract_version: Option<String>,
     pub completed_at_ms: Option<i64>,
 }
 
@@ -1452,6 +1453,7 @@ impl CitationReviewService {
             assessor_provider: result.map(|r| r.assessor_provider.clone()),
             assessor_version: result.map(|r| r.assessor_version.clone()),
             assessor_model_id: result.and_then(|r| r.assessor_model_id.clone()),
+            assessment_contract_version: result.map(|r| r.assessment_contract_version.clone()),
             completed_at_ms: run.completed_at_ms,
         })
     }

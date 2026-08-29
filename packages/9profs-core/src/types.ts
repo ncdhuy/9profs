@@ -1452,6 +1452,7 @@ export interface CitationReviewVerification {
   readonly assessorProvider: string | null
   readonly assessorVersion: string | null
   readonly assessorModelId: string | null
+  readonly assessmentContractVersion?: string | null
   readonly completedAtMs: number | null
 }
 
@@ -1543,6 +1544,10 @@ export interface ManuscriptResearchReviewRun {
   readonly manuscriptSourceId: ResearchSourceId
   readonly documentId: string
   readonly documentVersion: number
+  readonly inputHashAlgorithm: string
+  readonly inputHash: string
+  readonly executionIdentityHashAlgorithm: string | null
+  readonly executionIdentityHash: string | null
   readonly citationReviewRunId: CitationReviewRunId | null
   readonly claimInventoryRunId: ManuscriptClaimInventoryRunId | null
   readonly claimCoverageRunId: ManuscriptClaimCoverageRunId | null
