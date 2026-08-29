@@ -599,6 +599,9 @@ For original audit evidence and phase-specific rationale, see
   unified claim/evidence and consistency read models and may perform only
   trusted user decisions such as persisted citation-candidate confirmation.
   No overall research-quality score or manuscript-validity verdict exists.
+  Whole Review claim navigation maps exact Unicode manuscript locators to PM
+  positions and fails closed when a boundary falls inside non-text atomic inline
+  content.
 - 5E: manuscript and Sheets/data consistency.
 - 5F: methodology and domain research skills.
 

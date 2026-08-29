@@ -24,8 +24,7 @@ afterEach(() => {
   editors.clear()
 })
 
-function editorFor(text = 'Treatment A may reduce mortality.') {
-  const runs: Run[] = [{ text }]
+function editorForRuns(runs: Run[]) {
   const editor = new Editor({
     element: document.createElement('div'),
     extensions: editorExtensions,
@@ -41,6 +40,23 @@ function editorFor(text = 'Treatment A may reduce mortality.') {
   })
   editors.add(editor)
   return editor
+}
+
+function editorFor(text = 'Treatment A may reduce mortality.') {
+  return editorForRuns([{ text }])
+}
+
+function citationRun(renderedText: string): Run {
+  return {
+    text: renderedText,
+    citation: {
+      format: 'WordNative',
+      renderedText,
+      instruction: ' CITATION Smith2024',
+      targets: [{ ordinal: 1, referenceKey: 'Smith2024' }],
+      originalXml: '<w:fldSimple w:instr=" CITATION Smith2024"/>',
+    },
+  }
 }
 
 function summary(overrides: Partial<NonNullable<ManuscriptResearchReviewRun['summary']>> = {}) {
@@ -171,6 +187,14 @@ function transportFor(options: {
   const manuscriptResearchReviewConsistency = vi.fn().mockResolvedValue(options.consistency ?? [consistency()])
   const manuscriptCitationReview = vi.fn().mockResolvedValue({ referenceResolutionRunId: 'resolution-run-1' })
   const confirmManuscriptReferenceCandidate = vi.fn().mockResolvedValue([])
+  const lowerWorkflowStarts = {
+    startManuscriptCitationReview: vi.fn(),
+    startManuscriptClaimInventory: vi.fn(),
+    startManuscriptClaimCoverage: vi.fn(),
+    startManuscriptCitationExpectation: vi.fn(),
+    startManuscriptCrossClaimCandidates: vi.fn(),
+    startManuscriptCrossClaimAssessment: vi.fn(),
+  }
   const transport = {
     researchCases: vi.fn().mockResolvedValue([{ caseId: 'case-1', title: 'Clinical review' }]),
     researchSources: vi.fn().mockResolvedValue([
@@ -185,6 +209,7 @@ function transportFor(options: {
     manuscriptResearchReviewConsistency,
     manuscriptCitationReview,
     confirmManuscriptReferenceCandidate,
+    ...lowerWorkflowStarts,
   } as unknown as CoreTransport
   return {
     transport,
@@ -194,6 +219,7 @@ function transportFor(options: {
     manuscriptResearchReviewConsistency,
     manuscriptCitationReview,
     confirmManuscriptReferenceCandidate,
+    lowerWorkflowStarts,
   }
 }
 
@@ -264,6 +290,9 @@ describe('WholeResearchReviewPanel', () => {
     expect(input.claimInventoryObservations.wholeManuscriptBlocks).toHaveLength(1)
     expect(harness.manuscriptResearchReviewClaims).toHaveBeenCalledWith('whole-review-1')
     expect(harness.manuscriptResearchReviewConsistency).toHaveBeenCalledWith('whole-review-1')
+    for (const start of Object.values(harness.lowerWorkflowStarts)) {
+      expect(start).not.toHaveBeenCalled()
+    }
     expect(rendered.container.textContent).not.toContain('No supported citations')
     rendered.unmount()
   })
@@ -376,6 +405,40 @@ describe('WholeResearchReviewPanel', () => {
     rendered.unmount()
   })
 
+  it('does not expose confirmation for completed verification with historical candidates', async () => {
+    const candidate = {
+      candidateId: 'historical-candidate-1',
+      resolutionEntryId: 'historical-entry-1',
+      sourceId: 'source-2',
+      sourceLabel: 'Paper',
+      matchKind: 'exact',
+    }
+    const target = {
+      citationTargetId: 'historical-target-1',
+      reviewStatus: 'verification_completed',
+      verificationStatus: 'verification_completed',
+      evidenceCount: 1,
+      evidence: [],
+      citationReviewItem: {
+        status: 'verification_completed',
+        resolutionEntryId: 'historical-entry-1',
+        candidates: [candidate],
+      },
+    } as never
+    const harness = transportFor({
+      claims: [claim({ targetCount: 1, targets: [target] })],
+      consistency: [],
+    })
+    const rendered = renderPanel(harness.transport, editorFor())
+    await chooseContext(rendered.container)
+    await act(async () => rendered.container.querySelector<HTMLButtonElement>('.citation-review-start')?.click())
+    await flush()
+    await flush()
+
+    expect(rendered.container.querySelector('.whole-research-review-confirm')).toBeNull()
+    rendered.unmount()
+  })
+
   it('marks a loaded review stale after a debounced Core version refresh', async () => {
     const activeDocument = vi
       .fn()
@@ -402,6 +465,35 @@ describe('WholeResearchReviewPanel', () => {
     expect(rendered.container.querySelector<HTMLButtonElement>('.whole-research-review-go')?.disabled).toBe(true)
     rendered.unmount()
   })
+
+  it('keeps claim navigation read-only', async () => {
+    const text = 'Treatment A may reduce mortality.'
+    const harness = transportFor({
+      claims: [claim({ sourceEnd: Array.from(text).length, sourceExcerpt: text })],
+      consistency: [],
+    })
+    const editor = editorFor(text)
+    const rendered = renderPanel(harness.transport, editor)
+    await chooseContext(rendered.container)
+    await act(async () => rendered.container.querySelector<HTMLButtonElement>('.citation-review-start')?.click())
+    await flush()
+    await flush()
+
+    const beforeDoc = editor.state.doc.toJSON()
+    const docChanged: boolean[] = []
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      docChanged.push(transaction.docChanged)
+    }
+    editor.on('transaction', onTransaction)
+    await act(async () => rendered.container.querySelector<HTMLButtonElement>('.whole-research-review-go')?.click())
+    await flush()
+    editor.off('transaction', onTransaction)
+
+    expect(docChanged.length).toBeGreaterThan(0)
+    expect(docChanged.every((changed) => !changed)).toBe(true)
+    expect(editor.state.doc.toJSON()).toEqual(beforeDoc)
+    rendered.unmount()
+  })
 })
 
 describe('Whole Research Review navigation', () => {
@@ -418,6 +510,146 @@ describe('Whole Research Review navigation', () => {
     expect(range).not.toBeNull()
     expect(editor.state.doc.textBetween(range!.from, range!.to, '')).toBe(excerpt)
     expect(range!.to - range!.from).toBe(excerpt.length)
+  })
+
+  it('fails closed when a citation atom interior is the claim start', () => {
+    const before = 'Treatment works '
+    const citation = '(Smith, 2024)'
+    const after = ' in adults.'
+    const canonical = before + citation + after
+    const editor = editorForRuns([{ text: before }, citationRun(citation), { text: after }])
+    const start = Array.from(before).length + 2
+    const end = start + 3
+
+    expect(
+      findManuscriptClaimRange(editor, {
+        documentBlockId: 'b7',
+        sourceStart: start,
+        sourceEnd: end,
+        sourceExcerpt: Array.from(canonical).slice(start, end).join(''),
+      }),
+    ).toBeNull()
+  })
+
+  it('fails closed when a citation atom interior is the claim end', () => {
+    const before = 'Treatment works '
+    const citation = '(Smith, 2024)'
+    const after = ' in adults.'
+    const canonical = before + citation + after
+    const editor = editorForRuns([{ text: before }, citationRun(citation), { text: after }])
+    const end = Array.from(before).length + 2
+
+    expect(
+      findManuscriptClaimRange(editor, {
+        documentBlockId: 'b7',
+        sourceStart: 0,
+        sourceEnd: end,
+        sourceExcerpt: Array.from(canonical).slice(0, end).join(''),
+      }),
+    ).toBeNull()
+  })
+
+  it('maps a claim spanning exactly a whole citation atom to its PM edges', () => {
+    const before = 'Treatment works '
+    const citation = '(Smith, 2024)'
+    const after = ' in adults.'
+    const editor = editorForRuns([{ text: before }, citationRun(citation), { text: after }])
+    const paragraph = editor.state.doc.firstChild!
+    const citationNode = paragraph.child(1)
+    const citationStart = Array.from(before).length
+    const citationEnd = citationStart + Array.from(citation).length
+
+    const range = findManuscriptClaimRange(editor, {
+      documentBlockId: 'b7',
+      sourceStart: citationStart,
+      sourceEnd: citationEnd,
+      sourceExcerpt: citation,
+    })
+
+    expect(range).toEqual({
+      from: 1 + paragraph.child(0).nodeSize,
+      to: 1 + paragraph.child(0).nodeSize + citationNode.nodeSize,
+    })
+  })
+
+  it('maps a claim across a citation atom without generating an interior PM position', () => {
+    const before = 'Treatment works '
+    const citation = '(Smith, 2024)'
+    const after = ' in adults.'
+    const canonical = before + citation + after
+    const editor = editorForRuns([{ text: before }, citationRun(citation), { text: after }])
+    const paragraph = editor.state.doc.firstChild!
+    const citationNode = paragraph.child(1)
+    const range = findManuscriptClaimRange(editor, {
+      documentBlockId: 'b7',
+      sourceStart: 0,
+      sourceEnd: Array.from(canonical).length,
+      sourceExcerpt: canonical,
+    })
+
+    expect(range).toEqual({
+      from: 1,
+      to: 1 + paragraph.child(0).nodeSize + citationNode.nodeSize + paragraph.child(2).nodeSize,
+    })
+  })
+
+  it('maps Unicode text after a citation using canonical code points and the atom nodeSize', () => {
+    const before = '研究 🧬 cho thấy '
+    const citation = '(Smith, 2024)'
+    const after = ' sau điều trị'
+    const editor = editorForRuns([{ text: before }, citationRun(citation), { text: after }])
+    const paragraph = editor.state.doc.firstChild!
+    const citationNode = paragraph.child(1)
+    const start = Array.from(before + citation).length
+    const end = start + Array.from(after).length
+
+    const range = findManuscriptClaimRange(editor, {
+      documentBlockId: 'b7',
+      sourceStart: start,
+      sourceEnd: end,
+      sourceExcerpt: after,
+    })
+
+    expect(range).toEqual({
+      from: 1 + paragraph.child(0).nodeSize + citationNode.nodeSize,
+      to: 1 + paragraph.child(0).nodeSize + citationNode.nodeSize + paragraph.child(2).nodeSize,
+    })
+  })
+
+  it('rejects interior boundaries for other rendered atomic inline nodes', () => {
+    const rubyText = '漢字'
+    const editor = editorForRuns([
+      { text: 'A ' },
+      { text: rubyText, ruby: { rt: 'かんじ', xml: '<w:ruby/>' } },
+      { text: ' B' },
+    ])
+    const start = Array.from('A ').length + 1
+
+    expect(
+      findManuscriptClaimRange(editor, {
+        documentBlockId: 'b7',
+        sourceStart: start,
+        sourceEnd: start + 1,
+        sourceExcerpt: '字',
+      }),
+    ).toBeNull()
+  })
+
+  it('advances past zero-length inline atoms before mapping following text', () => {
+    const editor = editorForRuns([{ text: 'A' }, { text: '', xeTerm: 'Index term' }, { text: 'B' }])
+    const paragraph = editor.state.doc.firstChild!
+    const emptyAtom = paragraph.child(1)
+    const range = findManuscriptClaimRange(editor, {
+      documentBlockId: 'b7',
+      sourceStart: 1,
+      sourceEnd: 2,
+      sourceExcerpt: 'B',
+    })
+
+    expect(range).toEqual({
+      from: 1 + paragraph.child(0).nodeSize + emptyAtom.nodeSize,
+      to: 1 + paragraph.child(0).nodeSize + emptyAtom.nodeSize + paragraph.child(2).nodeSize,
+    })
   })
 
   it('fails closed when block identity or excerpt no longer matches', () => {

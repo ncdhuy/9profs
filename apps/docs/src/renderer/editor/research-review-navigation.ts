@@ -52,7 +52,9 @@ function inlineText(node: PmNode): string {
 
 function pmNodeSize(node: PmNode): number {
   const size = (node as unknown as { nodeSize?: number }).nodeSize
-  return size ?? inlineText(node).length + 2
+  if (typeof size === 'number') return size
+  if (nodeTypeName(node) === 'text') return String(jsonNode(node).text ?? '').length
+  return children(node).reduce((total, child) => total + pmNodeSize(child), 2)
 }
 
 function children(node: PmNode): PmNode[] {
@@ -62,6 +64,96 @@ function children(node: PmNode): PmNode[] {
   return Array.from({ length: pmNode.childCount }, (_, index) => pmNode.child?.call(node, index)).filter(
     (child): child is PmNode => child !== undefined,
   )
+}
+
+type BoundaryKind = 'start' | 'end'
+type BoundaryMapping = number | 'unrepresentable' | null
+
+/**
+ * Map a canonical boundary inside one inline representation to a PM position.
+ * Rendered text owned by a non-text node is selectable only as the complete
+ * atom, never as fabricated character positions inside that atom.
+ */
+function mapCanonicalBoundaryIntoInlineNode(
+  inlineNode: PmNode,
+  canonicalText: string,
+  codePointOffsetWithinInline: number,
+  pmOffset: number,
+): number | null {
+  const canonicalLength = codePointLength(canonicalText)
+  if (
+    !Number.isInteger(codePointOffsetWithinInline) ||
+    codePointOffsetWithinInline < 0 ||
+    codePointOffsetWithinInline > canonicalLength
+  ) {
+    return null
+  }
+
+  if (nodeTypeName(inlineNode) === 'text') {
+    const prefix = Array.from(canonicalText).slice(0, codePointOffsetWithinInline).join('')
+    return pmOffset + utf16Length(prefix)
+  }
+
+  if (codePointOffsetWithinInline === 0) return pmOffset
+  if (codePointOffsetWithinInline === canonicalLength) {
+    return pmOffset + pmNodeSize(inlineNode)
+  }
+  return null
+}
+
+/** Resolve one canonical block boundary without entering non-text inline nodes. */
+function mapCanonicalBoundary(
+  inlines: PmNode[],
+  wantedOffset: number,
+  contentStart: number,
+  kind: BoundaryKind,
+): BoundaryMapping {
+  if (!Number.isInteger(wantedOffset) || wantedOffset < 0) return null
+
+  let canonicalOffset = 0
+  let pmOffset = contentStart
+  let previousNonEmptyEnd: number | null = null
+
+  for (const inline of inlines) {
+    const canonicalText = inlineText(inline)
+    const canonicalLength = codePointLength(canonicalText)
+    const nextPmOffset = pmOffset + pmNodeSize(inline)
+
+    // Empty atoms do not consume canonical text. Keep advancing through their
+    // real PM sizes so a start boundary after them lands after the atoms.
+    if (canonicalLength === 0) {
+      pmOffset = nextPmOffset
+      continue
+    }
+
+    const nextCanonicalOffset = canonicalOffset + canonicalLength
+    if (wantedOffset < canonicalOffset) return null
+
+    if (wantedOffset === canonicalOffset) {
+      if (kind === 'start') {
+        const position = mapCanonicalBoundaryIntoInlineNode(inline, canonicalText, 0, pmOffset)
+        return position
+      }
+      return previousNonEmptyEnd ?? contentStart
+    }
+
+    if (wantedOffset < nextCanonicalOffset) {
+      const position = mapCanonicalBoundaryIntoInlineNode(
+        inline,
+        canonicalText,
+        wantedOffset - canonicalOffset,
+        pmOffset,
+      )
+      return position === null ? 'unrepresentable' : position
+    }
+
+    previousNonEmptyEnd = nextPmOffset
+    canonicalOffset = nextCanonicalOffset
+    pmOffset = nextPmOffset
+  }
+
+  if (wantedOffset !== canonicalOffset) return null
+  return kind === 'start' ? pmOffset : (previousNonEmptyEnd ?? pmOffset)
 }
 
 /**
@@ -87,6 +179,7 @@ export function findManuscriptClaimRange(
 
   let match: ManuscriptClaimRange | null = null
   let matchCount = 0
+  let invalidMatch = false
   const visit = (node: PmNode, path: string, basePos: number, inheritedDocxIndex: number | null) => {
     for (const [index, child] of children(node).entries()) {
       const childPath = path ? `${path}.${index}` : String(index)
@@ -108,28 +201,19 @@ export function findManuscriptClaimRange(
           wantedEnd <= codePointLength(text)
         ) {
           const contentStart = childPos + 1
-          let codePoints = 0
-          let from: number | null = null
-          let to: number | null = null
-          let offset = 0
-          for (const inline of children(child)) {
-            const text = inlineText(inline)
-            const nextCodePoints = codePoints + codePointLength(text)
-            const nextOffset = offset + pmNodeSize(inline)
-            if (from === null && wantedStart >= codePoints && wantedStart <= nextCodePoints) {
-              const within = Array.from(text).slice(0, wantedStart - codePoints).join('')
-              from = contentStart + offset + utf16Length(within)
-            }
-            if (to === null && wantedEnd >= codePoints && wantedEnd <= nextCodePoints) {
-              const within = Array.from(text).slice(0, wantedEnd - codePoints).join('')
-              to = contentStart + offset + utf16Length(within)
-            }
-            codePoints = nextCodePoints
-            offset = nextOffset
-          }
-          if (from !== null && to !== null && to > from) {
-            matchCount += 1
-            if (matchCount === 1) match = { from, to }
+          const from = mapCanonicalBoundary(children(child), wantedStart, contentStart, 'start')
+          const to = mapCanonicalBoundary(children(child), wantedEnd, contentStart, 'end')
+          matchCount += 1
+          if (
+            from === 'unrepresentable' ||
+            to === 'unrepresentable' ||
+            from === null ||
+            to === null ||
+            to <= from
+          ) {
+            invalidMatch = true
+          } else if (matchCount === 1) {
+            match = { from, to }
           }
         }
       }
@@ -140,5 +224,5 @@ export function findManuscriptClaimRange(
   }
 
   visit(root, '', 0, null)
-  return matchCount === 1 ? match : null
+  return !invalidMatch && matchCount === 1 ? match : null
 }
