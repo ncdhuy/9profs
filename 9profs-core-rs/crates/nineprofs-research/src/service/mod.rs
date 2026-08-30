@@ -15,6 +15,7 @@ mod manuscript_claim_inventory;
 mod pdf;
 mod reference_catalog;
 mod reference_resolution;
+mod regulation;
 
 #[cfg(test)]
 mod tests;

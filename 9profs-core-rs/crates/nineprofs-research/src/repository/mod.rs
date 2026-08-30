@@ -15,10 +15,11 @@ use crate::{
     ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
     ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
     ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
-    ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, ResearchCase,
-    ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
-    ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
-    ResearchSource, ResearchSourceId, ResearchSourceSnapshot, ResearchSourceSnapshotId,
+    ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, RegulationRequirement,
+    RegulationRequirementId, RegulationReviewStatus, ResearchCase, ResearchCaseId, ResearchClaim,
+    ResearchClaimId, ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
+    ResearchPdfExtractionId, ResearchPdfPage, ResearchSource, ResearchSourceId,
+    ResearchSourceSnapshot, ResearchSourceSnapshotId,
 };
 
 mod case_source_snapshot;
@@ -31,6 +32,7 @@ mod manuscript_claim_inventory;
 mod pdf;
 mod reference_catalog;
 mod reference_resolution;
+mod regulation;
 
 #[async_trait]
 pub trait ResearchRepository: Send + Sync {
@@ -62,6 +64,32 @@ pub trait ResearchRepository: Send + Sync {
         content_hash: &ContentHash,
     ) -> Result<Option<ResearchSourceSnapshot>, ResearchError>;
     async fn insert_snapshot(&self, value: &ResearchSourceSnapshot) -> Result<bool, ResearchError>;
+
+    async fn list_regulation_requirements(
+        &self,
+        source_id: Option<&ResearchSourceId>,
+        source_snapshot_id: Option<&ResearchSourceSnapshotId>,
+    ) -> Result<Vec<RegulationRequirement>, ResearchError>;
+    async fn get_regulation_requirement(
+        &self,
+        id: &RegulationRequirementId,
+    ) -> Result<Option<RegulationRequirement>, ResearchError>;
+    async fn insert_regulation_requirement(
+        &self,
+        value: &RegulationRequirement,
+    ) -> Result<(), ResearchError>;
+    async fn update_regulation_requirement_review_status(
+        &self,
+        id: &RegulationRequirementId,
+        status: &RegulationReviewStatus,
+        updated_at_ms: i64,
+    ) -> Result<bool, ResearchError>;
+    async fn set_regulation_requirement_active(
+        &self,
+        id: &RegulationRequirementId,
+        active: bool,
+        updated_at_ms: i64,
+    ) -> Result<bool, ResearchError>;
 
     async fn get_pdf_extraction(
         &self,
@@ -422,6 +450,49 @@ impl ResearchRepository for SqliteResearchRepository {
 
     async fn insert_snapshot(&self, value: &ResearchSourceSnapshot) -> Result<bool, ResearchError> {
         self.insert_snapshot(value).await
+    }
+
+    async fn list_regulation_requirements(
+        &self,
+        source_id: Option<&ResearchSourceId>,
+        source_snapshot_id: Option<&ResearchSourceSnapshotId>,
+    ) -> Result<Vec<RegulationRequirement>, ResearchError> {
+        self.list_regulation_requirements(source_id, source_snapshot_id)
+            .await
+    }
+
+    async fn get_regulation_requirement(
+        &self,
+        id: &RegulationRequirementId,
+    ) -> Result<Option<RegulationRequirement>, ResearchError> {
+        self.get_regulation_requirement(id).await
+    }
+
+    async fn insert_regulation_requirement(
+        &self,
+        value: &RegulationRequirement,
+    ) -> Result<(), ResearchError> {
+        self.insert_regulation_requirement(value).await
+    }
+
+    async fn update_regulation_requirement_review_status(
+        &self,
+        id: &RegulationRequirementId,
+        status: &RegulationReviewStatus,
+        updated_at_ms: i64,
+    ) -> Result<bool, ResearchError> {
+        self.update_regulation_requirement_review_status(id, status, updated_at_ms)
+            .await
+    }
+
+    async fn set_regulation_requirement_active(
+        &self,
+        id: &RegulationRequirementId,
+        active: bool,
+        updated_at_ms: i64,
+    ) -> Result<bool, ResearchError> {
+        self.set_regulation_requirement_active(id, active, updated_at_ms)
+            .await
     }
 
     async fn get_pdf_extraction(

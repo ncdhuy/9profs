@@ -20,11 +20,11 @@ use crate::{
     ManuscriptReferenceResolutionCandidate, ManuscriptReferenceResolutionCandidateId,
     ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
     ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
-    ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, ResearchCase,
-    ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchError, ResearchEvidence,
-    ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId, ResearchPdfPage,
-    ResearchRepository, ResearchSource, ResearchSourceId, ResearchSourceSnapshot,
-    ResearchSourceSnapshotId, SqliteResearchRepository,
+    ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, RegulationRequirement,
+    RegulationRequirementId, RegulationReviewStatus, ResearchCase, ResearchCaseId, ResearchClaim,
+    ResearchClaimId, ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
+    ResearchPdfExtractionId, ResearchPdfPage, ResearchRepository, ResearchSource, ResearchSourceId,
+    ResearchSourceSnapshot, ResearchSourceSnapshotId, SqliteResearchRepository,
 };
 
 struct FaultInjectingRepository {
@@ -73,6 +73,11 @@ impl_delegating_repository! {
     get_snapshot(id: &ResearchSourceSnapshotId) -> Result<Option<ResearchSourceSnapshot>, ResearchError>;
     find_snapshot_by_hash(source_id: &ResearchSourceId, content_hash: &ContentHash) -> Result<Option<ResearchSourceSnapshot>, ResearchError>;
     insert_snapshot(value: &ResearchSourceSnapshot) -> Result<bool, ResearchError>;
+    list_regulation_requirements(source_id: Option<&ResearchSourceId>, source_snapshot_id: Option<&ResearchSourceSnapshotId>) -> Result<Vec<RegulationRequirement>, ResearchError>;
+    get_regulation_requirement(id: &RegulationRequirementId) -> Result<Option<RegulationRequirement>, ResearchError>;
+    insert_regulation_requirement(value: &RegulationRequirement) -> Result<(), ResearchError>;
+    update_regulation_requirement_review_status(id: &RegulationRequirementId, status: &RegulationReviewStatus, updated_at_ms: i64) -> Result<bool, ResearchError>;
+    set_regulation_requirement_active(id: &RegulationRequirementId, active: bool, updated_at_ms: i64) -> Result<bool, ResearchError>;
     get_pdf_extraction(id: &ResearchPdfExtractionId) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
     latest_pdf_extraction(source_snapshot_id: &ResearchSourceSnapshotId) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
     list_pdf_extractions(source_snapshot_id: &ResearchSourceSnapshotId) -> Result<Vec<ResearchPdfExtraction>, ResearchError>;

@@ -127,6 +127,7 @@ id_type!(ResearchCaseId, "case ID");
 id_type!(ResearchSourceId, "source ID");
 id_type!(ResearchSourceSnapshotId, "source snapshot ID");
 id_type!(ResearchPdfExtractionId, "PDF extraction ID");
+id_type!(RegulationRequirementId, "regulation requirement ID");
 id_type!(ResearchEvidenceId, "evidence ID");
 id_type!(ResearchClaimId, "claim ID");
 id_type!(ClaimEvidenceLinkId, "claim-evidence link ID");
@@ -344,6 +345,239 @@ pub struct ResearchSourceSnapshot {
     pub capture_method: CaptureMethod,
     pub origin: SourceOrigin,
     pub metadata: SafeMetadata,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResearchContext {
+    pub language: Option<String>,
+    #[serde(default)]
+    pub research_families: Vec<String>,
+    pub artifact_type: Option<String>,
+    pub academic_level: Option<String>,
+    #[serde(default)]
+    pub study_designs: Vec<String>,
+    #[serde(default)]
+    pub reporting_guidelines: Vec<String>,
+    pub organization: Option<String>,
+}
+
+impl ResearchContext {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        validate_optional_context_value("language", self.language.as_deref())?;
+        validate_context_values("research family", &self.research_families)?;
+        validate_optional_context_value("artifact type", self.artifact_type.as_deref())?;
+        validate_optional_context_value("academic level", self.academic_level.as_deref())?;
+        validate_context_values("study design", &self.study_designs)?;
+        validate_context_values("reporting guideline", &self.reporting_guidelines)?;
+        validate_optional_context_value("organization", self.organization.as_deref())?;
+        Ok(())
+    }
+
+    fn values_for(&self, facet: &str) -> Option<Vec<&str>> {
+        match normalize_identifier(facet).as_str() {
+            "language" | "languages" => Some(
+                self.language
+                    .as_deref()
+                    .map(|value| vec![value])
+                    .unwrap_or_default(),
+            ),
+            "research_family" | "research_families" => {
+                Some(self.research_families.iter().map(String::as_str).collect())
+            }
+            "artifact_type" | "artifact_types" => Some(
+                self.artifact_type
+                    .as_deref()
+                    .map(|value| vec![value])
+                    .unwrap_or_default(),
+            ),
+            "academic_level" | "academic_levels" => Some(
+                self.academic_level
+                    .as_deref()
+                    .map(|value| vec![value])
+                    .unwrap_or_default(),
+            ),
+            "study_design" | "study_designs" => {
+                Some(self.study_designs.iter().map(String::as_str).collect())
+            }
+            "reporting_guideline" | "reporting_guidelines" => Some(
+                self.reporting_guidelines
+                    .iter()
+                    .map(String::as_str)
+                    .collect(),
+            ),
+            "organization" | "organizations" => Some(
+                self.organization
+                    .as_deref()
+                    .map(|value| vec![value])
+                    .unwrap_or_default(),
+            ),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RegulationApplicability {
+    #[serde(flatten)]
+    pub facets: BTreeMap<String, Vec<String>>,
+}
+
+impl RegulationApplicability {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        for (facet, values) in &self.facets {
+            bounded_text("applicability facet", facet, MAX_PROVENANCE_TEXT_BYTES)?;
+            if values.is_empty() {
+                return Err(ResearchError::Invalid(format!(
+                    "applicability facet must contain at least one value: {facet}"
+                )));
+            }
+            for value in values {
+                bounded_text("applicability value", value, MAX_PROVENANCE_TEXT_BYTES)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn matches(&self, context: &ResearchContext) -> bool {
+        self.facets.iter().all(|(facet, accepted_values)| {
+            let Some(context_values) = context.values_for(facet) else {
+                return false;
+            };
+            !accepted_values.is_empty()
+                && context_values.iter().any(|context_value| {
+                    accepted_values.iter().any(|accepted_value| {
+                        normalize_identifier(accepted_value) == normalize_identifier(context_value)
+                    })
+                })
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegulationReviewStatus {
+    NeedsReview,
+    Approved,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RegulationRequirement {
+    pub id: RegulationRequirementId,
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub pdf_extraction_id: Option<ResearchPdfExtractionId>,
+    pub text: String,
+    pub source_excerpt: String,
+    pub source_excerpt_hash: ContentHash,
+    pub source_locator: EvidenceLocator,
+    pub authority_locator: Option<EvidenceLocator>,
+    pub applicability: RegulationApplicability,
+    pub effective_from: Option<TimestampMs>,
+    pub effective_until: Option<TimestampMs>,
+    pub extraction_method: String,
+    pub extraction_contract_version: Option<String>,
+    pub review_status: RegulationReviewStatus,
+    pub active: bool,
+    pub created_at_ms: TimestampMs,
+    pub updated_at_ms: TimestampMs,
+}
+
+impl RegulationRequirement {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        bounded_text("requirement text", &self.text, MAX_NORMALIZED_TEXT_BYTES)?;
+        bounded_text(
+            "requirement source excerpt",
+            &self.source_excerpt,
+            MAX_EVIDENCE_EXCERPT_BYTES,
+        )?;
+        self.source_locator.validate()?;
+        if let Some(locator) = &self.authority_locator {
+            locator.validate()?;
+        }
+        self.applicability.validate()?;
+        bounded_text(
+            "requirement extraction method",
+            &self.extraction_method,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        if let Some(version) = &self.extraction_contract_version {
+            bounded_text(
+                "requirement extraction contract version",
+                version,
+                MAX_PROVENANCE_TEXT_BYTES,
+            )?;
+        }
+        if let (Some(from), Some(until)) = (self.effective_from, self.effective_until) {
+            if from > until {
+                return Err(ResearchError::Invalid(
+                    "requirement effective_from must not exceed effective_until".to_owned(),
+                ));
+            }
+        }
+        if self.active && !matches!(self.review_status, RegulationReviewStatus::Approved) {
+            return Err(ResearchError::Invalid(
+                "active regulation requirement must be approved".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn is_temporally_effective(&self, as_of_ms: TimestampMs) -> bool {
+        self.effective_from.is_none_or(|from| as_of_ms >= from)
+            && self.effective_until.is_none_or(|until| as_of_ms <= until)
+    }
+}
+
+pub fn resolve_effective_regulation_requirements(
+    requirements: &[RegulationRequirement],
+    context: &ResearchContext,
+    as_of_ms: TimestampMs,
+) -> Vec<RegulationRequirement> {
+    requirements
+        .iter()
+        .filter(|requirement| {
+            matches!(requirement.review_status, RegulationReviewStatus::Approved)
+                && requirement.active
+                && requirement.applicability.matches(context)
+                && requirement.is_temporally_effective(as_of_ms)
+        })
+        .cloned()
+        .collect()
+}
+
+fn validate_optional_context_value(field: &str, value: Option<&str>) -> Result<(), ResearchError> {
+    if let Some(value) = value {
+        bounded_text(field, value, MAX_PROVENANCE_TEXT_BYTES)?;
+    }
+    Ok(())
+}
+
+fn validate_context_values(field: &str, values: &[String]) -> Result<(), ResearchError> {
+    for value in values {
+        bounded_text(field, value, MAX_PROVENANCE_TEXT_BYTES)?;
+    }
+    Ok(())
+}
+
+fn normalize_identifier(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateRegulationRequirement {
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub pdf_extraction_id: Option<ResearchPdfExtractionId>,
+    pub text: String,
+    pub source_excerpt: String,
+    pub source_locator: EvidenceLocator,
+    pub authority_locator: Option<EvidenceLocator>,
+    pub applicability: RegulationApplicability,
+    pub effective_from: Option<TimestampMs>,
+    pub effective_until: Option<TimestampMs>,
+    pub extraction_method: String,
+    pub extraction_contract_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
