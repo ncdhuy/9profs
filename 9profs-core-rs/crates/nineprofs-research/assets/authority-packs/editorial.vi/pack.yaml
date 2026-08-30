@@ -1,0 +1,29 @@
+id: editorial.vi
+version: 0.1.0
+kind: editorial
+title: Vietnamese Academic Editorial
+description: >
+  General semantic authority for reviewing Vietnamese academic
+  writing for clarity, precision, coherence, terminology,
+  stylistic consistency, presentation quality, and readability.
+applicability:
+  languages:
+    - vi
+content:
+  knowledge:
+    - knowledge/academic-vietnamese-style.md
+    - knowledge/sentence-and-paragraph-clarity.md
+    - knowledge/terminology-and-consistency.md
+    - knowledge/numbers-units-and-abbreviations.md
+    - knowledge/headings-tables-and-figures.md
+    - knowledge/citations-and-reference-language.md
+  review_guidance:
+    - review/editorial-review-policy.md
+    - review/clarity-and-style-review.md
+    - review/terminology-consistency-review.md
+    - review/presentation-consistency-review.md
+    - review/tables-and-figures-review.md
+  machine_facts: []
+provenance:
+  type: curated
+  authority_scope: vietnamese-academic-editorial

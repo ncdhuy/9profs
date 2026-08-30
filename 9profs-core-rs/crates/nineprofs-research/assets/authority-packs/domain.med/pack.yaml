@@ -1,0 +1,34 @@
+id: domain.med
+version: 0.1.0
+kind: domain
+title: Medicine & Health Sciences
+description: >
+  General semantic authority for reviewing research in medicine,
+  health sciences, public health, pharmacy, clinical and biomedical
+  contexts, including research design logic, populations, variables,
+  measurement, validity, bias, analysis, ethics and interpretation.
+applicability:
+  research_families:
+    - MED
+content:
+  knowledge:
+    - knowledge/biomedical-research-logic.md
+    - knowledge/population-and-sampling.md
+    - knowledge/variables-exposures-outcomes.md
+    - knowledge/measurement-and-data-quality.md
+    - knowledge/bias-confounding-and-validity.md
+    - knowledge/analysis-and-statistical-interpretation.md
+    - knowledge/ethics-and-human-subjects.md
+    - knowledge/clinical-and-health-interpretation.md
+  review_guidance:
+    - review/medical-review-policy.md
+    - review/design-and-population-review.md
+    - review/measurement-and-variables-review.md
+    - review/validity-and-bias-review.md
+    - review/analysis-and-results-review.md
+    - review/discussion-and-conclusion-review.md
+    - review/ethics-review.md
+  machine_facts: []
+provenance:
+  type: curated
+  authority_scope: general-medicine-health-research

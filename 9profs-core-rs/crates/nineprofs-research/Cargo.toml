@@ -18,4 +18,5 @@ thiserror.workspace = true
 
 [dev-dependencies]
 nineprofs-db = { path = "../nineprofs-db" }
+serde_yaml = "0.9"
 tokio.workspace = true

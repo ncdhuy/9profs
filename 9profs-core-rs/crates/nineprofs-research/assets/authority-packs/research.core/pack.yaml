@@ -1,0 +1,35 @@
+id: research.core
+version: 0.1.0
+
+kind: core
+
+title: Research Core
+description: >
+  Universal semantic authority for reviewing the logical quality,
+  evidential discipline, interpretation, consistency, transparency,
+  and integrity of scientific research manuscripts across disciplines.
+
+applicability: {}
+
+content:
+  knowledge:
+    - knowledge/research-logic.md
+    - knowledge/claims-and-evidence.md
+    - knowledge/interpretation-and-conclusions.md
+    - knowledge/cross-section-consistency.md
+    - knowledge/uncertainty-and-limitations.md
+    - knowledge/integrity-and-transparency.md
+
+  review_guidance:
+    - review/common-review-policy.md
+    - review/research-purpose-and-logic.md
+    - review/claim-evidence-review.md
+    - review/interpretation-review.md
+    - review/cross-section-review.md
+    - review/integrity-review.md
+
+  machine_facts: []
+
+provenance:
+  type: curated
+  authority_scope: universal-research-reasoning

@@ -1,0 +1,28 @@
+id: artifact.master-thesis
+version: 0.1.0
+kind: artifact
+title: Master's Thesis
+description: >
+  Generic semantic authority for reviewing the intellectual
+  structure, research depth, completeness, synthesis, and
+  section relationships expected of a master's thesis.
+applicability:
+  artifact_types:
+    - master_thesis
+content:
+  knowledge:
+    - knowledge/thesis-purpose-and-depth.md
+    - knowledge/semantic-structure.md
+    - knowledge/literature-and-conceptual-foundation.md
+    - knowledge/methods-results-discussion-roles.md
+    - knowledge/contribution-and-completion.md
+  review_guidance:
+    - review/artifact-review-policy.md
+    - review/structure-and-completeness.md
+    - review/literature-foundation-review.md
+    - review/depth-and-independence-review.md
+    - review/thesis-synthesis-review.md
+  machine_facts: []
+provenance:
+  type: curated
+  authority_scope: generic-master-thesis-artifact
