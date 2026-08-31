@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
+
 use super::{ResearchService, not_found};
 use crate::{
     EvidenceLocator, ExtractRegulationRequirementCandidates, MAX_EVIDENCE_EXCERPT_BYTES,
     MAX_NORMALIZED_TEXT_BYTES, MAX_PROVENANCE_TEXT_BYTES, MAX_REGULATION_REQUIREMENT_CANDIDATES,
-    PdfExtractionStatus, RegulationRequirementCandidate, RegulationRequirementCandidateExtraction,
-    RegulationRequirementCandidateExtractionIdentity, RegulationRequirementCandidateId,
-    RegulationRequirementCandidateOutput, RegulationRequirementExtractionInput,
-    RegulationRequirementExtractionPage, ResearchError, ResearchSourceId, ResearchSourceSnapshotId,
-    SourceKind, bounded_text,
+    MAX_REGULATION_REQUIREMENT_RISK_FLAGS, PdfExtractionStatus, RegulationApplicability,
+    RegulationApplicabilityVocabulary, RegulationRequirementCandidate,
+    RegulationRequirementCandidateExtraction, RegulationRequirementCandidateExtractionIdentity,
+    RegulationRequirementCandidateId, RegulationRequirementCandidateOutput,
+    RegulationRequirementExtractionInput, RegulationRequirementExtractionPage, ResearchError,
+    ResearchSourceId, ResearchSourceSnapshotId, SourceKind, bounded_text,
 };
 use nineprofs_common::now_ms;
 
@@ -114,7 +117,7 @@ impl ResearchService {
         }
 
         let mut candidates = Vec::with_capacity(outputs.len());
-        for output in outputs {
+        for mut output in outputs {
             validate_output(
                 &output,
                 &page_text,
@@ -122,6 +125,7 @@ impl ResearchService {
                 request.end_page,
                 &input,
             )?;
+            normalize_advisory_suggestions(&mut output, &input.allowed_applicability_vocabulary);
             let candidate = RegulationRequirementCandidate {
                 id: RegulationRequirementCandidateId::new(),
                 source_id: input.source_id.clone(),
@@ -258,19 +262,75 @@ fn validate_output(
             "regulation requirement candidate normalized requirement is invalid".to_owned(),
         ));
     }
+    validate_locator(&output.source_locator, start_page, end_page, input)?;
+    Ok(())
+}
+
+fn normalize_advisory_suggestions(
+    output: &mut RegulationRequirementCandidateOutput,
+    vocabulary: &RegulationApplicabilityVocabulary,
+) {
+    if output.authority_locator.as_ref().is_some_and(|locator| {
+        !matches!(locator, EvidenceLocator::Regulation { .. }) || locator.validate().is_err()
+    }) {
+        output.authority_locator = None;
+        mark_advisory_review(
+            &mut output.risk_flags,
+            &mut output.review_notes,
+            "invalid_authority_locator_suggestion",
+            "Authority locator suggestion was unset because it was invalid; human review is required.",
+        );
+    }
+
     output
         .applicability
-        .validate_for_extraction(&input.allowed_applicability_vocabulary)?;
-    validate_locator(&output.source_locator, start_page, end_page, input)?;
-    if let Some(locator) = &output.authority_locator
-        && !matches!(locator, EvidenceLocator::Regulation { .. })
-    {
-        return Err(ResearchError::Invalid(
-            "regulation requirement candidate authority locator suggestion must be a regulation locator"
-                .to_owned(),
-        ));
+        .facets
+        .retain(|_, values| !values.is_empty());
+    let invalid_facets = output
+        .applicability
+        .facets
+        .iter()
+        .filter_map(|(facet, values)| {
+            let suggestion = RegulationApplicability {
+                facets: BTreeMap::from([(facet.clone(), values.clone())]),
+            };
+            suggestion
+                .validate_for_extraction(vocabulary)
+                .is_err()
+                .then(|| facet.clone())
+        })
+        .collect::<Vec<_>>();
+    if !invalid_facets.is_empty() {
+        for facet in invalid_facets {
+            output.applicability.facets.remove(&facet);
+        }
+        mark_advisory_review(
+            &mut output.risk_flags,
+            &mut output.review_notes,
+            "unresolved_applicability",
+            "Applicability suggestion was unset because it was outside the supplied vocabulary; human review is required.",
+        );
     }
-    Ok(())
+}
+
+fn mark_advisory_review(
+    risk_flags: &mut Vec<String>,
+    review_notes: &mut Option<String>,
+    flag: &str,
+    note: &str,
+) {
+    if !risk_flags.iter().any(|existing| existing == flag)
+        && risk_flags.len() < MAX_REGULATION_REQUIREMENT_RISK_FLAGS
+    {
+        risk_flags.push(flag.to_owned());
+    }
+    match review_notes {
+        Some(existing) if !existing.trim().is_empty() => {
+            existing.push_str(" ");
+            existing.push_str(note);
+        }
+        _ => *review_notes = Some(note.to_owned()),
+    }
 }
 
 fn validate_locator(

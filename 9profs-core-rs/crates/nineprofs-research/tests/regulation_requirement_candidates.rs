@@ -272,13 +272,16 @@ async fn applicability_uses_supplied_canonical_values_and_keeps_conditions_seman
 
     let mut unsupported = output("phải", "phải");
     unsupported.applicability = RegulationApplicability {
-        facets: BTreeMap::from([(
-            "artifact_types".to_owned(),
-            vec!["unknown_alias".to_owned()],
-        )]),
+        facets: BTreeMap::from([
+            (
+                "artifact_types".to_owned(),
+                vec!["master_thesis".to_owned()],
+            ),
+            ("reporting_guidelines".to_owned(), vec!["APA".to_owned()]),
+        ]),
     };
     let (_database, service, source_id, snapshot_id, extraction) = fixture(unsupported).await;
-    let result = service
+    let accepted = service
         .extract_regulation_requirement_candidates(request(
             source_id,
             snapshot_id,
@@ -289,7 +292,76 @@ async fn applicability_uses_supplied_canonical_values_and_keeps_conditions_seman
             )]),
         ))
         .await;
-    assert!(matches!(result, Err(ResearchError::Invalid(_))));
+    let candidate = accepted.unwrap().pop().unwrap();
+    assert_eq!(
+        candidate.applicability_suggestion.facets,
+        BTreeMap::from([(
+            "artifact_types".to_owned(),
+            vec!["master_thesis".to_owned()],
+        )])
+    );
+    assert!(
+        candidate
+            .risk_flags
+            .contains(&"unresolved_applicability".to_owned())
+    );
+    assert!(
+        candidate
+            .review_notes
+            .as_deref()
+            .is_some_and(|notes| notes.contains("outside the supplied vocabulary"))
+    );
+}
+
+#[tokio::test]
+async fn invalid_authority_locator_suggestion_is_unset_and_flagged() {
+    let mut invalid = output("phải", "phải");
+    invalid.authority_locator = Some(EvidenceLocator::Regulation {
+        article: String::new(),
+        section: Some("3.3.1".to_owned()),
+        clause: None,
+    });
+    let (_database, service, source_id, snapshot_id, extraction) = fixture(invalid).await;
+    let candidate = service
+        .extract_regulation_requirement_candidates(request(
+            source_id,
+            snapshot_id,
+            extraction.id,
+            BTreeMap::new(),
+        ))
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    assert!(candidate.authority_locator_suggestion.is_none());
+    assert!(
+        candidate
+            .risk_flags
+            .contains(&"invalid_authority_locator_suggestion".to_owned())
+    );
+    assert!(
+        candidate
+            .review_notes
+            .as_deref()
+            .is_some_and(|notes| notes.contains("Authority locator suggestion was unset"))
+    );
+}
+
+#[test]
+fn extraction_applicability_vocabulary_validation_remains_strict() {
+    let applicability = RegulationApplicability {
+        facets: BTreeMap::from([("reporting_guidelines".to_owned(), vec!["APA".to_owned()])]),
+    };
+    let vocabulary = BTreeMap::from([(
+        "artifact_types".to_owned(),
+        vec!["master_thesis".to_owned()],
+    )]);
+
+    assert!(matches!(
+        applicability.validate_for_extraction(&vocabulary),
+        Err(ResearchError::Invalid(_))
+    ));
 }
 
 #[tokio::test]
