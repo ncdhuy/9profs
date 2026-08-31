@@ -5,6 +5,7 @@ import type {
   DocumentInspection,
   DocumentInspectionRequest,
   DocumentInspector,
+  DocumentMap,
   DocumentMutationGateway,
   DocumentMutationResult,
   DocumentVersion,
@@ -36,6 +37,7 @@ export interface GenOfficeDocsRuntime {
   readonly subscribeToTransactions: SubscribeToGenOfficeTransactions
   readonly buildDocumentContext: () => unknown
   readonly getSelectionContext: () => unknown
+  readonly buildDocumentMap?: (version: DocumentVersion) => DocumentMap
   readonly executeCommands: (
     commands: readonly unknown[],
     context: DocsCommandContext,
@@ -97,11 +99,14 @@ export class GenOfficeDocsInspector implements DocumentInspector {
       context: this.runtime.buildDocumentContext(),
       selection: this.runtime.getSelectionContext(),
     }
+    const version = this.versions.version
+    const documentMap = this.runtime.buildDocumentMap?.(version)
     return {
       documentId: this.documentId,
       authority: this.authority,
-      version: this.versions.version,
+      version,
       value,
+      ...(documentMap ? { documentMap } : {}),
     }
   }
 }

@@ -4,12 +4,19 @@
 //! not truth; ClaimEvidenceLink stores a separately attributed assessment.
 
 mod artifact;
+mod document_map;
 mod extraction;
 mod model;
 mod repository;
 mod service;
 
 pub use artifact::{ArtifactUploadWriter, ResearchArtifactStore};
+pub use document_map::{
+    DOCUMENT_MAP_CONTRACT_VERSION, DocumentMap, DocumentMapBlock, DocumentMapBlockKind,
+    DocumentMapCitation, DocumentMapFigure, DocumentMapFigureType, DocumentMapLocator,
+    DocumentMapReference, DocumentMapSection, DocumentMapTable, is_document_map_current,
+    is_document_map_stale,
+};
 pub use extraction::{
     ManuscriptClaimExtractionProvider, ManuscriptClaimExtractionProviderError,
     ManuscriptClaimInventoryProvider, ManuscriptClaimInventoryProviderError,

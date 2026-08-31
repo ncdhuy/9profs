@@ -143,6 +143,8 @@ pub struct DocumentInspection {
     pub authority: DocumentAuthority,
     pub version: u64,
     pub value: DocumentInspectionValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_map: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1130,6 +1132,7 @@ mod tests {
                                 context: json!({}),
                                 selection: json!({}),
                             },
+                            document_map: None,
                         },
                     },
                 },
@@ -1155,6 +1158,7 @@ mod tests {
                                 context: json!({"text": "ok"}),
                                 selection: json!({"from": 1}),
                             },
+                            document_map: None,
                         },
                     },
                 },

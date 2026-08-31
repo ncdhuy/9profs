@@ -1217,6 +1217,7 @@ mod tests {
                                     context: json!({ "text": "renderer context" }),
                                     selection: json!({ "from": 4, "to": 9 }),
                                 },
+                                document_map: None,
                             },
                         },
                     },

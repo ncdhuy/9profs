@@ -5,6 +5,7 @@ import { createGenOfficeDocsAdapter, DOCS_COMMAND_ENVELOPE } from '@genoffice/ge
 import { editorExtensions } from '../src/renderer/editor/extensions'
 import { executeCommands, type Command } from '../src/renderer/ai/commands'
 import { buildDocumentContext } from '../src/renderer/ai/protocol'
+import { buildDocumentMap } from '../src/renderer/ai/document-map'
 import { collectRevisions } from '../src/renderer/editor/revisions'
 import { withSavedDocumentState } from '../src/renderer/doc-state'
 
@@ -45,6 +46,7 @@ function createAdapter(editor: Editor) {
         return () => editor.off('transaction', onTransaction)
       },
       buildDocumentContext: () => buildDocumentContext(editor),
+      buildDocumentMap: (version) => buildDocumentMap(editor, 'active-doc-1', version),
       getSelectionContext: () => {
         const { from, to, empty } = editor.state.selection
         return { from, to, empty }
@@ -80,11 +82,13 @@ describe('active DOCX GenOffice adapter integration', () => {
     const initial = await adapter.inspector.inspect({ documentId: 'active-doc-1' })
     expect(initial.authority.kind).toBe('genoffice-active')
     expect(initial.version).toBe(0)
+    expect(initial.documentMap).toMatchObject({ documentId: 'active-doc-1', version: 0 })
     expect((initial.value as { context: string }).context).toContain('active document')
 
     editor.commands.insertContentAt(1, ' manual')
     const manual = await adapter.inspector.inspect({ documentId: 'active-doc-1' })
     expect(manual.version).toBe(1)
+    expect(manual.documentMap?.version).toBe(1)
     const stale = await adapter.mutationGateway.commit(
       changeSet(0, [
         {

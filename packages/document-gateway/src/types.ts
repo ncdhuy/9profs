@@ -1,3 +1,5 @@
+import type { DocumentMap } from './document-map'
+
 export type DocumentId = string
 export type DocumentChangeSetId = string
 export type DocumentVersion = number
@@ -34,6 +36,7 @@ export interface DocumentInspection {
   readonly authority: DocumentAuthority
   readonly version: DocumentVersion
   readonly value: unknown
+  readonly documentMap?: DocumentMap
 }
 
 /** Generic read/inspection boundary. It exposes no engine or command model. */

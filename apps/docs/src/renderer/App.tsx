@@ -46,6 +46,7 @@ import { AI_PROVIDERS } from '../shared/ipc'
 import { AiPanel } from './ai/AiPanel'
 import { executeCommands, type Command } from './ai/commands'
 import { buildDocumentContext } from './ai/protocol'
+import { buildDocumentMap } from './ai/document-map'
 import { asianCharCount, countWords, nonAsianWordCount } from './word-count'
 import { CommentsPanel } from './components/CommentsPanel'
 import { CitationReviewPanel } from './components/CitationReviewPanel'
@@ -821,6 +822,7 @@ export function App() {
           }
         },
         buildDocumentContext: () => buildDocumentContext(editor),
+        buildDocumentMap: (version) => buildDocumentMap(editor, doc.documentId, version),
         getSelectionContext: () => {
           const { from, to, empty } = editor.state.selection
           return { from, to, empty }
