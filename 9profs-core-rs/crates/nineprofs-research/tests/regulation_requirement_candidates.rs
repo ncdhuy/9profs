@@ -5,12 +5,12 @@ use nineprofs_db::Database;
 use nineprofs_realtime::BroadcastEventBus;
 use nineprofs_research::{
     CapturePdfExtraction, CapturePdfPage, EvidenceLocator, ExtractRegulationRequirementCandidates,
-    PdfExtractionStatus, RegulationApplicability, RegulationRequirementCandidate,
-    RegulationRequirementCandidateExtractionIdentity,
+    PdfExtractionStatus, PromoteRegulationRequirementCandidate, RegulationApplicability,
+    RegulationRequirementCandidate, RegulationRequirementCandidateExtractionIdentity,
     RegulationRequirementCandidateExtractionProvider,
-    RegulationRequirementCandidateExtractionProviderError, RegulationRequirementCandidateOutput,
-    ResearchArtifactStore, ResearchError, ResearchPdfExtraction, ResearchPdfExtractionId,
-    ResearchService, SourceKind,
+    RegulationRequirementCandidateExtractionProviderError, RegulationRequirementCandidateId,
+    RegulationRequirementCandidateOutput, ResearchArtifactStore, ResearchError,
+    ResearchPdfExtraction, ResearchPdfExtractionId, ResearchService, SourceKind,
 };
 
 const PAGE_TEXT: &str = "Yêu cầu: phải; không được; ít nhất 50%; khoảng 1/4; khoảng 1/6 - 1/5; 0,7; 1.5; 3.5 cm. Nếu website không có tác giả, dùng tên tổ chức.";
@@ -145,6 +145,51 @@ fn request(
         document_title: Some("Regulation".to_owned()),
         known_artifact_scope: Some("master_thesis".to_owned()),
         allowed_applicability_vocabulary: vocabulary,
+    }
+}
+
+async fn persisted_candidate(
+    output: RegulationRequirementCandidateOutput,
+    vocabulary: BTreeMap<String, Vec<String>>,
+) -> (Database, ResearchService, RegulationRequirementCandidate) {
+    let mut output = output;
+    output.ocr_excerpt = PAGE_TEXT.to_owned();
+    let (database, service, source_id, snapshot_id, extraction) = fixture(output).await;
+    let candidate = service
+        .extract_regulation_requirement_candidates(request(
+            source_id,
+            snapshot_id,
+            extraction.id,
+            vocabulary,
+        ))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    (database, service, candidate)
+}
+
+fn verified_input(
+    candidate: &RegulationRequirementCandidate,
+    applicability: RegulationApplicability,
+    authority_locator: Option<EvidenceLocator>,
+    active: bool,
+) -> PromoteRegulationRequirementCandidate {
+    PromoteRegulationRequirementCandidate {
+        candidate_id: candidate.id.clone(),
+        text: "Human verified requirement".to_owned(),
+        source_excerpt: "Human verified excerpt".to_owned(),
+        source_locator: EvidenceLocator::PdfTextRange {
+            page: 1,
+            start: 0,
+            end: 10,
+        },
+        authority_locator,
+        applicability,
+        effective_from: Some(100),
+        effective_until: Some(200),
+        active,
     }
 }
 
@@ -381,4 +426,206 @@ async fn source_locator_must_stay_inside_requested_page_range() {
         ))
         .await;
     assert!(matches!(result, Err(ResearchError::Invalid(_))));
+}
+
+#[tokio::test]
+async fn verified_candidate_promotes_atomically_without_mutating_candidate() {
+    let mut candidate_output = output(PAGE_TEXT, "Machine interpretation");
+    candidate_output.applicability = RegulationApplicability {
+        facets: BTreeMap::from([(
+            "artifact_types".to_owned(),
+            vec!["master_thesis".to_owned()],
+        )]),
+    };
+    let vocabulary = BTreeMap::from([(
+        "artifact_types".to_owned(),
+        vec!["master_thesis".to_owned()],
+    )]);
+    let (_database, service, candidate) = persisted_candidate(candidate_output, vocabulary).await;
+    let original_candidate = candidate.clone();
+    let authority_locator = Some(EvidenceLocator::Regulation {
+        article: "Verified Article".to_owned(),
+        section: Some("2".to_owned()),
+        clause: Some("a".to_owned()),
+    });
+    let promoted = service
+        .promote_regulation_requirement_candidate(verified_input(
+            &candidate,
+            RegulationApplicability {
+                facets: BTreeMap::from([(
+                    "artifact_types".to_owned(),
+                    vec!["phd_dissertation".to_owned()],
+                )]),
+            },
+            authority_locator.clone(),
+            true,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        promoted.review_status,
+        nineprofs_research::RegulationReviewStatus::Approved
+    );
+    assert!(promoted.active);
+    assert_eq!(promoted.source_id, candidate.source_id);
+    assert_eq!(promoted.source_snapshot_id, candidate.source_snapshot_id);
+    assert_eq!(
+        promoted.pdf_extraction_id,
+        Some(candidate.pdf_extraction_id.clone())
+    );
+    assert_eq!(promoted.extraction_method, candidate.extraction.method);
+    assert_eq!(
+        promoted.extraction_contract_version,
+        Some(candidate.extraction.contract_version.clone())
+    );
+    assert_eq!(promoted.text, "Human verified requirement");
+    assert_eq!(promoted.source_excerpt, "Human verified excerpt");
+    assert_eq!(
+        promoted.source_excerpt_hash.value,
+        "547befa9d90a56e6e83f7ace64802cefd72ee97644306d4971c6036ca2f27a0c"
+    );
+    assert_eq!(
+        promoted.source_locator,
+        verified_input(&candidate, RegulationApplicability::default(), None, false,).source_locator
+    );
+    assert_eq!(promoted.authority_locator, authority_locator);
+    assert_eq!(
+        promoted.applicability.facets.get("artifact_types"),
+        Some(&vec!["phd_dissertation".to_owned()])
+    );
+    assert_eq!(promoted.effective_from, Some(100));
+    assert_eq!(promoted.effective_until, Some(200));
+    assert_eq!(
+        service
+            .get_regulation_requirement_candidate(candidate.id.as_str())
+            .await
+            .unwrap(),
+        original_candidate
+    );
+}
+
+#[tokio::test]
+async fn promotion_does_not_reuse_fail_closed_advisory_metadata() {
+    let mut invalid = output(
+        "khÃ´ng Ä‘Æ°á»£c; Ã­t nháº¥t 50%; khoáº£ng 1/4",
+        "Machine interpretation",
+    );
+    invalid.authority_locator = Some(EvidenceLocator::TextRange { start: 0, end: 4 });
+    invalid.applicability = RegulationApplicability {
+        facets: BTreeMap::from([("unsupported".to_owned(), vec!["value".to_owned()])]),
+    };
+    let (_database, service, candidate) = persisted_candidate(invalid, BTreeMap::new()).await;
+    assert!(candidate.authority_locator_suggestion.is_none());
+    assert!(candidate.applicability_suggestion.facets.is_empty());
+    assert!(
+        candidate
+            .risk_flags
+            .contains(&"invalid_authority_locator_suggestion".to_owned())
+    );
+    assert!(
+        candidate
+            .risk_flags
+            .contains(&"unresolved_applicability".to_owned())
+    );
+
+    let promoted = service
+        .promote_regulation_requirement_candidate(verified_input(
+            &candidate,
+            RegulationApplicability::default(),
+            None,
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(promoted.authority_locator, None);
+    assert!(promoted.applicability.facets.is_empty());
+    assert_eq!(
+        promoted.review_status,
+        nineprofs_research::RegulationReviewStatus::Approved
+    );
+    assert!(!promoted.active);
+}
+
+#[tokio::test]
+async fn promotion_rejects_invalid_authoritative_values() {
+    let (_database, service, candidate) = persisted_candidate(
+        output(
+            "khÃ´ng Ä‘Æ°á»£c; Ã­t nháº¥t 50%; khoáº£ng 1/4",
+            "Machine interpretation",
+        ),
+        BTreeMap::new(),
+    )
+    .await;
+
+    let invalid_applicability = service
+        .promote_regulation_requirement_candidate(verified_input(
+            &candidate,
+            RegulationApplicability {
+                facets: BTreeMap::from([("future_facet".to_owned(), vec!["value".to_owned()])]),
+            },
+            None,
+            true,
+        ))
+        .await;
+    assert!(matches!(
+        invalid_applicability,
+        Err(ResearchError::Invalid(_))
+    ));
+
+    let invalid_authority_locator = service
+        .promote_regulation_requirement_candidate(verified_input(
+            &candidate,
+            RegulationApplicability::default(),
+            Some(EvidenceLocator::TextRange { start: 0, end: 4 }),
+            true,
+        ))
+        .await;
+    assert!(matches!(
+        invalid_authority_locator,
+        Err(ResearchError::Invalid(_))
+    ));
+
+    let mut empty_text = verified_input(&candidate, RegulationApplicability::default(), None, true);
+    empty_text.text = "  ".to_owned();
+    assert!(matches!(
+        service
+            .promote_regulation_requirement_candidate(empty_text)
+            .await,
+        Err(ResearchError::Invalid(_))
+    ));
+    assert!(
+        service
+            .list_regulation_requirements(
+                Some(candidate.source_id.as_str()),
+                Some(candidate.source_snapshot_id.as_str()),
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn promotion_missing_candidate_fails_cleanly() {
+    let (_database, service, candidate) = persisted_candidate(
+        output(
+            "khÃ´ng Ä‘Æ°á»£c; Ã­t nháº¥t 50%; khoáº£ng 1/4",
+            "Machine interpretation",
+        ),
+        BTreeMap::new(),
+    )
+    .await;
+    let mut input = verified_input(&candidate, RegulationApplicability::default(), None, false);
+    input.candidate_id = RegulationRequirementCandidateId::new();
+
+    assert!(matches!(
+        service
+            .promote_regulation_requirement_candidate(input)
+            .await,
+        Err(ResearchError::NotFound {
+            entity: "regulation requirement candidate",
+            ..
+        })
+    ));
 }

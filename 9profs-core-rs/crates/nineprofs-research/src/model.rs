@@ -796,6 +796,19 @@ pub struct CreateRegulationRequirement {
 }
 
 #[derive(Clone, Debug)]
+pub struct PromoteRegulationRequirementCandidate {
+    pub candidate_id: RegulationRequirementCandidateId,
+    pub text: String,
+    pub source_excerpt: String,
+    pub source_locator: EvidenceLocator,
+    pub authority_locator: Option<EvidenceLocator>,
+    pub applicability: RegulationApplicability,
+    pub effective_from: Option<TimestampMs>,
+    pub effective_until: Option<TimestampMs>,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct ExtractRegulationRequirementCandidates {
     pub source_id: ResearchSourceId,
     pub source_snapshot_id: ResearchSourceSnapshotId,

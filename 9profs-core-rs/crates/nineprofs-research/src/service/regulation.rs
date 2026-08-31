@@ -1,8 +1,8 @@
 use super::{ResearchService, not_found, sha256_hash};
 use crate::{
-    CreateRegulationRequirement, RegulationRequirement, RegulationRequirementId,
-    RegulationReviewStatus, ResearchContext, ResearchError, ResearchSource, ResearchSourceId,
-    ResearchSourceSnapshotId, SourceKind,
+    CreateRegulationRequirement, EvidenceLocator, PromoteRegulationRequirementCandidate,
+    RegulationRequirement, RegulationRequirementId, RegulationReviewStatus, ResearchContext,
+    ResearchError, ResearchSource, ResearchSourceId, ResearchSourceSnapshotId, SourceKind,
 };
 use nineprofs_common::now_ms;
 
@@ -62,6 +62,94 @@ impl ResearchService {
             extraction_contract_version: input.extraction_contract_version,
             review_status: RegulationReviewStatus::NeedsReview,
             active: false,
+            created_at_ms: timestamp,
+            updated_at_ms: timestamp,
+        };
+        value.validate()?;
+        self.repository
+            .insert_regulation_requirement(&value)
+            .await?;
+        Ok(value)
+    }
+
+    pub async fn promote_regulation_requirement_candidate(
+        &self,
+        input: PromoteRegulationRequirementCandidate,
+    ) -> Result<RegulationRequirement, ResearchError> {
+        let candidate = self
+            .repository
+            .get_regulation_requirement_candidate(&input.candidate_id)
+            .await?
+            .ok_or_else(|| {
+                not_found(
+                    "regulation requirement candidate",
+                    input.candidate_id.as_str(),
+                )
+            })?;
+        let source = self
+            .repository
+            .get_source(&candidate.source_id)
+            .await?
+            .ok_or_else(|| not_found("source", candidate.source_id.as_str()))?;
+        validate_regulation_source(&source)?;
+
+        let snapshot = self
+            .repository
+            .get_snapshot(&candidate.source_snapshot_id)
+            .await?
+            .ok_or_else(|| not_found("source snapshot", candidate.source_snapshot_id.as_str()))?;
+        if snapshot.source_id != candidate.source_id {
+            return Err(ResearchError::Invalid(
+                "regulation requirement candidate snapshot must belong to source".to_owned(),
+            ));
+        }
+
+        let extraction = self
+            .repository
+            .get_pdf_extraction(&candidate.pdf_extraction_id)
+            .await?
+            .ok_or_else(|| not_found("PDF extraction", candidate.pdf_extraction_id.as_str()))?;
+        if extraction.source_snapshot_id != candidate.source_snapshot_id {
+            return Err(ResearchError::Invalid(
+                "regulation requirement candidate PDF extraction must belong to source snapshot"
+                    .to_owned(),
+            ));
+        }
+
+        if input.text.trim().is_empty() {
+            return Err(ResearchError::Invalid(
+                "promoted regulation requirement text must not be empty".to_owned(),
+            ));
+        }
+        input.applicability.validate_context_facets()?;
+        if let Some(locator) = &input.authority_locator {
+            if !matches!(locator, EvidenceLocator::Regulation { .. }) {
+                return Err(ResearchError::Invalid(
+                    "promoted regulation requirement authority locator must be a regulation locator"
+                        .to_owned(),
+                ));
+            }
+            locator.validate()?;
+        }
+
+        let timestamp = now_ms();
+        let value = RegulationRequirement {
+            id: RegulationRequirementId::new(),
+            source_id: candidate.source_id,
+            source_snapshot_id: candidate.source_snapshot_id,
+            pdf_extraction_id: Some(candidate.pdf_extraction_id),
+            source_excerpt_hash: sha256_hash(input.source_excerpt.as_bytes()),
+            text: input.text,
+            source_excerpt: input.source_excerpt,
+            source_locator: input.source_locator,
+            authority_locator: input.authority_locator,
+            applicability: input.applicability,
+            effective_from: input.effective_from,
+            effective_until: input.effective_until,
+            extraction_method: candidate.extraction.method,
+            extraction_contract_version: Some(candidate.extraction.contract_version),
+            review_status: RegulationReviewStatus::Approved,
+            active: input.active,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
         };
