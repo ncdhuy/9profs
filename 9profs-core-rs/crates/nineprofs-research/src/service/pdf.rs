@@ -26,9 +26,12 @@ impl ResearchService {
             .get_source(&snapshot.source_id)
             .await?
             .ok_or_else(|| not_found("source", snapshot.source_id.as_str()))?;
-        if !matches!(source.kind, crate::SourceKind::ReferencePdf) {
+        if !matches!(
+            source.kind,
+            crate::SourceKind::ReferencePdf | crate::SourceKind::Regulation
+        ) {
             return Err(ResearchError::Invalid(
-                "PDF extraction requires a ReferencePdf source".to_owned(),
+                "PDF extraction requires a PDF-compatible source".to_owned(),
             ));
         }
         let artifact_id = match &snapshot.origin {

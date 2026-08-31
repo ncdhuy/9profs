@@ -21,8 +21,9 @@ use crate::{
     ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
     ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
     ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, RegulationRequirement,
-    RegulationRequirementId, RegulationReviewStatus, ResearchCase, ResearchCaseId, ResearchClaim,
-    ResearchClaimId, ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
+    RegulationRequirementCandidate, RegulationRequirementCandidateId, RegulationRequirementId,
+    RegulationReviewStatus, ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId,
+    ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
     ResearchPdfExtractionId, ResearchPdfPage, ResearchRepository, ResearchSource, ResearchSourceId,
     ResearchSourceSnapshot, ResearchSourceSnapshotId, SqliteResearchRepository,
 };
@@ -78,6 +79,9 @@ impl_delegating_repository! {
     insert_regulation_requirement(value: &RegulationRequirement) -> Result<(), ResearchError>;
     update_regulation_requirement_review_status(id: &RegulationRequirementId, status: &RegulationReviewStatus, updated_at_ms: i64) -> Result<bool, ResearchError>;
     set_regulation_requirement_active(id: &RegulationRequirementId, active: bool, updated_at_ms: i64) -> Result<bool, ResearchError>;
+    list_regulation_requirement_candidates(source_id: Option<&ResearchSourceId>, source_snapshot_id: Option<&ResearchSourceSnapshotId>, pdf_extraction_id: Option<&ResearchPdfExtractionId>) -> Result<Vec<RegulationRequirementCandidate>, ResearchError>;
+    get_regulation_requirement_candidate(id: &RegulationRequirementCandidateId) -> Result<Option<RegulationRequirementCandidate>, ResearchError>;
+    insert_regulation_requirement_candidate(value: &RegulationRequirementCandidate) -> Result<(), ResearchError>;
     get_pdf_extraction(id: &ResearchPdfExtractionId) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
     latest_pdf_extraction(source_snapshot_id: &ResearchSourceSnapshotId) -> Result<Option<ResearchPdfExtraction>, ResearchError>;
     list_pdf_extractions(source_snapshot_id: &ResearchSourceSnapshotId) -> Result<Vec<ResearchPdfExtraction>, ResearchError>;

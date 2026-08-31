@@ -44,6 +44,10 @@ pub const MAX_MANUSCRIPT_REFERENCE_CATALOG_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_MANUSCRIPT_REFERENCE_URI_COUNT: usize = 16;
 pub const MAX_MANUSCRIPT_REFERENCE_URI_BYTES: usize = 4 * 1024;
 pub const MAX_REFERENCE_RESOLUTION_CANDIDATES: usize = 256;
+pub const MAX_REGULATION_REQUIREMENT_EXTRACTION_PAGES: usize = 8;
+pub const MAX_REGULATION_REQUIREMENT_EXTRACTION_CONTEXT_BYTES: usize = 512 * 1024;
+pub const MAX_REGULATION_REQUIREMENT_CANDIDATES: usize = 256;
+pub const MAX_REGULATION_REQUIREMENT_RISK_FLAGS: usize = 32;
 pub const REFERENCE_RESOLVER_POLICY_VERSION: &str = "5c3b3b-v1";
 
 #[derive(Debug, Error)]
@@ -81,6 +85,12 @@ pub enum ResearchError {
     ManuscriptClaimInventoryExtractorInvalidConfiguration(String),
     #[error("manuscript claim inventory failed: {0}")]
     ManuscriptClaimInventoryFailed(String),
+    #[error("regulation requirement candidate extractor is not configured")]
+    RegulationRequirementCandidateExtractorNotConfigured,
+    #[error("regulation requirement candidate extractor configuration is invalid: {0}")]
+    RegulationRequirementCandidateExtractorInvalidConfiguration(String),
+    #[error("regulation requirement candidate extraction failed: {0}")]
+    RegulationRequirementCandidateExtractionFailed(String),
     #[error("manuscript reference catalog is stale for citation sync run")]
     ManuscriptReferenceCatalogStale,
     #[error(
@@ -128,6 +138,10 @@ id_type!(ResearchSourceId, "source ID");
 id_type!(ResearchSourceSnapshotId, "source snapshot ID");
 id_type!(ResearchPdfExtractionId, "PDF extraction ID");
 id_type!(RegulationRequirementId, "regulation requirement ID");
+id_type!(
+    RegulationRequirementCandidateId,
+    "regulation requirement candidate ID"
+);
 id_type!(ResearchEvidenceId, "evidence ID");
 id_type!(ResearchClaimId, "claim ID");
 id_type!(ClaimEvidenceLinkId, "claim-evidence link ID");
@@ -451,6 +465,100 @@ impl RegulationApplicability {
                 })
         })
     }
+
+    pub fn validate_context_facets(&self) -> Result<(), ResearchError> {
+        self.validate()?;
+        for facet in self.facets.keys() {
+            if canonical_applicability_facet(facet).is_none() {
+                return Err(ResearchError::Invalid(format!(
+                    "unsupported regulation applicability facet: {facet}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_extraction(
+        &self,
+        vocabulary: &RegulationApplicabilityVocabulary,
+    ) -> Result<(), ResearchError> {
+        self.validate_context_facets()?;
+        validate_regulation_applicability_vocabulary(vocabulary)?;
+        if self.facets.is_empty() {
+            return Ok(());
+        }
+        if vocabulary.is_empty() {
+            return Err(ResearchError::Invalid(
+                "regulation applicability vocabulary is required for non-empty suggestions"
+                    .to_owned(),
+            ));
+        }
+        for (facet, values) in &self.facets {
+            let canonical = canonical_applicability_facet(facet).expect("validated facet");
+            let allowed = vocabulary.iter().find_map(|(key, values)| {
+                (canonical_applicability_facet(key) == Some(canonical)).then_some(values)
+            });
+            let Some(allowed) = allowed else {
+                return Err(ResearchError::Invalid(format!(
+                    "regulation applicability facet is not in supplied vocabulary: {facet}"
+                )));
+            };
+            for value in values {
+                if !allowed.iter().any(|candidate| candidate == value) {
+                    return Err(ResearchError::Invalid(format!(
+                        "unsupported regulation applicability value for {facet}: {value}"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+pub type RegulationApplicabilityVocabulary = BTreeMap<String, Vec<String>>;
+
+fn canonical_applicability_facet(facet: &str) -> Option<&'static str> {
+    match normalize_identifier(facet).as_str() {
+        "language" | "languages" => Some("language"),
+        "research_family" | "research_families" => Some("research_families"),
+        "artifact_type" | "artifact_types" => Some("artifact_types"),
+        "academic_level" | "academic_levels" => Some("academic_levels"),
+        "study_design" | "study_designs" => Some("study_designs"),
+        "reporting_guideline" | "reporting_guidelines" => Some("reporting_guidelines"),
+        "organization" | "organizations" => Some("organization"),
+        _ => None,
+    }
+}
+
+fn validate_regulation_applicability_vocabulary(
+    vocabulary: &RegulationApplicabilityVocabulary,
+) -> Result<(), ResearchError> {
+    let mut seen = BTreeSet::new();
+    for (facet, values) in vocabulary {
+        let Some(canonical) = canonical_applicability_facet(facet) else {
+            return Err(ResearchError::Invalid(format!(
+                "unsupported regulation applicability vocabulary facet: {facet}"
+            )));
+        };
+        if !seen.insert(canonical) {
+            return Err(ResearchError::Invalid(format!(
+                "duplicate regulation applicability vocabulary facet: {facet}"
+            )));
+        }
+        if values.is_empty() {
+            return Err(ResearchError::Invalid(format!(
+                "regulation applicability vocabulary facet must contain at least one value: {facet}"
+            )));
+        }
+        for value in values {
+            bounded_text(
+                "regulation applicability vocabulary value",
+                value,
+                MAX_PROVENANCE_TEXT_BYTES,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -481,6 +589,113 @@ pub struct RegulationRequirement {
     pub active: bool,
     pub created_at_ms: TimestampMs,
     pub updated_at_ms: TimestampMs,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RegulationRequirementCandidateExtraction {
+    pub method: String,
+    pub contract_version: String,
+    pub provider: String,
+    pub extractor_version: String,
+    pub model_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RegulationRequirementCandidate {
+    pub id: RegulationRequirementCandidateId,
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub pdf_extraction_id: ResearchPdfExtractionId,
+    pub source_locator: EvidenceLocator,
+    pub authority_locator_suggestion: Option<EvidenceLocator>,
+    pub ocr_excerpt: String,
+    pub normalized_requirement: String,
+    pub applicability_suggestion: RegulationApplicability,
+    pub extraction: RegulationRequirementCandidateExtraction,
+    pub risk_flags: Vec<String>,
+    pub review_notes: Option<String>,
+    pub created_at_ms: TimestampMs,
+}
+
+impl RegulationRequirementCandidate {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        bounded_text(
+            "regulation requirement candidate OCR excerpt",
+            &self.ocr_excerpt,
+            MAX_EVIDENCE_EXCERPT_BYTES,
+        )?;
+        bounded_text(
+            "regulation requirement candidate normalized requirement",
+            &self.normalized_requirement,
+            MAX_NORMALIZED_TEXT_BYTES,
+        )?;
+        if !matches!(
+            self.source_locator,
+            EvidenceLocator::Pdf { .. } | EvidenceLocator::PdfTextRange { .. }
+        ) {
+            return Err(ResearchError::Invalid(
+                "regulation requirement candidate source locator must be a PDF locator".to_owned(),
+            ));
+        }
+        self.source_locator.validate()?;
+        if let Some(locator) = &self.authority_locator_suggestion {
+            if !matches!(locator, EvidenceLocator::Regulation { .. }) {
+                return Err(ResearchError::Invalid(
+                    "regulation requirement candidate authority locator suggestion must be a regulation locator"
+                        .to_owned(),
+                ));
+            }
+            locator.validate()?;
+        }
+        self.applicability_suggestion.validate_context_facets()?;
+        bounded_text(
+            "regulation requirement candidate extraction method",
+            &self.extraction.method,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        bounded_text(
+            "regulation requirement candidate contract version",
+            &self.extraction.contract_version,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        bounded_text(
+            "regulation requirement candidate provider",
+            &self.extraction.provider,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        bounded_text(
+            "regulation requirement candidate extractor version",
+            &self.extraction.extractor_version,
+            MAX_PROVENANCE_TEXT_BYTES,
+        )?;
+        if let Some(model_id) = &self.extraction.model_id {
+            bounded_text(
+                "regulation requirement candidate model",
+                model_id,
+                MAX_PROVENANCE_TEXT_BYTES,
+            )?;
+        }
+        if self.risk_flags.len() > MAX_REGULATION_REQUIREMENT_RISK_FLAGS {
+            return Err(ResearchError::Invalid(format!(
+                "regulation requirement candidate cannot contain more than {MAX_REGULATION_REQUIREMENT_RISK_FLAGS} risk flags"
+            )));
+        }
+        for flag in &self.risk_flags {
+            bounded_text(
+                "regulation requirement candidate risk flag",
+                flag,
+                MAX_PROVENANCE_TEXT_BYTES,
+            )?;
+        }
+        if let Some(notes) = &self.review_notes {
+            bounded_text(
+                "regulation requirement candidate review notes",
+                notes,
+                MAX_RATIONALE_BYTES,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl RegulationRequirement {
@@ -578,6 +793,132 @@ pub struct CreateRegulationRequirement {
     pub effective_until: Option<TimestampMs>,
     pub extraction_method: String,
     pub extraction_contract_version: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExtractRegulationRequirementCandidates {
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub pdf_extraction_id: ResearchPdfExtractionId,
+    pub start_page: u32,
+    pub end_page: u32,
+    pub institution: Option<String>,
+    pub document_title: Option<String>,
+    pub known_artifact_scope: Option<String>,
+    pub allowed_applicability_vocabulary: RegulationApplicabilityVocabulary,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RegulationRequirementExtractionPage {
+    pub page: u32,
+    pub text: String,
+    pub heading_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RegulationRequirementExtractionInput {
+    pub source_id: ResearchSourceId,
+    pub source_snapshot_id: ResearchSourceSnapshotId,
+    pub pdf_extraction_id: ResearchPdfExtractionId,
+    pub start_page: u32,
+    pub end_page: u32,
+    pub pages: Vec<RegulationRequirementExtractionPage>,
+    pub institution: Option<String>,
+    pub document_title: Option<String>,
+    pub known_artifact_scope: Option<String>,
+    pub allowed_applicability_vocabulary: RegulationApplicabilityVocabulary,
+}
+
+impl RegulationRequirementExtractionInput {
+    pub fn validate(&self) -> Result<(), ResearchError> {
+        if self.start_page == 0 || self.end_page < self.start_page {
+            return Err(ResearchError::Invalid(
+                "regulation requirement extraction page range is invalid".to_owned(),
+            ));
+        }
+        let page_count = (self.end_page - self.start_page + 1) as usize;
+        if page_count > MAX_REGULATION_REQUIREMENT_EXTRACTION_PAGES {
+            return Err(ResearchError::Invalid(format!(
+                "regulation requirement extraction cannot contain more than {MAX_REGULATION_REQUIREMENT_EXTRACTION_PAGES} pages"
+            )));
+        }
+        if self.pages.len() != page_count
+            || self
+                .pages
+                .iter()
+                .enumerate()
+                .any(|(index, page)| page.page != self.start_page + index as u32)
+        {
+            return Err(ResearchError::Invalid(
+                "regulation requirement extraction pages must cover requested contiguous range"
+                    .to_owned(),
+            ));
+        }
+        for page in &self.pages {
+            if page.text.len() > MAX_PDF_PAGE_TEXT_BYTES
+                || page
+                    .text
+                    .chars()
+                    .any(|character| character == '\0' || character == '\u{7f}')
+            {
+                return Err(ResearchError::Invalid(format!(
+                    "regulation requirement extraction page {} text is invalid",
+                    page.page
+                )));
+            }
+            if let Some(heading) = &page.heading_context {
+                bounded_text(
+                    "regulation requirement extraction heading context",
+                    heading,
+                    MAX_PROVENANCE_TEXT_BYTES,
+                )?;
+            }
+        }
+        for (name, value) in [
+            ("institution", self.institution.as_deref()),
+            ("document title", self.document_title.as_deref()),
+            ("known artifact scope", self.known_artifact_scope.as_deref()),
+        ] {
+            if let Some(value) = value {
+                bounded_text(name, value, MAX_PROVENANCE_TEXT_BYTES)?;
+            }
+        }
+        validate_regulation_applicability_vocabulary(&self.allowed_applicability_vocabulary)?;
+        let serialized = serde_json::to_vec(self)?;
+        if serialized.len() > MAX_REGULATION_REQUIREMENT_EXTRACTION_CONTEXT_BYTES {
+            return Err(ResearchError::Invalid(format!(
+                "regulation requirement extraction input exceeds {MAX_REGULATION_REQUIREMENT_EXTRACTION_CONTEXT_BYTES} bytes"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn page_text(&self) -> String {
+        self.pages
+            .iter()
+            .map(|page| page.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RegulationRequirementCandidateExtractionIdentity {
+    pub provider: String,
+    pub extractor_version: String,
+    pub model_id: Option<String>,
+    pub extraction_contract_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RegulationRequirementCandidateOutput {
+    pub ocr_excerpt: String,
+    pub normalized_requirement: String,
+    pub source_locator: EvidenceLocator,
+    pub authority_locator: Option<EvidenceLocator>,
+    pub applicability: RegulationApplicability,
+    pub risk_flags: Vec<String>,
+    pub review_notes: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

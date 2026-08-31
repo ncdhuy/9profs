@@ -1,19 +1,23 @@
-//! Stateless structured-model provider for manuscript claim decomposition.
+//! Stateless structured-model providers for bounded research extraction.
 //!
-//! This crate only turns one bounded, citation-bearing manuscript block into
-//! structured propositions. It performs no retrieval and owns no persistence.
+//! Providers perform no retrieval and own no persistence. Regulation output is
+//! explicitly a non-authoritative candidate interpretation of supplied PDF OCR.
 
 use std::{fmt, time::Duration};
 
 use async_trait::async_trait;
 use nineprofs_research::{
-    ClaimReviewKind, ManuscriptClaimExtractionBlockInput, ManuscriptClaimExtractionClaimOutput,
-    ManuscriptClaimExtractionIdentity, ManuscriptClaimExtractionOutput,
-    ManuscriptClaimExtractionProvider, ManuscriptClaimExtractionProviderError,
-    ManuscriptClaimExtractionUnassociatedCitation, ManuscriptClaimInventoryBlockInput,
-    ManuscriptClaimInventoryClaimOutput, ManuscriptClaimInventoryIdentity,
-    ManuscriptClaimInventoryOutput, ManuscriptClaimInventoryProvider,
-    ManuscriptClaimInventoryProviderError,
+    ClaimReviewKind, EvidenceLocator, ManuscriptClaimExtractionBlockInput,
+    ManuscriptClaimExtractionClaimOutput, ManuscriptClaimExtractionIdentity,
+    ManuscriptClaimExtractionOutput, ManuscriptClaimExtractionProvider,
+    ManuscriptClaimExtractionProviderError, ManuscriptClaimExtractionUnassociatedCitation,
+    ManuscriptClaimInventoryBlockInput, ManuscriptClaimInventoryClaimOutput,
+    ManuscriptClaimInventoryIdentity, ManuscriptClaimInventoryOutput,
+    ManuscriptClaimInventoryProvider, ManuscriptClaimInventoryProviderError,
+    RegulationApplicability, RegulationRequirementCandidateExtractionIdentity,
+    RegulationRequirementCandidateExtractionProvider,
+    RegulationRequirementCandidateExtractionProviderError, RegulationRequirementCandidateOutput,
+    RegulationRequirementExtractionInput,
 };
 use nineprofs_structured_model::{
     StructuredModelClient, StructuredModelConfig, StructuredModelConfigError,
@@ -38,6 +42,23 @@ If a supplied citation is not used with a clear verifiable proposition in this b
 pub const CLAIM_INVENTORY_IMPLEMENTATION_VERSION: &str =
     "model-whole-manuscript-claim-inventory-v1";
 pub const CLAIM_INVENTORY_CONTRACT_VERSION: &str = "whole-manuscript-claim-inventory-v1";
+pub const REGULATION_REQUIREMENT_EXTRACTION_IMPLEMENTATION_VERSION: &str =
+    "model-regulation-requirement-candidate-extractor-v1";
+pub const REGULATION_REQUIREMENT_EXTRACTION_CONTRACT_VERSION: &str =
+    "regulation-requirement-extraction-v0.1";
+pub const REGULATION_REQUIREMENT_EXTRACTION_INSTRUCTION: &str = r#"You are regulation-requirement-extraction-v0.1, a bounded candidate extractor.
+
+Use ONLY the supplied ResearchPdfExtraction page text, page context, document context, and allowed applicability vocabulary. Extract only requirement or policy propositions supported by the supplied OCR text. Do not add institutional policy from general knowledge, retrieve sources, resolve conflicts, or turn this output into authoritative RegulationRequirement data.
+
+For each candidate, ocrExcerpt MUST be copied verbatim from the supplied page text. Do not repair spelling, punctuation, OCR errors, missing characters, or line breaks in ocrExcerpt. It must be a non-empty exact substring. The sourceLocator must identify a supplied page or contiguous supplied page range using PDF locators only. Do not fabricate character offsets for image-only pages. Use pdf_text_range only when offsets are supported by the supplied persisted text; otherwise use page-level pdf.
+
+normalizedRequirement is a readable interpretation, not a repair. Do not infer missing values. Preserve modality and negation exactly: keep distinctions such as phải, không được, ít nhất, khoảng, nên, có thể, and hạn chế. Never change khoảng to exactly, nên or có thể to must, or hạn chế to prohibited. If không, không được, or không nên is damaged or ambiguous, do not guess; add a risk flag and review note. Preserve numeric constraints such as approximately 1/4, at least 50%, 1/6 - 1/5, 0,7, 1.5, and 3.5 cm. Keep must, must not, and may distinct when they appear in supplied text.
+
+Split by independently meaningful authoritative proposition, not paragraph or bullet boundaries. Do not normalize advice such as Học viên có thể tham khảo into a mandatory requirement. Keep conditions such as missing website author, reference type, quote length, script, or keyboard availability, along with secondary-citation guidance and domain-specific citation style such as Vancouver, inside normalizedRequirement; never encode them as applicability facets.
+
+Infer applicability only from supplied heading/text, supplied document context, and supplied vocabulary. Prefer exact supplied canonical identifiers. Use only context facets: language, research_families, artifact_types, academic_levels, study_designs, reporting_guidelines, and organization. If a category or value cannot be mapped to supplied vocabulary, leave applicability unset and add ambiguous_applicability or unresolved_applicability to riskFlags. Do not invent aliases or domain mappings.
+
+authorityLocator is only a suggestion from explicit headings such as Phụ lục 3, §1.2, or Phụ lục 4 §3.1.1. Leave it null when unsupported. Keep applicability, trigger conditions, and future execution separate. Return only the requested JSON object."#;
 pub const CLAIM_INVENTORY_INSTRUCTION: &str = r#"You are whole-manuscript-claim-inventory-v1, a bounded manuscript claim inventory extractor.
 
 Read ONLY the supplied block text. Extract only propositions actually expressed in that text. Do not use outside knowledge, fact-check, rewrite the manuscript, add citations, infer missing results, or strengthen tentative language. This is an inventory, not a truth judgment or citation-sufficiency decision.
@@ -725,10 +746,521 @@ fn extraction_schema() -> Value {
     })
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegulationRequirementCandidateExtractorConfig {
+    pub provider: String,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub api_key_env: String,
+    pub timeout: Duration,
+    pub max_response_bytes: usize,
+    pub max_output_tokens: u32,
+}
+
+impl fmt::Debug for RegulationRequirementCandidateExtractorConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegulationRequirementCandidateExtractorConfig")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("api_key_env", &self.api_key_env)
+            .field("timeout", &self.timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
+            .field("max_output_tokens", &self.max_output_tokens)
+            .finish()
+    }
+}
+
+impl Default for RegulationRequirementCandidateExtractorConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model: String::new(),
+            base_url: None,
+            api_key_env: "OPENAI_API_KEY".to_owned(),
+            timeout: DEFAULT_TIMEOUT,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        }
+    }
+}
+
+impl RegulationRequirementCandidateExtractorConfig {
+    pub fn new(
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        base_url: Option<String>,
+        api_key_env: impl Into<String>,
+    ) -> Self {
+        let provider = provider.into().trim().to_owned();
+        let api_key_env = api_key_env.into();
+        Self {
+            provider: provider.clone(),
+            model: model.into().trim().to_owned(),
+            base_url: base_url
+                .map(|value| value.trim().trim_end_matches('/').to_owned())
+                .filter(|value| !value.is_empty()),
+            api_key_env: if api_key_env.trim().is_empty() {
+                match provider.as_str() {
+                    "anthropic" => "ANTHROPIC_API_KEY".to_owned(),
+                    _ => "OPENAI_API_KEY".to_owned(),
+                }
+            } else {
+                api_key_env.trim().to_owned()
+            },
+            ..Self::default()
+        }
+    }
+
+    pub fn from_env() -> Self {
+        let provider = std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_PROVIDER")
+            .unwrap_or_default();
+        let model =
+            std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_MODEL").unwrap_or_default();
+        let base_url = std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_BASE_URL").ok();
+        let api_key_env = std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_API_KEY_ENV")
+            .unwrap_or_default();
+        Self::new(provider, model, base_url, api_key_env)
+    }
+
+    fn credential(&self) -> Option<String> {
+        std::env::var(&self.api_key_env)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    fn configuration_error(&self) -> Option<RegulationRequirementCandidateExtractorConfigError> {
+        self.shared_config()
+            .validate(self.credential().as_deref())
+            .err()
+            .map(map_regulation_config_error)
+    }
+
+    fn shared_config(&self) -> StructuredModelConfig {
+        StructuredModelConfig {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            api_key_env: self.api_key_env.clone(),
+            timeout: self.timeout,
+            max_response_bytes: self.max_response_bytes,
+            max_output_tokens: self.max_output_tokens,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum RegulationRequirementCandidateExtractorConfigError {
+    #[error("unsupported provider")]
+    UnsupportedProvider,
+    #[error("model is required")]
+    MissingModel,
+    #[error("credential environment variable is required")]
+    MissingCredentialEnvironment,
+    #[error("credential is not configured")]
+    MissingCredential,
+    #[error("base URL is invalid")]
+    InvalidBaseUrl,
+    #[error("regulation requirement extractor limits are invalid")]
+    InvalidLimits,
+}
+
+#[derive(Clone)]
+pub struct ModelRegulationRequirementCandidateExtractor {
+    config: RegulationRequirementCandidateExtractorConfig,
+    client: StructuredModelClient,
+}
+
+impl fmt::Debug for ModelRegulationRequirementCandidateExtractor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelRegulationRequirementCandidateExtractor")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl ModelRegulationRequirementCandidateExtractor {
+    pub fn new(config: RegulationRequirementCandidateExtractorConfig) -> Self {
+        let client = StructuredModelClient::new(config.shared_config());
+        Self { config, client }
+    }
+
+    pub fn config(&self) -> &RegulationRequirementCandidateExtractorConfig {
+        &self.config
+    }
+
+    fn request_body(
+        &self,
+        input: &RegulationRequirementExtractionInput,
+    ) -> Result<Value, RegulationRequirementCandidateExtractionProviderError> {
+        input
+            .validate()
+            .map_err(|_| RegulationRequirementCandidateExtractionProviderError::InvalidInput)?;
+        let input_json = serde_json::to_string(input)
+            .map_err(|_| RegulationRequirementCandidateExtractionProviderError::InvalidInput)?;
+        let prompt = format!(
+            "Extract regulation requirement candidates from this exact bounded PDF extraction JSON:\n{input_json}"
+        );
+        let body = match self.config.provider.as_str() {
+            "anthropic" => json!({
+                "model": self.config.model,
+                "max_tokens": self.config.max_output_tokens,
+                "temperature": 0,
+                "system": REGULATION_REQUIREMENT_EXTRACTION_INSTRUCTION,
+                "messages": [{"role": "user", "content": prompt}],
+                "tools": [{
+                    "name": "regulation_requirement_extraction",
+                    "description": "Return strict non-authoritative regulation requirement candidates.",
+                    "input_schema": regulation_requirement_extraction_schema()
+                }],
+                "tool_choice": {"type": "tool", "name": "regulation_requirement_extraction"}
+            }),
+            _ => json!({
+                "model": self.config.model,
+                "temperature": 0,
+                "max_tokens": self.config.max_output_tokens,
+                "messages": [
+                    {"role": "system", "content": REGULATION_REQUIREMENT_EXTRACTION_INSTRUCTION},
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "regulation_requirement_extraction",
+                        "strict": true,
+                        "schema": regulation_requirement_extraction_schema()
+                    }
+                }
+            }),
+        };
+        if serde_json::to_vec(&body)
+            .map(|bytes| bytes.len() > MAX_REQUEST_BYTES)
+            .unwrap_or(true)
+        {
+            return Err(RegulationRequirementCandidateExtractionProviderError::InvalidInput);
+        }
+        Ok(body)
+    }
+}
+
+#[async_trait]
+impl RegulationRequirementCandidateExtractionProvider
+    for ModelRegulationRequirementCandidateExtractor
+{
+    fn identity(&self) -> RegulationRequirementCandidateExtractionIdentity {
+        RegulationRequirementCandidateExtractionIdentity {
+            provider: self.config.provider.clone(),
+            extractor_version: REGULATION_REQUIREMENT_EXTRACTION_IMPLEMENTATION_VERSION.to_owned(),
+            model_id: (!self.config.model.trim().is_empty()).then(|| self.config.model.clone()),
+            extraction_contract_version: REGULATION_REQUIREMENT_EXTRACTION_CONTRACT_VERSION
+                .to_owned(),
+        }
+    }
+
+    async fn extract(
+        &self,
+        input: RegulationRequirementExtractionInput,
+    ) -> Result<
+        Vec<RegulationRequirementCandidateOutput>,
+        RegulationRequirementCandidateExtractionProviderError,
+    > {
+        if let Some(error) = self.config.configuration_error() {
+            return if matches!(
+                error,
+                RegulationRequirementCandidateExtractorConfigError::MissingCredential
+            ) {
+                Err(RegulationRequirementCandidateExtractionProviderError::NotConfigured)
+            } else {
+                Err(
+                    RegulationRequirementCandidateExtractionProviderError::InvalidConfiguration(
+                        error.to_string(),
+                    ),
+                )
+            };
+        }
+        let body = self.request_body(&input)?;
+        let credential = self
+            .config
+            .credential()
+            .ok_or(RegulationRequirementCandidateExtractionProviderError::NotConfigured)?;
+        let response = self
+            .client
+            .execute_json(&body, &credential)
+            .await
+            .map_err(map_regulation_transport_error)?;
+        parse_regulation_response(&self.config.provider, &response)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireRegulationExtraction {
+    candidates: Vec<WireRegulationCandidate>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireRegulationCandidate {
+    ocr_excerpt: String,
+    normalized_requirement: String,
+    source_locator: WirePdfLocator,
+    authority_locator: Option<WireAuthorityLocator>,
+    applicability: RegulationApplicability,
+    risk_flags: Vec<String>,
+    review_notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WirePdfLocator {
+    kind: String,
+    page: u32,
+    end_page: Option<u32>,
+    start: Option<u64>,
+    end: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireAuthorityLocator {
+    article: String,
+    section: Option<String>,
+    clause: Option<String>,
+}
+
+fn parse_regulation_response(
+    provider: &str,
+    bytes: &[u8],
+) -> Result<
+    Vec<RegulationRequirementCandidateOutput>,
+    RegulationRequirementCandidateExtractionProviderError,
+> {
+    let root: Value = serde_json::from_slice(bytes)
+        .map_err(|_| RegulationRequirementCandidateExtractionProviderError::MalformedResponse)?;
+    let output = match provider {
+        "anthropic" => root
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|content| {
+                content.iter().find_map(|item| {
+                    (item.get("type")?.as_str()? == "tool_use"
+                        && item.get("name")?.as_str()? == "regulation_requirement_extraction")
+                        .then(|| item.get("input"))
+                })
+            })
+            .flatten()
+            .cloned()
+            .ok_or(RegulationRequirementCandidateExtractionProviderError::MalformedResponse)?,
+        _ => {
+            let content = root
+                .get("choices")
+                .and_then(Value::as_array)
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice.get("message"))
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .ok_or(RegulationRequirementCandidateExtractionProviderError::MalformedResponse)?;
+            serde_json::from_str(content).map_err(|_| {
+                RegulationRequirementCandidateExtractionProviderError::InvalidStructuredOutput
+            })?
+        }
+    };
+    let wire: WireRegulationExtraction = serde_json::from_value(output).map_err(|_| {
+        RegulationRequirementCandidateExtractionProviderError::InvalidStructuredOutput
+    })?;
+    wire.candidates
+        .into_iter()
+        .map(map_wire_regulation_candidate)
+        .collect()
+}
+
+fn map_wire_regulation_candidate(
+    candidate: WireRegulationCandidate,
+) -> Result<
+    RegulationRequirementCandidateOutput,
+    RegulationRequirementCandidateExtractionProviderError,
+> {
+    let source_locator = match candidate.source_locator.kind.as_str() {
+        "pdf"
+            if candidate.source_locator.start.is_none()
+                && candidate.source_locator.end.is_none() =>
+        {
+            EvidenceLocator::Pdf {
+                page: candidate.source_locator.page,
+                end_page: candidate.source_locator.end_page,
+            }
+        }
+        "pdf_text_range"
+            if candidate.source_locator.end_page.is_none()
+                && candidate.source_locator.start.is_some()
+                && candidate.source_locator.end.is_some() =>
+        {
+            EvidenceLocator::PdfTextRange {
+                page: candidate.source_locator.page,
+                start: candidate.source_locator.start.expect("checked start"),
+                end: candidate.source_locator.end.expect("checked end"),
+            }
+        }
+        _ => {
+            return Err(
+                RegulationRequirementCandidateExtractionProviderError::InvalidStructuredOutput,
+            );
+        }
+    };
+    let authority_locator =
+        candidate
+            .authority_locator
+            .map(|locator| EvidenceLocator::Regulation {
+                article: locator.article,
+                section: locator.section,
+                clause: locator.clause,
+            });
+    Ok(RegulationRequirementCandidateOutput {
+        ocr_excerpt: candidate.ocr_excerpt,
+        normalized_requirement: candidate.normalized_requirement,
+        source_locator,
+        authority_locator,
+        applicability: candidate.applicability,
+        risk_flags: candidate.risk_flags,
+        review_notes: candidate.review_notes,
+    })
+}
+
+fn regulation_requirement_extraction_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidates"],
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "ocrExcerpt", "normalizedRequirement", "sourceLocator",
+                        "authorityLocator", "applicability", "riskFlags", "reviewNotes"
+                    ],
+                    "properties": {
+                        "ocrExcerpt": {"type": "string", "minLength": 1},
+                        "normalizedRequirement": {"type": "string", "minLength": 1},
+                        "sourceLocator": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["kind", "page", "endPage", "start", "end"],
+                            "properties": {
+                                "kind": {"type": "string", "enum": ["pdf", "pdf_text_range"]},
+                                "page": {"type": "integer", "minimum": 1},
+                                "endPage": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+                                "start": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+                                "end": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]}
+                            }
+                        },
+                        "authorityLocator": {
+                            "anyOf": [
+                                {"type": "null"},
+                                {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["article", "section", "clause"],
+                                    "properties": {
+                                        "article": {"type": "string"},
+                                        "section": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                                        "clause": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+                                    }
+                                }
+                            ]
+                        },
+                        "applicability": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                                "language", "research_families", "artifact_types",
+                                "academic_levels", "study_designs", "reporting_guidelines",
+                                "organization"
+                            ],
+                            "properties": {
+                                "language": {"type": "array", "items": {"type": "string"}},
+                                "research_families": {"type": "array", "items": {"type": "string"}},
+                                "artifact_types": {"type": "array", "items": {"type": "string"}},
+                                "academic_levels": {"type": "array", "items": {"type": "string"}},
+                                "study_designs": {"type": "array", "items": {"type": "string"}},
+                                "reporting_guidelines": {"type": "array", "items": {"type": "string"}},
+                                "organization": {"type": "array", "items": {"type": "string"}}
+                            }
+                        },
+                        "riskFlags": {"type": "array", "items": {"type": "string"}},
+                        "reviewNotes": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn map_regulation_config_error(
+    error: StructuredModelConfigError,
+) -> RegulationRequirementCandidateExtractorConfigError {
+    match error {
+        StructuredModelConfigError::MissingProvider
+        | StructuredModelConfigError::UnsupportedProvider => {
+            RegulationRequirementCandidateExtractorConfigError::UnsupportedProvider
+        }
+        StructuredModelConfigError::MissingModel => {
+            RegulationRequirementCandidateExtractorConfigError::MissingModel
+        }
+        StructuredModelConfigError::MissingCredentialEnvironment => {
+            RegulationRequirementCandidateExtractorConfigError::MissingCredentialEnvironment
+        }
+        StructuredModelConfigError::MissingCredential => {
+            RegulationRequirementCandidateExtractorConfigError::MissingCredential
+        }
+        StructuredModelConfigError::InvalidBaseUrl => {
+            RegulationRequirementCandidateExtractorConfigError::InvalidBaseUrl
+        }
+        StructuredModelConfigError::InvalidLimits => {
+            RegulationRequirementCandidateExtractorConfigError::InvalidLimits
+        }
+    }
+}
+
+fn map_regulation_transport_error(
+    error: StructuredModelTransportError,
+) -> RegulationRequirementCandidateExtractionProviderError {
+    match error {
+        StructuredModelTransportError::NotConfigured => {
+            RegulationRequirementCandidateExtractionProviderError::NotConfigured
+        }
+        StructuredModelTransportError::InvalidConfiguration
+        | StructuredModelTransportError::ClientBuildFailed => {
+            RegulationRequirementCandidateExtractionProviderError::InvalidConfiguration(
+                "regulation requirement extractor configuration is invalid".to_owned(),
+            )
+        }
+        StructuredModelTransportError::Timeout => {
+            RegulationRequirementCandidateExtractionProviderError::Timeout
+        }
+        StructuredModelTransportError::ResponseTooLarge => {
+            RegulationRequirementCandidateExtractionProviderError::ResponseTooLarge
+        }
+        StructuredModelTransportError::Unauthorized
+        | StructuredModelTransportError::RateLimited
+        | StructuredModelTransportError::ProviderUnavailable
+        | StructuredModelTransportError::Transport => {
+            RegulationRequirementCandidateExtractionProviderError::Transport
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nineprofs_research::RegulationRequirementExtractionPage;
     use std::{
+        collections::BTreeMap,
         sync::{Arc, Mutex, Once},
         time::Duration,
     };
@@ -979,5 +1511,102 @@ mod tests {
             Err(ManuscriptClaimExtractionProviderError::ResponseTooLarge)
         ));
         server.task.await.unwrap();
+    }
+
+    fn regulation_input() -> RegulationRequirementExtractionInput {
+        RegulationRequirementExtractionInput {
+            source_id: nineprofs_research::ResearchSourceId::new(),
+            source_snapshot_id: nineprofs_research::ResearchSourceSnapshotId::new(),
+            pdf_extraction_id: nineprofs_research::ResearchPdfExtractionId::new(),
+            start_page: 2,
+            end_page: 2,
+            pages: vec![RegulationRequirementExtractionPage {
+                page: 2,
+                text: "phải; không được; khoảng; nên; có thể; hạn chế; approximately 1/4; at least 50%; must; must not; may; secondary-citation guidance; domain-specific citation style: Vancouver; If a website has no author, use the organization name; lề trên ... lề dưới ...".to_owned(),
+                heading_context: Some("Phụ lục 3 §1.2".to_owned()),
+            }],
+            institution: Some("HIU".to_owned()),
+            document_title: Some("Academic writing requirements".to_owned()),
+            known_artifact_scope: Some("master thesis".to_owned()),
+            allowed_applicability_vocabulary: BTreeMap::from([(
+                "artifact_types".to_owned(),
+                vec!["master_thesis".to_owned()],
+            )]),
+        }
+    }
+
+    fn regulation_config() -> RegulationRequirementCandidateExtractorConfig {
+        RegulationRequirementCandidateExtractorConfig::new(
+            "openai",
+            "test-model",
+            Some("http://127.0.0.1:1/v1".to_owned()),
+            TEST_KEY_ENV,
+        )
+    }
+
+    #[test]
+    fn regulation_prompt_preserves_fail_closed_contract() {
+        let provider = ModelRegulationRequirementCandidateExtractor::new(regulation_config());
+        let body = provider.request_body(&regulation_input()).unwrap();
+        let serialized = serde_json::to_string(&body).unwrap();
+        for phrase in [
+            "ocrExcerpt MUST be copied verbatim",
+            "Do not infer missing values",
+            "Preserve modality and negation exactly",
+            "approximately 1/4, at least 50%",
+            "secondary-citation guidance",
+            "domain-specific citation style such as Vancouver",
+            "Keep conditions such as missing website author",
+            "Do not invent aliases or domain mappings",
+            "phải, không được, ít nhất, khoảng, nên, có thể, and hạn chế",
+        ] {
+            assert!(
+                serialized.contains(phrase),
+                "missing prompt phrase: {phrase}"
+            );
+        }
+    }
+
+    #[test]
+    fn regulation_structured_output_preserves_modality_and_unicode() {
+        let response = serde_json::json!({
+            "choices": [{"message": {"content": serde_json::json!({
+                "candidates": [
+                    {"ocrExcerpt": "phải", "normalizedRequirement": "phải", "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null}, "authorityLocator": null, "applicability": {}, "riskFlags": [], "reviewNotes": null},
+                    {"ocrExcerpt": "không được", "normalizedRequirement": "không được", "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null}, "authorityLocator": null, "applicability": {}, "riskFlags": ["modality_sensitive"], "reviewNotes": "Giữ nguyên phủ định."},
+                    {"ocrExcerpt": "khoảng", "normalizedRequirement": "khoảng", "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null}, "authorityLocator": null, "applicability": {}, "riskFlags": [], "reviewNotes": null},
+                    {"ocrExcerpt": "nên", "normalizedRequirement": "nên", "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null}, "authorityLocator": null, "applicability": {}, "riskFlags": [], "reviewNotes": null},
+                    {"ocrExcerpt": "có thể", "normalizedRequirement": "có thể", "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null}, "authorityLocator": null, "applicability": {}, "riskFlags": [], "reviewNotes": null},
+                    {"ocrExcerpt": "hạn chế", "normalizedRequirement": "hạn chế", "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null}, "authorityLocator": null, "applicability": {}, "riskFlags": [], "reviewNotes": null}
+                ]
+            }).to_string()}}]
+        });
+        let outputs = parse_regulation_response("openai", response.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|output| output.normalized_requirement.as_str())
+                .collect::<Vec<_>>(),
+            vec!["phải", "không được", "khoảng", "nên", "có thể", "hạn chế"]
+        );
+    }
+
+    #[test]
+    fn regulation_structured_output_rejects_unknown_fields() {
+        let response =
+            br#"{"choices":[{"message":{"content":"{\"candidates\":[],\"approved\":true}"}}]}"#;
+        assert!(matches!(
+            parse_regulation_response("openai", response),
+            Err(RegulationRequirementCandidateExtractionProviderError::InvalidStructuredOutput)
+        ));
+    }
+
+    #[test]
+    fn regulation_structured_output_rejects_missing_required_fields() {
+        let response = br#"{"choices":[{"message":{"content":"{\"candidates\":[{\"ocrExcerpt\":\"ph\\u00e1i\"}]}"}}]}"#;
+        assert!(matches!(
+            parse_regulation_response("openai", response),
+            Err(RegulationRequirementCandidateExtractionProviderError::InvalidStructuredOutput)
+        ));
     }
 }

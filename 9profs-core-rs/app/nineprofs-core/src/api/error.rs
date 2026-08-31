@@ -240,6 +240,21 @@ impl IntoResponse for ApiError {
                     "claim_inventory_failed",
                     error.to_string(),
                 ),
+                ResearchError::RegulationRequirementCandidateExtractorNotConfigured => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "extractor_not_configured",
+                    error.to_string(),
+                ),
+                ResearchError::RegulationRequirementCandidateExtractorInvalidConfiguration(_) => (
+                    StatusCode::BAD_REQUEST,
+                    "invalid_configuration",
+                    error.to_string(),
+                ),
+                ResearchError::RegulationRequirementCandidateExtractionFailed(_) => (
+                    StatusCode::BAD_GATEWAY,
+                    "regulation_requirement_candidate_extraction_failed",
+                    error.to_string(),
+                ),
                 ResearchError::Invalid(_) => (
                     StatusCode::BAD_REQUEST,
                     "invalid_request",

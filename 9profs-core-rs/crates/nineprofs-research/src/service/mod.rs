@@ -16,6 +16,7 @@ mod pdf;
 mod reference_catalog;
 mod reference_resolution;
 mod regulation;
+mod regulation_candidate;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,8 @@ pub struct ResearchService {
     artifact_store: Option<Arc<crate::ResearchArtifactStore>>,
     claim_extractor: Option<Arc<dyn crate::ManuscriptClaimExtractionProvider>>,
     claim_inventory_extractor: Option<Arc<dyn crate::ManuscriptClaimInventoryProvider>>,
+    regulation_requirement_candidate_extractor:
+        Option<Arc<dyn crate::RegulationRequirementCandidateExtractionProvider>>,
 }
 
 impl ResearchService {
@@ -47,6 +50,7 @@ impl ResearchService {
             artifact_store: None,
             claim_extractor: None,
             claim_inventory_extractor: None,
+            regulation_requirement_candidate_extractor: None,
         }
     }
 
@@ -75,6 +79,14 @@ impl ResearchService {
         self
     }
 
+    pub fn with_regulation_requirement_candidate_extractor(
+        mut self,
+        extractor: Arc<dyn crate::RegulationRequirementCandidateExtractionProvider>,
+    ) -> Self {
+        self.regulation_requirement_candidate_extractor = Some(extractor);
+        self
+    }
+
     pub fn claim_inventory_identity(&self) -> Option<crate::ManuscriptClaimInventoryIdentity> {
         self.claim_inventory_extractor
             .as_ref()
@@ -83,6 +95,14 @@ impl ResearchService {
 
     pub fn claim_extractor_identity(&self) -> Option<crate::ManuscriptClaimExtractionIdentity> {
         self.claim_extractor
+            .as_ref()
+            .map(|provider| provider.identity())
+    }
+
+    pub fn regulation_requirement_candidate_extractor_identity(
+        &self,
+    ) -> Option<crate::RegulationRequirementCandidateExtractionIdentity> {
+        self.regulation_requirement_candidate_extractor
             .as_ref()
             .map(|provider| provider.identity())
     }

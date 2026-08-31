@@ -13,6 +13,8 @@ pub use artifact::{ArtifactUploadWriter, ResearchArtifactStore};
 pub use extraction::{
     ManuscriptClaimExtractionProvider, ManuscriptClaimExtractionProviderError,
     ManuscriptClaimInventoryProvider, ManuscriptClaimInventoryProviderError,
+    RegulationRequirementCandidateExtractionProvider,
+    RegulationRequirementCandidateExtractionProviderError,
 };
 pub(crate) use model::bounded_text;
 pub use model::{
@@ -24,8 +26,8 @@ pub use model::{
     ContentHash, CreateCitationOccurrence, CreateCitationTarget, CreateCitationTargetBinding,
     CreateClaimCitationLink, CreateClaimEvidenceLink, CreateRegulationRequirement,
     CreateResearchCase, CreateResearchClaim, CreateResearchEvidence, CreateResearchSource,
-    EvidenceLocator, ExtractManuscriptClaims, HashAlgorithm,
-    MANUSCRIPT_CLAIM_INVENTORY_COVERAGE_CONTRACT_VERSION,
+    EvidenceLocator, ExtractManuscriptClaims, ExtractRegulationRequirementCandidates,
+    HashAlgorithm, MANUSCRIPT_CLAIM_INVENTORY_COVERAGE_CONTRACT_VERSION,
     MANUSCRIPT_CLAIM_INVENTORY_COVERAGE_SCOPE, MAX_CASE_TITLE_BYTES, MAX_CITATION_MARKER_BYTES,
     MAX_CITATION_REFERENCE_KEY_BYTES, MAX_CITATION_TARGETS_PER_OCCURRENCE, MAX_CITED_LOCATOR_BYTES,
     MAX_CLAIM_EXTRACTION_BLOCKS, MAX_CLAIM_EXTRACTION_CITATIONS_PER_BLOCK,
@@ -39,6 +41,8 @@ pub use model::{
     MAX_MANUSCRIPT_REFERENCE_URI_COUNT, MAX_METADATA_BYTES, MAX_NORMALIZED_TEXT_BYTES,
     MAX_PDF_BYTES, MAX_PDF_EXTRACTION_BYTES, MAX_PDF_PAGE_TEXT_BYTES, MAX_PDF_PAGES,
     MAX_PROVENANCE_TEXT_BYTES, MAX_RATIONALE_BYTES, MAX_REFERENCE_RESOLUTION_CANDIDATES,
+    MAX_REGULATION_REQUIREMENT_CANDIDATES, MAX_REGULATION_REQUIREMENT_EXTRACTION_CONTEXT_BYTES,
+    MAX_REGULATION_REQUIREMENT_EXTRACTION_PAGES, MAX_REGULATION_REQUIREMENT_RISK_FLAGS,
     MAX_RETRIEVAL_SCOPE_IDS, MAX_SNAPSHOT_CONTENT_BYTES, MAX_SOURCE_LABEL_BYTES,
     ManuscriptCitationFormat, ManuscriptCitationSyncCitationInput,
     ManuscriptCitationSyncOccurrence, ManuscriptCitationSyncOccurrenceId,
@@ -69,7 +73,11 @@ pub use model::{
     ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
     ManuscriptReferenceResolutionStatus, ManuscriptReferenceResolutionWrite,
     ManuscriptReferenceTargetMapping, ManuscriptReferenceTargetMappingId, PdfExtractionStatus,
-    REFERENCE_RESOLVER_POLICY_VERSION, RegulationApplicability, RegulationRequirement,
+    REFERENCE_RESOLVER_POLICY_VERSION, RegulationApplicability, RegulationApplicabilityVocabulary,
+    RegulationRequirement, RegulationRequirementCandidate,
+    RegulationRequirementCandidateExtraction, RegulationRequirementCandidateExtractionIdentity,
+    RegulationRequirementCandidateId, RegulationRequirementCandidateOutput,
+    RegulationRequirementExtractionInput, RegulationRequirementExtractionPage,
     RegulationRequirementId, RegulationReviewStatus, ResearchArtifact, ResearchCase,
     ResearchCaseId, ResearchClaim, ResearchClaimId, ResearchContext, ResearchError,
     ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction, ResearchPdfExtractionId,

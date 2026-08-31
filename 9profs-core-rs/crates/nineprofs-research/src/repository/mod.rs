@@ -16,8 +16,9 @@ use crate::{
     ManuscriptReferenceResolutionEntry, ManuscriptReferenceResolutionEntryId,
     ManuscriptReferenceResolutionRun, ManuscriptReferenceResolutionRunId,
     ManuscriptReferenceResolutionWrite, ManuscriptReferenceTargetMapping, RegulationRequirement,
-    RegulationRequirementId, RegulationReviewStatus, ResearchCase, ResearchCaseId, ResearchClaim,
-    ResearchClaimId, ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
+    RegulationRequirementCandidate, RegulationRequirementCandidateId, RegulationRequirementId,
+    RegulationReviewStatus, ResearchCase, ResearchCaseId, ResearchClaim, ResearchClaimId,
+    ResearchError, ResearchEvidence, ResearchEvidenceId, ResearchPdfExtraction,
     ResearchPdfExtractionId, ResearchPdfPage, ResearchSource, ResearchSourceId,
     ResearchSourceSnapshot, ResearchSourceSnapshotId,
 };
@@ -33,6 +34,7 @@ mod pdf;
 mod reference_catalog;
 mod reference_resolution;
 mod regulation;
+mod regulation_candidate;
 
 #[async_trait]
 pub trait ResearchRepository: Send + Sync {
@@ -90,6 +92,21 @@ pub trait ResearchRepository: Send + Sync {
         active: bool,
         updated_at_ms: i64,
     ) -> Result<bool, ResearchError>;
+
+    async fn list_regulation_requirement_candidates(
+        &self,
+        source_id: Option<&ResearchSourceId>,
+        source_snapshot_id: Option<&ResearchSourceSnapshotId>,
+        pdf_extraction_id: Option<&ResearchPdfExtractionId>,
+    ) -> Result<Vec<RegulationRequirementCandidate>, ResearchError>;
+    async fn get_regulation_requirement_candidate(
+        &self,
+        id: &RegulationRequirementCandidateId,
+    ) -> Result<Option<RegulationRequirementCandidate>, ResearchError>;
+    async fn insert_regulation_requirement_candidate(
+        &self,
+        value: &RegulationRequirementCandidate,
+    ) -> Result<(), ResearchError>;
 
     async fn get_pdf_extraction(
         &self,
@@ -493,6 +510,34 @@ impl ResearchRepository for SqliteResearchRepository {
     ) -> Result<bool, ResearchError> {
         self.set_regulation_requirement_active(id, active, updated_at_ms)
             .await
+    }
+
+    async fn list_regulation_requirement_candidates(
+        &self,
+        source_id: Option<&ResearchSourceId>,
+        source_snapshot_id: Option<&ResearchSourceSnapshotId>,
+        pdf_extraction_id: Option<&ResearchPdfExtractionId>,
+    ) -> Result<Vec<RegulationRequirementCandidate>, ResearchError> {
+        self.list_regulation_requirement_candidates(
+            source_id,
+            source_snapshot_id,
+            pdf_extraction_id,
+        )
+        .await
+    }
+
+    async fn get_regulation_requirement_candidate(
+        &self,
+        id: &RegulationRequirementCandidateId,
+    ) -> Result<Option<RegulationRequirementCandidate>, ResearchError> {
+        self.get_regulation_requirement_candidate(id).await
+    }
+
+    async fn insert_regulation_requirement_candidate(
+        &self,
+        value: &RegulationRequirementCandidate,
+    ) -> Result<(), ResearchError> {
+        self.insert_regulation_requirement_candidate(value).await
     }
 
     async fn get_pdf_extraction(
