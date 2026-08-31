@@ -3,9 +3,32 @@
 status: `BLOCKED_BY_RUNTIME`
 run_date: `2026-08-31`
 branch: `develop`
-head: `915baeb4`
+head: `cea9686f`
 extraction_contract_version: `regulation-requirement-extraction-v0.1`
 implementation_version: `model-regulation-requirement-candidate-extractor-v1`
+
+## Continuation smoke test
+
+The 2026-08-31 continuation first exercised the same production shared path:
+`StructuredModelConfig::from_env()` → `StructuredModelClient::execute_json()`.
+The request contained only the synthetic prompt `Return exactly: OK`; no HIU
+OCR content was transmitted during this step.
+
+- provider: `openai`
+- model: `gpt-5.6-luna`
+- base URL: `https://api.openai.com/v1`
+- endpoint: `https://api.openai.com/v1/chat/completions`
+- credential environment name: `OPENAI_API_KEY`
+- stale `OPENAI_KEY`: unset in child process
+- local `.env.9profs`: used only to supply missing shared configuration
+- OpenAI reached: yes
+- HTTP result class: `Unauthorized` (shared client normalizes HTTP 401/403)
+- shared-client error class: `Unauthorized`
+- model response received: no
+
+The real authorized HIU dogfood was not retried because the required smoke
+gate failed at authentication. No new OCR content was transmitted, no new
+candidates were produced, and no extractor code was changed.
 
 ## Input identity
 
@@ -25,6 +48,11 @@ Production `nineprofs-research-opendataloader::normalize_json` path was used by 
 - normalized UTF-8 bytes: `29921`
 - status: `Ready`
 
+Continuation rerun through the same production normalization function also
+returned `16` pages, `16` non-empty pages, and `29921` normalized UTF-8 bytes
+(local extraction ID `84407e29-eacb-4fc0-8ebf-b88065e25224`). It did not contact
+the model provider.
+
 Shared semantic configuration resolved in the candidate process, with no secret printed:
 
 - provider: `openai`
@@ -36,7 +64,7 @@ Shared semantic configuration resolved in the candidate process, with no secret 
 
 Root `.env.9profs` was loaded only for missing process variables; process-provided values retained precedence.
 
-## Live extraction result
+## Previous live extraction result
 
 The harness completed with process exit `0`, but every semantic request failed before receiving a model response:
 
@@ -49,7 +77,8 @@ The harness completed with process exit `0`, but every semantic request failed b
 
 Candidates produced: `0` persisted candidates. Provider error surfaced by the existing contract: `Transport`.
 
-The sandbox retry cannot reach the external endpoint. The required unsandboxed retry was rejected before execution because it would transmit real institutional OCR text to the configured external model endpoint. No model response was obtained, so no extraction-quality evidence exists.
+That earlier attempt was blocked before model output by runtime transport. No
+extraction-quality evidence exists from it.
 
 ## Benchmark against 24 manual requirements
 
@@ -83,6 +112,10 @@ Not observed. With no model response, counts for approve, transcription edit, no
 
 `BLOCKED_BY_RUNTIME`
 
-Evidence supports working production normalization and correct shared model configuration resolution. It does not support an extraction-quality or promotion-seam verdict because all four live semantic calls failed at transport before model output. Next step: obtain explicit authorization for the real OCR payload to reach the configured OpenAI endpoint (or provide an approved reachable endpoint), rerun this same harness, then decide between minimal promotion and one targeted extraction fix from actual candidates.
+Evidence supports working production normalization and correct shared model configuration resolution. It does not support an extraction-quality or promotion-seam verdict because the earlier four live semantic calls failed at transport before model output, and this continuation smoke call failed authentication before the real dogfood gate.
 
-This report contains no OCR excerpts, credentials, or source document content.
+Continuation evidence supersedes the earlier runtime diagnosis for the next
+gate: the shared smoke request reached OpenAI and was rejected with the
+`Unauthorized` HTTP status class. The configured `OPENAI_API_KEY` must be repaired or replaced
+before the real HIU OCR dogfood can run. This report still contains no OCR
+excerpts, credentials, or source document content.
