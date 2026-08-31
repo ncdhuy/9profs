@@ -17,6 +17,7 @@ mod reference_catalog;
 mod reference_resolution;
 mod regulation;
 mod regulation_candidate;
+mod review_planner;
 
 #[cfg(test)]
 mod tests;

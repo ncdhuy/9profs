@@ -12,11 +12,11 @@ nineprofs-common = { path = "../nineprofs-common" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 nineprofs-db = { path = "../nineprofs-db" }
-serde_yaml = "0.9"
 tokio.workspace = true

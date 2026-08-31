@@ -8,6 +8,7 @@ mod document_map;
 mod extraction;
 mod model;
 mod repository;
+mod review_planner;
 mod service;
 
 pub use artifact::{ArtifactUploadWriter, ResearchArtifactStore};
@@ -96,4 +97,11 @@ pub use model::{
     validate_metadata,
 };
 pub use repository::{ResearchRepository, SqliteResearchRepository};
+pub use review_planner::{
+    AuthorityPack, AuthorityPackDocument, AuthorityPackLoader, AuthorityPackSource,
+    REVIEW_TASK_CONTRACT_VERSION, RegulationRequirementReference, ResolvedReviewStack,
+    ReviewAuthorityReference, ReviewExecutorMode, ReviewSectionRole, ReviewTask, ReviewTaskTarget,
+    classify_heading_role, load_canonical_authority_packs, plan_review_tasks,
+    resolve_authority_packs, resolve_review_stack,
+};
 pub use service::ResearchService;
