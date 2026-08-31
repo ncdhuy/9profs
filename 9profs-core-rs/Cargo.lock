@@ -2358,6 +2358,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nineprofs-research-opendataloader"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nineprofs-db",
+ "nineprofs-realtime",
+ "nineprofs-research",
+ "reqwest",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "nineprofs-research-verification"
 version = "0.1.0"
 dependencies = [
@@ -2395,6 +2409,7 @@ dependencies = [
  "nineprofs-research-assessor",
  "nineprofs-research-claim-extractor",
  "nineprofs-research-dify",
+ "nineprofs-research-opendataloader",
  "nineprofs-research-verification",
  "nineprofs-skills",
  "nineprofs-tools",

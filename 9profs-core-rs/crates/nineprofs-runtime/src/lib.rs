@@ -34,6 +34,7 @@ use nineprofs_research_claim_extractor::{
     ModelWholeManuscriptClaimInventoryProvider,
 };
 use nineprofs_research_dify::{DifyConfig, DifyResearchService};
+use nineprofs_research_opendataloader::{OpenDataLoaderConfig, OpenDataLoaderPdfProvider};
 use nineprofs_research_verification::{
     CitationAssessmentProvider, CitationExpectationProvider, CitationReviewService,
     CitationVerificationService, CrossClaimCandidateDiscoveryProvider,
@@ -68,6 +69,9 @@ pub struct RuntimeConfig {
     pub session_secret: Option<Arc<str>>,
     /// Launch-scoped Dify credentials. Never persisted or exposed through DTOs.
     pub dify: Option<DifyConfig>,
+    /// Launch-scoped local OpenDataLoader PDF provider configuration. No cloud
+    /// endpoint is accepted by the adapter.
+    pub opendataloader_pdf: Option<OpenDataLoaderConfig>,
     /// Launch-scoped citation assessor configuration. Credential value is never stored.
     pub citation_assessor: CitationAssessorConfig,
     /// Launch-scoped citation expectation configuration. Credential value is never stored.
@@ -91,6 +95,7 @@ impl Default for RuntimeConfig {
             custom_skill_roots: Vec::new(),
             session_secret: None,
             dify: None,
+            opendataloader_pdf: None,
             citation_assessor: CitationAssessorConfig::default(),
             citation_expectation_assessor: CitationExpectationAssessorConfig::default(),
             claim_extractor: ClaimExtractorConfig::default(),
@@ -119,6 +124,7 @@ impl RuntimeConfig {
             }
         }
         config.dify = DifyConfig::from_env();
+        config.opendataloader_pdf = OpenDataLoaderConfig::from_env();
         config.citation_assessor = CitationAssessorConfig::from_env();
         config.citation_expectation_assessor = CitationExpectationAssessorConfig::from_env();
         config.claim_extractor = ClaimExtractorConfig::from_env();
@@ -155,6 +161,8 @@ pub enum RuntimeError {
     Mcp(#[from] McpError),
     #[error(transparent)]
     Dify(#[from] nineprofs_research_dify::DifyError),
+    #[error(transparent)]
+    OpenDataLoader(#[from] nineprofs_research_opendataloader::OpenDataLoaderError),
     #[error("tool registry initialization failed: {0}")]
     ToolRegistry(String),
 }
@@ -177,6 +185,7 @@ pub struct CoreRuntime {
     officecli_runner: Arc<OfficeCliRunner>,
     research_service: Arc<ResearchService>,
     dify_service: Arc<DifyResearchService>,
+    opendataloader_pdf: Option<Arc<OpenDataLoaderPdfProvider>>,
     citation_verification_service: Arc<CitationVerificationService>,
     citation_review_service: Arc<CitationReviewService>,
 }
@@ -202,6 +211,12 @@ impl CoreRuntime {
             config.data_dir.join("research-artifacts"),
             database.pool().clone(),
         ));
+        let opendataloader_pdf = config
+            .opendataloader_pdf
+            .clone()
+            .map(OpenDataLoaderPdfProvider::new)
+            .transpose()?
+            .map(Arc::new);
         let mut research_service = ResearchService::new(
             SqliteResearchRepository::new(database.pool().clone()),
             Arc::clone(&event_bus),
@@ -357,6 +372,7 @@ impl CoreRuntime {
             officecli_runner,
             research_service,
             dify_service,
+            opendataloader_pdf,
             citation_verification_service,
             citation_review_service,
         })
@@ -450,6 +466,10 @@ impl CoreRuntime {
 
     pub fn dify_service(&self) -> Arc<DifyResearchService> {
         Arc::clone(&self.dify_service)
+    }
+
+    pub fn opendataloader_pdf_provider(&self) -> Option<Arc<OpenDataLoaderPdfProvider>> {
+        self.opendataloader_pdf.clone()
     }
 
     pub fn citation_verification_service(&self) -> Arc<CitationVerificationService> {

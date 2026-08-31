@@ -86,6 +86,19 @@ impl ResearchArtifactStore {
         }
         Ok(artifact)
     }
+
+    /// Returns the verified content-addressed path for an existing artifact.
+    /// Callers use this path as input to local extraction tools; the artifact
+    /// bytes remain owned and integrity-checked by this store.
+    pub async fn verified_path(&self, id: &str) -> Result<Option<PathBuf>, ResearchError> {
+        let Some(artifact) = self.get(id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.root
+                .join(format!("{}.pdf", artifact.content_hash.value)),
+        ))
+    }
 }
 
 pub struct ArtifactUploadWriter {

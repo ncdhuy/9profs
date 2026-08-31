@@ -1,0 +1,68 @@
+{
+  "file name": "scanned-regulation.pdf",
+  "number of pages": 3,
+  "author": null,
+  "title": null,
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "page number": 1,
+      "bounding box": [0, 0, 10, 10],
+      "font": "Noto Sans",
+      "font size": 12,
+      "text color": "[0,0,0]",
+      "content": "Quy định về khoảng cách và tỷ lệ"
+    },
+    {
+      "type": "paragraph",
+      "id": 2,
+      "page number": 1,
+      "bounding box": [0, 0, 10, 10],
+      "font": "Noto Sans",
+      "font size": 10,
+      "text color": "[0,0,0]",
+      "content": "không được bỏ qua; ít nhất khoảng 1/4 và 1/6 - 1/5; hệ số 0,7; 50%; 1.5; 3.5 cm; 13 hoặc 14."
+    },
+    {
+      "type": "table",
+      "id": 3,
+      "page number": 3,
+      "bounding box": [0, 0, 10, 10],
+      "number of rows": 1,
+      "number of columns": 1,
+      "rows": [
+        {
+          "type": "table row",
+          "row number": 1,
+          "cells": [
+            {
+              "type": "table cell",
+              "id": 4,
+              "page number": 3,
+              "bounding box": [0, 0, 10, 10],
+              "row number": 1,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 5,
+                  "page number": 3,
+                  "bounding box": [0, 0, 10, 10],
+                  "font": "Noto Sans",
+                  "font size": 9,
+                  "text color": "[0,0,0]",
+                  "content": "Bảng tham chiếu OCR"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

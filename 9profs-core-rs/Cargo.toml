@@ -14,6 +14,7 @@ members = [
     "crates/nineprofs-mcp",
     "crates/nineprofs-agent",
     "crates/nineprofs-research",
+    "crates/nineprofs-research-opendataloader",
     "crates/nineprofs-research-dify",
     "crates/nineprofs-structured-model",
     "crates/nineprofs-research-assessor",
