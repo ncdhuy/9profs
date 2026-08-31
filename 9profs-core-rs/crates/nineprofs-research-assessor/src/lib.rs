@@ -119,22 +119,15 @@ impl CitationAssessorConfig {
     }
 
     pub fn from_env() -> Self {
-        let provider = std::env::var("NINEPROFS_CITATION_ASSESSOR_PROVIDER")
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        let model = std::env::var("NINEPROFS_CITATION_ASSESSOR_MODEL").unwrap_or_default();
-        let base_url = std::env::var("NINEPROFS_CITATION_ASSESSOR_BASE_URL").ok();
-        let api_key_env = std::env::var("NINEPROFS_CITATION_ASSESSOR_API_KEY_ENV")
-            .ok()
-            .unwrap_or_default();
-        let mut config = Self::new(provider, model, base_url, api_key_env);
-        if let Ok(value) = std::env::var("NINEPROFS_CITATION_ASSESSOR_TIMEOUT_MS")
-            && let Ok(milliseconds) = value.parse::<u64>()
-        {
-            config.timeout = Duration::from_millis(milliseconds.clamp(100, 120_000));
+        let config = StructuredModelConfig::from_env();
+        Self {
+            provider: config.provider,
+            model: config.model,
+            base_url: config.base_url,
+            api_key_env: config.api_key_env,
+            timeout: config.timeout,
+            ..Self::default()
         }
-        config
     }
 
     pub fn validate(&self, credential: Option<&str>) -> Result<(), CitationAssessorConfigError> {
@@ -179,11 +172,7 @@ impl CitationAssessorConfig {
     }
 
     fn configured_credential(&self) -> Option<String> {
-        if self.api_key_env.trim().is_empty() {
-            None
-        } else {
-            std::env::var(self.api_key_env.trim()).ok()
-        }
+        self.shared_config().credential()
     }
 
     fn shared_config(&self) -> StructuredModelConfig {
@@ -750,7 +739,8 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    const TEST_KEY_ENV: &str = "NINEPROFS_CITATION_ASSESSOR_TEST_KEY";
+    const TEST_KEY_ENV: &str = "NINEPROFS_MODEL_TEST_KEY";
+    const SHARED_TEST_KEY_ENV: &str = "NINEPROFS_MODEL_ENV_TEST_KEY";
     const TEST_KEY: &str = "citation-assessor-test-secret";
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1140,7 +1130,7 @@ mod tests {
             "openai",
             "test-model",
             Some("not-a-url".to_owned()),
-            "NINEPROFS_CITATION_ASSESSOR_MISSING_KEY",
+            "NINEPROFS_MODEL_MISSING_KEY",
         )
         .readiness();
         assert_eq!(
@@ -1201,29 +1191,36 @@ mod tests {
     }
 
     #[test]
-    fn from_env_uses_only_citation_assessor_prefix() {
+    fn all_semantic_assessors_use_shared_model_configuration() {
         let _guard = ENV_LOCK.lock().unwrap();
         let names = [
-            "NINEPROFS_CITATION_ASSESSOR_PROVIDER",
-            "NINEPROFS_CITATION_ASSESSOR_MODEL",
-            "NINEPROFS_CITATION_ASSESSOR_BASE_URL",
-            "NINEPROFS_CITATION_ASSESSOR_API_KEY_ENV",
-            "NINEPROFS_CLAIM_EXTRACTOR_PROVIDER",
-            "NINEPROFS_CLAIM_EXTRACTOR_MODEL",
+            "NINEPROFS_MODEL_PROVIDER",
+            "NINEPROFS_MODEL_MODEL",
+            "NINEPROFS_MODEL_BASE_URL",
+            "NINEPROFS_MODEL_API_KEY_ENV",
+            "NINEPROFS_MODEL_TIMEOUT_MS",
+            SHARED_TEST_KEY_ENV,
         ];
         let previous = names
             .iter()
             .map(|name| (*name, std::env::var(name).ok()))
             .collect::<Vec<_>>();
         unsafe {
-            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_PROVIDER", "openai");
-            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_MODEL", "citation-model");
-            std::env::remove_var("NINEPROFS_CITATION_ASSESSOR_BASE_URL");
-            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_API_KEY_ENV", TEST_KEY_ENV);
-            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_PROVIDER", "anthropic");
-            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_MODEL", "claim-model");
+            std::env::set_var("NINEPROFS_MODEL_PROVIDER", "openai");
+            std::env::set_var("NINEPROFS_MODEL_MODEL", "shared-model");
+            std::env::set_var("NINEPROFS_MODEL_BASE_URL", "http://127.0.0.1:1/v1");
+            std::env::set_var("NINEPROFS_MODEL_API_KEY_ENV", SHARED_TEST_KEY_ENV);
+            std::env::set_var("NINEPROFS_MODEL_TIMEOUT_MS", "120000");
+            std::env::set_var(SHARED_TEST_KEY_ENV, TEST_KEY);
         }
         let config = CitationAssessorConfig::from_env();
+        let expectation = CitationExpectationAssessorConfig::from_env();
+        let candidates = CrossClaimCandidateDiscoveryConfig::from_env();
+        let consistency = CrossClaimConsistencyAssessorConfig::from_env();
+        assert!(config.is_ready());
+        assert!(expectation.is_ready());
+        assert!(candidates.is_ready());
+        assert!(consistency.is_ready());
         for (name, value) in previous {
             unsafe {
                 match value {
@@ -1233,8 +1230,39 @@ mod tests {
             }
         }
         assert_eq!(config.provider, "openai");
-        assert_eq!(config.model, "citation-model");
-        assert_eq!(config.api_key_env, TEST_KEY_ENV);
+        assert_eq!(config.model, "shared-model");
+        assert_eq!(config.base_url.as_deref(), Some("http://127.0.0.1:1/v1"));
+        assert_eq!(config.api_key_env, SHARED_TEST_KEY_ENV);
+        assert_eq!(config.timeout, Duration::from_secs(120));
+        for (provider, model, base_url, api_key_env, timeout) in [
+            (
+                &expectation.provider,
+                &expectation.model,
+                &expectation.base_url,
+                &expectation.api_key_env,
+                expectation.timeout,
+            ),
+            (
+                &candidates.provider,
+                &candidates.model,
+                &candidates.base_url,
+                &candidates.api_key_env,
+                candidates.timeout,
+            ),
+            (
+                &consistency.provider,
+                &consistency.model,
+                &consistency.base_url,
+                &consistency.api_key_env,
+                consistency.timeout,
+            ),
+        ] {
+            assert_eq!(provider, "openai");
+            assert_eq!(model, "shared-model");
+            assert_eq!(base_url.as_deref(), Some("http://127.0.0.1:1/v1"));
+            assert_eq!(api_key_env, SHARED_TEST_KEY_ENV);
+            assert_eq!(timeout, Duration::from_secs(120));
+        }
     }
 
     #[test]

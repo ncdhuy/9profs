@@ -12,6 +12,11 @@ use thiserror::Error;
 
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_MAX_RESPONSE_BYTES: usize = 256 * 1024;
+const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 1_024;
+const DEFAULT_API_KEY_ENV: &str = "OPENAI_API_KEY";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructuredModelProvider {
     OpenAi,
@@ -71,6 +76,45 @@ impl fmt::Debug for StructuredModelConfig {
 }
 
 impl StructuredModelConfig {
+    pub fn from_env() -> Self {
+        let provider = std::env::var("NINEPROFS_MODEL_PROVIDER")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let model = std::env::var("NINEPROFS_MODEL_MODEL")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let base_url = std::env::var("NINEPROFS_MODEL_BASE_URL")
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_owned())
+            .filter(|value| !value.is_empty());
+        let api_key_env = std::env::var("NINEPROFS_MODEL_API_KEY_ENV")
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_else(|_| DEFAULT_API_KEY_ENV.to_owned());
+        let timeout = std::env::var("NINEPROFS_MODEL_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|milliseconds| Duration::from_millis(milliseconds.clamp(100, 120_000)))
+            .unwrap_or(DEFAULT_TIMEOUT);
+        Self {
+            provider,
+            model,
+            base_url,
+            api_key_env,
+            timeout,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        }
+    }
+
+    pub fn credential(&self) -> Option<String> {
+        (!self.api_key_env.trim().is_empty())
+            .then(|| std::env::var(self.api_key_env.trim()).ok())
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+    }
+
     pub fn provider(&self) -> Result<StructuredModelProvider, StructuredModelConfigError> {
         StructuredModelProvider::parse(&self.provider)
     }
@@ -268,11 +312,13 @@ pub enum StructuredModelTransportError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::{sync::Mutex, time::Duration};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn config(base_url: String) -> StructuredModelConfig {
         StructuredModelConfig {
@@ -355,6 +401,58 @@ mod tests {
         );
         assert!(debug.contains("TEST_KEY"));
         assert!(!debug.contains("secret-value"));
+    }
+
+    #[test]
+    fn from_env_reads_shared_model_settings_and_named_credential() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = [
+            "NINEPROFS_MODEL_PROVIDER",
+            "NINEPROFS_MODEL_MODEL",
+            "NINEPROFS_MODEL_BASE_URL",
+            "NINEPROFS_MODEL_API_KEY_ENV",
+            "NINEPROFS_MODEL_TIMEOUT_MS",
+            "OPENAI_API_KEY",
+            "OPENAI_KEY",
+        ];
+        let previous = names
+            .iter()
+            .map(|name| (*name, std::env::var(name).ok()))
+            .collect::<Vec<_>>();
+        unsafe {
+            std::env::set_var("NINEPROFS_MODEL_PROVIDER", "openai");
+            std::env::set_var("NINEPROFS_MODEL_MODEL", "shared-model");
+            std::env::set_var("NINEPROFS_MODEL_BASE_URL", "https://example.test/v1/");
+            std::env::set_var("NINEPROFS_MODEL_API_KEY_ENV", "OPENAI_API_KEY");
+            std::env::set_var("NINEPROFS_MODEL_TIMEOUT_MS", "120000");
+            std::env::set_var("OPENAI_API_KEY", "shared-secret");
+            std::env::set_var("OPENAI_KEY", "stale-secret");
+        }
+        let config = StructuredModelConfig::from_env();
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "shared-model");
+        assert_eq!(config.base_url.as_deref(), Some("https://example.test/v1"));
+        assert_eq!(config.api_key_env, "OPENAI_API_KEY");
+        assert_eq!(config.timeout, Duration::from_secs(120));
+        assert_eq!(config.credential().as_deref(), Some("shared-secret"));
+        assert!(!format!("{config:?}").contains("shared-secret"));
+
+        unsafe {
+            std::env::remove_var("NINEPROFS_MODEL_API_KEY_ENV");
+            std::env::remove_var("OPENAI_API_KEY");
+        }
+        let without_shared_credential = StructuredModelConfig::from_env();
+        assert_eq!(without_shared_credential.api_key_env, "OPENAI_API_KEY");
+        assert!(without_shared_credential.credential().is_none());
+
+        for (name, value) in previous {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
     }
 
     #[test]

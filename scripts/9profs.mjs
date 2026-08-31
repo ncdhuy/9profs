@@ -12,48 +12,22 @@ const DOCTOR_RETRIEVAL_CASE_ID = '__9profs_doctor__'
 const DEFAULT_POLL_INTERVAL_MS = 250
 const DEFAULT_CORE_TIMEOUT_MS = 180_000
 
+export const SEMANTIC_MODEL_ENV = {
+  providerEnv: 'NINEPROFS_MODEL_PROVIDER',
+  modelEnv: 'NINEPROFS_MODEL_MODEL',
+  baseUrlEnv: 'NINEPROFS_MODEL_BASE_URL',
+  apiKeyEnvEnv: 'NINEPROFS_MODEL_API_KEY_ENV',
+  timeoutEnv: 'NINEPROFS_MODEL_TIMEOUT_MS',
+}
+
 export const MODEL_TASKS = [
-  {
-    label: 'Claim extractor',
-    prefix: 'CLAIM_EXTRACTOR',
-    providerEnv: 'NINEPROFS_CLAIM_EXTRACTOR_PROVIDER',
-    modelEnv: 'NINEPROFS_CLAIM_EXTRACTOR_MODEL',
-    baseUrlEnv: 'NINEPROFS_CLAIM_EXTRACTOR_BASE_URL',
-    apiKeyEnvEnv: 'NINEPROFS_CLAIM_EXTRACTOR_API_KEY_ENV',
-  },
-  {
-    label: 'Citation assessor',
-    prefix: 'CITATION_ASSESSOR',
-    providerEnv: 'NINEPROFS_CITATION_ASSESSOR_PROVIDER',
-    modelEnv: 'NINEPROFS_CITATION_ASSESSOR_MODEL',
-    baseUrlEnv: 'NINEPROFS_CITATION_ASSESSOR_BASE_URL',
-    apiKeyEnvEnv: 'NINEPROFS_CITATION_ASSESSOR_API_KEY_ENV',
-  },
-  {
-    label: 'Citation expectation',
-    prefix: 'CITATION_EXPECTATION_ASSESSOR',
-    providerEnv: 'NINEPROFS_CITATION_EXPECTATION_ASSESSOR_PROVIDER',
-    modelEnv: 'NINEPROFS_CITATION_EXPECTATION_ASSESSOR_MODEL',
-    baseUrlEnv: 'NINEPROFS_CITATION_EXPECTATION_ASSESSOR_BASE_URL',
-    apiKeyEnvEnv: 'NINEPROFS_CITATION_EXPECTATION_ASSESSOR_API_KEY_ENV',
-  },
-  {
-    label: 'Cross-claim discovery',
-    prefix: 'CROSS_CLAIM_CANDIDATE',
-    providerEnv: 'NINEPROFS_CROSS_CLAIM_CANDIDATE_PROVIDER',
-    modelEnv: 'NINEPROFS_CROSS_CLAIM_CANDIDATE_MODEL',
-    baseUrlEnv: 'NINEPROFS_CROSS_CLAIM_CANDIDATE_BASE_URL',
-    apiKeyEnvEnv: 'NINEPROFS_CROSS_CLAIM_CANDIDATE_API_KEY_ENV',
-  },
-  {
-    label: 'Cross-claim assessment',
-    prefix: 'CROSS_CLAIM_CONSISTENCY_ASSESSOR',
-    providerEnv: 'NINEPROFS_CROSS_CLAIM_CONSISTENCY_ASSESSOR_PROVIDER',
-    modelEnv: 'NINEPROFS_CROSS_CLAIM_CONSISTENCY_ASSESSOR_MODEL',
-    baseUrlEnv: 'NINEPROFS_CROSS_CLAIM_CONSISTENCY_ASSESSOR_BASE_URL',
-    apiKeyEnvEnv: 'NINEPROFS_CROSS_CLAIM_CONSISTENCY_ASSESSOR_API_KEY_ENV',
-  },
-]
+  'Claim extractor',
+  'Citation assessor',
+  'Citation expectation',
+  'Cross-claim discovery',
+  'Cross-claim assessment',
+  'Regulation requirement candidates',
+].map((label) => ({ label, ...SEMANTIC_MODEL_ENV }))
 
 const ENV_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/
 
@@ -136,24 +110,27 @@ function defaultApiKeyEnv(provider) {
 }
 
 export function evaluateModelReadiness(env, task) {
-  const provider = valueOf(env, task.providerEnv)
-  const model = valueOf(env, task.modelEnv)
-  const baseUrl = valueOf(env, task.baseUrlEnv)
-  const apiKeyEnv = valueOf(env, task.apiKeyEnvEnv) || defaultApiKeyEnv(provider)
+  const provider = valueOf(env, SEMANTIC_MODEL_ENV.providerEnv)
+  const model = valueOf(env, SEMANTIC_MODEL_ENV.modelEnv)
+  const baseUrl = valueOf(env, SEMANTIC_MODEL_ENV.baseUrlEnv)
+  const apiKeyEnv = valueOf(env, SEMANTIC_MODEL_ENV.apiKeyEnvEnv) || defaultApiKeyEnv(provider)
 
   if (!provider && !model && !baseUrl) {
     return {
       status: 'NOT CONFIGURED',
-      reason: `Set ${task.providerEnv} and ${task.modelEnv}.`,
+      reason: `Set ${SEMANTIC_MODEL_ENV.providerEnv} and ${SEMANTIC_MODEL_ENV.modelEnv}.`,
     }
   }
   if (!provider) {
-    return { status: 'NOT READY', reason: `Set ${task.providerEnv}.` }
+    return { status: 'NOT READY', reason: `Set ${SEMANTIC_MODEL_ENV.providerEnv}.` }
   }
   if (provider !== 'openai' && provider !== 'anthropic') {
-    return { status: 'NOT READY', reason: `${task.providerEnv} must be openai or anthropic.` }
+    return {
+      status: 'NOT READY',
+      reason: `${SEMANTIC_MODEL_ENV.providerEnv} must be openai or anthropic.`,
+    }
   }
-  if (!model) return { status: 'NOT READY', reason: `Set ${task.modelEnv}.` }
+  if (!model) return { status: 'NOT READY', reason: `Set ${SEMANTIC_MODEL_ENV.modelEnv}.` }
   if (baseUrl) {
     try {
       const parsed = new URL(baseUrl)
@@ -161,14 +138,14 @@ export function evaluateModelReadiness(env, task) {
     } catch {
       return {
         status: 'NOT READY',
-        reason: `Set ${task.baseUrlEnv} to an http(s) URL or leave it empty.`,
+        reason: `Set ${SEMANTIC_MODEL_ENV.baseUrlEnv} to an http(s) URL or leave it empty.`,
       }
     }
   }
   if (!valueOf(env, apiKeyEnv)) {
     return {
       status: 'NOT READY',
-      reason: `Set ${apiKeyEnv} (named by ${task.apiKeyEnvEnv}).`,
+      reason: `Set ${apiKeyEnv} (named by ${SEMANTIC_MODEL_ENV.apiKeyEnvEnv}).`,
     }
   }
   return { status: 'READY', reason: '' }
@@ -520,6 +497,44 @@ export async function runDev({
   }
 }
 
+export async function runCore({
+  rootDir = ROOT_DIR,
+  baseEnv = process.env,
+  spawnImpl = defaultSpawn,
+  log = console.log,
+} = {}) {
+  const { env, fileExists } = loadDogfoodingEnv(rootDir, baseEnv)
+  if (!fileExists) log(`Missing ${LOCAL_ENV_FILENAME}; run npm run setup:9profs first.`)
+  const command = process.platform === 'win32' ? 'cargo.exe' : 'cargo'
+  const child = spawnImpl(
+    command,
+    [
+      'run',
+      '--manifest-path',
+      join(rootDir, '9profs-core-rs', 'Cargo.toml'),
+      '--bin',
+      'nineprofs-core',
+    ],
+    {
+      cwd: rootDir,
+      env,
+      stdio: 'inherit',
+      shell: false,
+      windowsHide: false,
+    },
+  )
+  return await new Promise((resolve) => {
+    let settled = false
+    const finish = (code) => {
+      if (settled) return
+      settled = true
+      resolve(code)
+    }
+    child.once('exit', (code, signal) => finish(signal ? 1 : code ?? 1))
+    child.once('error', () => finish(1))
+  })
+}
+
 async function checkDify(env, coreBaseUrl, { fetchImpl = globalThis.fetch } = {}) {
   const baseUrl = valueOf(env, 'NINEPROFS_DIFY_BASE_URL')
   const apiKey = valueOf(env, 'NINEPROFS_DIFY_API_KEY')
@@ -671,7 +686,8 @@ export async function main(argv = process.argv) {
     return report.exitCode
   }
   if (command === 'dev') return runDev()
-  console.log('Usage: node scripts/9profs.mjs <setup|doctor|dev>')
+  if (command === 'core') return runCore()
+  console.log('Usage: node scripts/9profs.mjs <setup|doctor|dev|core>')
   return 0
 }
 

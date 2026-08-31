@@ -40,7 +40,7 @@
     "test:9profs:core": "node --test scripts/9profs-core-smoke.test.mjs",
     "test:officecli:qualification": "node scripts/officecli-qualification.mjs",
     "test:officecli:mutation-qualification": "node scripts/officecli-mutation-qualification.mjs",
-    "core:run": "cargo run --manifest-path 9profs-core-rs/Cargo.toml --bin nineprofs-core",
+    "core:run": "node scripts/9profs.mjs core",
     "shell": "npm run build:all && electron apps/shell",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "notices": "node tools/gen-third-party-notices.mjs",

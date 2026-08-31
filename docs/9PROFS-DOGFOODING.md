@@ -38,23 +38,22 @@ command started it. `npm run dev` remains unchanged.
 
 ## Research configuration
 
-`.env.9profs.example` contains the exact current variable names. Configure
-each semantic task separately, even when all tasks use the same provider,
-model, and key environment variable:
+`.env.9profs.example` contains the exact current variable names. All semantic
+consumers use one default model configuration:
 
-- Claim extraction: `NINEPROFS_CLAIM_EXTRACTOR_*`.
-- Citation assessment: `NINEPROFS_CITATION_ASSESSOR_*`.
-- Citation expectation: `NINEPROFS_CITATION_EXPECTATION_ASSESSOR_*`.
-- Cross-claim candidate discovery: `NINEPROFS_CROSS_CLAIM_CANDIDATE_*`.
-- Cross-claim consistency assessment:
-  `NINEPROFS_CROSS_CLAIM_CONSISTENCY_ASSESSOR_*`.
+- `NINEPROFS_MODEL_PROVIDER`
+- `NINEPROFS_MODEL_MODEL`
+- `NINEPROFS_MODEL_BASE_URL`
+- `NINEPROFS_MODEL_API_KEY_ENV`
+- `NINEPROFS_MODEL_TIMEOUT_MS`
 
-Each task uses `PROVIDER`, `MODEL`, `BASE_URL`, and `API_KEY_ENV`; the four
-assessor/discovery tasks also accept their existing `TIMEOUT_MS` variable.
-Current structured-model providers are `openai` and `anthropic`. An
-OpenAI-compatible or local server uses `openai` with its own `BASE_URL` and a
-non-empty key value in the environment named by `API_KEY_ENV`; the server may
-ignore that value if it does not require authentication.
+This configuration is shared by claim extraction, citation assessment, citation
+expectation assessment, cross-claim candidate discovery, cross-claim consistency
+assessment, and regulation requirement candidate extraction. The API key value
+is stored only in the environment variable named by `NINEPROFS_MODEL_API_KEY_ENV`
+(normally `OPENAI_API_KEY`). Current structured-model providers are `openai`
+and `anthropic`. An OpenAI-compatible or local server uses `openai` with its own
+`BASE_URL`; the server may ignore the key if it does not require authentication.
 
 Dify is separate:
 

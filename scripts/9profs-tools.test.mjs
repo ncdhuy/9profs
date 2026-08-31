@@ -15,6 +15,7 @@ import {
   loadDogfoodingEnv,
   parseEnvFile,
   launchNpm,
+  runCore,
   runDev,
   setupLocalEnv,
   superviseChildren,
@@ -58,6 +59,7 @@ test('example contains runtime Research configuration without secrets', () => {
       task.modelEnv,
       task.baseUrlEnv,
       task.apiKeyEnvEnv,
+      task.timeoutEnv,
     ]),
     'NINEPROFS_DIFY_BASE_URL',
     'NINEPROFS_DIFY_API_KEY',
@@ -74,7 +76,7 @@ test('doctor distinguishes provider readiness states', () => {
   const task = MODEL_TASKS[0]
   const missing = evaluateModelReadiness({}, task)
   assert.equal(missing.status, 'NOT CONFIGURED')
-  assert.match(missing.reason, /NINEPROFS_CLAIM_EXTRACTOR_PROVIDER/)
+  assert.match(missing.reason, /NINEPROFS_MODEL_PROVIDER/)
 
   const ready = evaluateModelReadiness(
     {
@@ -222,7 +224,14 @@ test('dev launcher passes loaded env to Core and app dev commands', async () => 
   try {
     writeFileSync(
       join(rootDir, '.env.9profs'),
-      'NINEPROFS_CORE_ADDR=127.0.0.1:39761\nDOGFOODING_VALUE=from-file\n',
+      'NINEPROFS_CORE_ADDR=127.0.0.1:39761\n' +
+        'NINEPROFS_MODEL_PROVIDER=openai\n' +
+        'NINEPROFS_MODEL_MODEL=shared-model\n' +
+        'NINEPROFS_MODEL_BASE_URL=https://api.openai.com/v1\n' +
+        'NINEPROFS_MODEL_API_KEY_ENV=OPENAI_API_KEY\n' +
+        'NINEPROFS_MODEL_TIMEOUT_MS=120000\n' +
+        'OPENAI_API_KEY=file-secret\n' +
+        'DOGFOODING_VALUE=from-file\n',
     )
     const probes = [
       { reachable: false, compatible: false, reason: 'Core did not answer' },
@@ -252,7 +261,45 @@ test('dev launcher passes loaded env to Core and app dev commands', async () => 
     assert.strictEqual(launches[0].options.env, launches[1].options.env)
     assert.equal(launches[0].options.env.DOGFOODING_VALUE, 'from-file')
     assert.equal(launches[0].options.env.BASE_VALUE, 'from-process')
+    assert.equal(launches[0].options.env.NINEPROFS_MODEL_MODEL, 'shared-model')
+    assert.equal(launches[0].options.env.OPENAI_API_KEY, 'file-secret')
     children[1].emit('exit', 0, null)
+    assert.equal(await resultPromise, 0)
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true })
+  }
+})
+
+test('direct Core launcher loads shared model environment before runtime starts', async () => {
+  const rootDir = tempDirectory()
+  try {
+    writeFileSync(
+      join(rootDir, '.env.9profs'),
+      'NINEPROFS_MODEL_PROVIDER=openai\n' +
+        'NINEPROFS_MODEL_MODEL=file-model\n' +
+        'NINEPROFS_MODEL_BASE_URL=https://api.openai.com/v1\n' +
+        'NINEPROFS_MODEL_API_KEY_ENV=OPENAI_API_KEY\n' +
+        'NINEPROFS_MODEL_TIMEOUT_MS=120000\n' +
+        'OPENAI_API_KEY=file-secret\n',
+    )
+    const child = new EventEmitter()
+    const launches = []
+    const resultPromise = runCore({
+      rootDir,
+      baseEnv: { NINEPROFS_MODEL_MODEL: 'process-model' },
+      spawnImpl: (command, args, options) => {
+        launches.push({ command, args, options })
+        return child
+      },
+      log: () => {},
+    })
+    await new Promise((resolveResult) => setImmediate(resolveResult))
+    assert.equal(launches.length, 1)
+    assert.deepEqual(launches[0].args.slice(-2), ['--bin', 'nineprofs-core'])
+    assert.equal(launches[0].options.env.NINEPROFS_MODEL_PROVIDER, 'openai')
+    assert.equal(launches[0].options.env.NINEPROFS_MODEL_MODEL, 'process-model')
+    assert.equal(launches[0].options.env.OPENAI_API_KEY, 'file-secret')
+    child.emit('exit', 0, null)
     assert.equal(await resultPromise, 0)
   } finally {
     rmSync(rootDir, { recursive: true, force: true })

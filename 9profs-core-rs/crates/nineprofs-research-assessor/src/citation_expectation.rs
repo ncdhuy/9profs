@@ -96,20 +96,15 @@ impl CitationExpectationAssessorConfig {
     }
 
     pub fn from_env() -> Self {
-        let provider =
-            std::env::var("NINEPROFS_CITATION_EXPECTATION_ASSESSOR_PROVIDER").unwrap_or_default();
-        let model =
-            std::env::var("NINEPROFS_CITATION_EXPECTATION_ASSESSOR_MODEL").unwrap_or_default();
-        let base_url = std::env::var("NINEPROFS_CITATION_EXPECTATION_ASSESSOR_BASE_URL").ok();
-        let api_key_env = std::env::var("NINEPROFS_CITATION_EXPECTATION_ASSESSOR_API_KEY_ENV")
-            .unwrap_or_default();
-        let mut config = Self::new(provider, model, base_url, api_key_env);
-        if let Ok(value) = std::env::var("NINEPROFS_CITATION_EXPECTATION_ASSESSOR_TIMEOUT_MS")
-            && let Ok(milliseconds) = value.parse::<u64>()
-        {
-            config.timeout = Duration::from_millis(milliseconds.clamp(100, 120_000));
+        let config = StructuredModelConfig::from_env();
+        Self {
+            provider: config.provider,
+            model: config.model,
+            base_url: config.base_url,
+            api_key_env: config.api_key_env,
+            timeout: config.timeout,
+            ..Self::default()
         }
-        config
     }
 
     pub fn is_ready(&self) -> bool {
@@ -121,7 +116,7 @@ impl CitationExpectationAssessorConfig {
     }
 
     fn credential(&self) -> Option<String> {
-        std::env::var(self.api_key_env.trim()).ok()
+        self.shared_config().credential()
     }
 
     fn shared_config(&self) -> StructuredModelConfig {

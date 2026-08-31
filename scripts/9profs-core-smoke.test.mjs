@@ -43,7 +43,13 @@ test('nineprofs-core boots with temporary storage and exposes health/runtime', a
     NINEPROFS_CORE_DATA_DIR: dataDir,
   }
   for (const task of MODEL_TASKS) {
-    for (const name of [task.providerEnv, task.modelEnv, task.baseUrlEnv, task.apiKeyEnvEnv])
+    for (const name of [
+      task.providerEnv,
+      task.modelEnv,
+      task.baseUrlEnv,
+      task.apiKeyEnvEnv,
+      task.timeoutEnv,
+    ])
       delete env[name]
   }
   for (const name of [

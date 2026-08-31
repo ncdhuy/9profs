@@ -144,23 +144,19 @@ impl ClaimExtractorConfig {
     }
 
     pub fn from_env() -> Self {
-        let provider = std::env::var("NINEPROFS_CLAIM_EXTRACTOR_PROVIDER").unwrap_or_default();
-        let model = std::env::var("NINEPROFS_CLAIM_EXTRACTOR_MODEL").unwrap_or_default();
-        let base_url = std::env::var("NINEPROFS_CLAIM_EXTRACTOR_BASE_URL").ok();
-        let api_key_env = std::env::var("NINEPROFS_CLAIM_EXTRACTOR_API_KEY_ENV").unwrap_or_else(
-            |_| match provider.trim() {
-                "anthropic" => "ANTHROPIC_API_KEY".to_owned(),
-                _ => "OPENAI_API_KEY".to_owned(),
-            },
-        );
-        Self::new(provider, model, base_url, api_key_env)
+        let config = StructuredModelConfig::from_env();
+        Self {
+            provider: config.provider,
+            model: config.model,
+            base_url: config.base_url,
+            api_key_env: config.api_key_env,
+            timeout: config.timeout,
+            ..Self::default()
+        }
     }
 
     fn credential(&self) -> Option<String> {
-        (!self.api_key_env.trim().is_empty())
-            .then(|| std::env::var(&self.api_key_env).ok())
-            .flatten()
-            .filter(|value| !value.is_empty())
+        self.shared_config().credential()
     }
 
     fn validate(&self, credential: Option<&str>) -> Result<(), ClaimExtractorConfigError> {
@@ -814,20 +810,19 @@ impl RegulationRequirementCandidateExtractorConfig {
     }
 
     pub fn from_env() -> Self {
-        let provider = std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_PROVIDER")
-            .unwrap_or_default();
-        let model =
-            std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_MODEL").unwrap_or_default();
-        let base_url = std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_BASE_URL").ok();
-        let api_key_env = std::env::var("NINEPROFS_REGULATION_REQUIREMENT_EXTRACTOR_API_KEY_ENV")
-            .unwrap_or_default();
-        Self::new(provider, model, base_url, api_key_env)
+        let config = StructuredModelConfig::from_env();
+        Self {
+            provider: config.provider,
+            model: config.model,
+            base_url: config.base_url,
+            api_key_env: config.api_key_env,
+            timeout: config.timeout,
+            ..Self::default()
+        }
     }
 
     fn credential(&self) -> Option<String> {
-        std::env::var(&self.api_key_env)
-            .ok()
-            .filter(|value| !value.trim().is_empty())
+        self.shared_config().credential()
     }
 
     fn configuration_error(&self) -> Option<RegulationRequirementCandidateExtractorConfigError> {
@@ -1269,7 +1264,8 @@ mod tests {
         net::TcpListener,
     };
 
-    const TEST_KEY_ENV: &str = "NINEPROFS_CLAIM_EXTRACTOR_TEST_KEY";
+    const TEST_KEY_ENV: &str = "NINEPROFS_MODEL_TEST_KEY";
+    const SHARED_TEST_KEY_ENV: &str = "NINEPROFS_MODEL_ENV_TEST_KEY";
     const TEST_KEY: &str = "claim-extractor-test-secret";
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1427,29 +1423,32 @@ mod tests {
     }
 
     #[test]
-    fn from_env_uses_only_claim_extractor_prefix() {
+    fn from_env_uses_shared_model_configuration() {
         let _guard = ENV_LOCK.lock().unwrap();
         let names = [
-            "NINEPROFS_CLAIM_EXTRACTOR_PROVIDER",
-            "NINEPROFS_CLAIM_EXTRACTOR_MODEL",
-            "NINEPROFS_CLAIM_EXTRACTOR_BASE_URL",
-            "NINEPROFS_CLAIM_EXTRACTOR_API_KEY_ENV",
-            "NINEPROFS_CITATION_ASSESSOR_PROVIDER",
-            "NINEPROFS_CITATION_ASSESSOR_MODEL",
+            "NINEPROFS_MODEL_PROVIDER",
+            "NINEPROFS_MODEL_MODEL",
+            "NINEPROFS_MODEL_BASE_URL",
+            "NINEPROFS_MODEL_API_KEY_ENV",
+            "NINEPROFS_MODEL_TIMEOUT_MS",
+            SHARED_TEST_KEY_ENV,
         ];
         let previous = names
             .iter()
             .map(|name| (*name, std::env::var(name).ok()))
             .collect::<Vec<_>>();
         unsafe {
-            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_PROVIDER", "anthropic");
-            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_MODEL", "claim-model");
-            std::env::remove_var("NINEPROFS_CLAIM_EXTRACTOR_BASE_URL");
-            std::env::set_var("NINEPROFS_CLAIM_EXTRACTOR_API_KEY_ENV", TEST_KEY_ENV);
-            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_PROVIDER", "openai");
-            std::env::set_var("NINEPROFS_CITATION_ASSESSOR_MODEL", "citation-model");
+            std::env::set_var("NINEPROFS_MODEL_PROVIDER", "openai");
+            std::env::set_var("NINEPROFS_MODEL_MODEL", "shared-model");
+            std::env::set_var("NINEPROFS_MODEL_BASE_URL", "http://127.0.0.1:1/v1");
+            std::env::set_var("NINEPROFS_MODEL_API_KEY_ENV", SHARED_TEST_KEY_ENV);
+            std::env::set_var("NINEPROFS_MODEL_TIMEOUT_MS", "120000");
+            std::env::set_var(SHARED_TEST_KEY_ENV, TEST_KEY);
         }
         let config = ClaimExtractorConfig::from_env();
+        let regulation = RegulationRequirementCandidateExtractorConfig::from_env();
+        assert!(config.configuration_error().is_none());
+        assert!(regulation.configuration_error().is_none());
         for (name, value) in previous {
             unsafe {
                 match value {
@@ -1458,9 +1457,19 @@ mod tests {
                 }
             }
         }
-        assert_eq!(config.provider, "anthropic");
-        assert_eq!(config.model, "claim-model");
-        assert_eq!(config.api_key_env, TEST_KEY_ENV);
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "shared-model");
+        assert_eq!(config.base_url.as_deref(), Some("http://127.0.0.1:1/v1"));
+        assert_eq!(config.api_key_env, SHARED_TEST_KEY_ENV);
+        assert_eq!(config.timeout, Duration::from_secs(120));
+        assert_eq!(regulation.provider, "openai");
+        assert_eq!(regulation.model, "shared-model");
+        assert_eq!(
+            regulation.base_url.as_deref(),
+            Some("http://127.0.0.1:1/v1")
+        );
+        assert_eq!(regulation.api_key_env, SHARED_TEST_KEY_ENV);
+        assert_eq!(regulation.timeout, Duration::from_secs(120));
     }
 
     #[tokio::test]

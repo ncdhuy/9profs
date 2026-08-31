@@ -397,9 +397,10 @@ POST creation plus read/list endpoints and identifier-only lifecycle events.
 
 `nineprofs-research-assessor` supplies the production
 `CitationAssessmentProvider` behind the 5C2A seam. It performs one bounded,
-stateless OpenAI or Anthropic request, with launch-scoped assessor settings
-separate from `NINEPROFS_AGENT_*`. OpenAI uses JSON mode; Anthropic uses a
-forced tool schema. The adapter resolves API credentials from the configured
+stateless OpenAI or Anthropic request, with one shared launch-scoped
+semantic-model configuration separate from `NINEPROFS_AGENT_*`. OpenAI uses
+JSON mode; Anthropic uses a forced tool schema. The adapter resolves API
+credentials from the configured
 environment-variable name at invocation time and redacts credentials from its
 configuration/debug surface.
 
