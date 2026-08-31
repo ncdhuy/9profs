@@ -7,7 +7,6 @@
 //! force OCR and `vi,en`; this adapter does not install, start, or upload to it.
 
 use std::{
-    collections::BTreeSet,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -118,8 +117,6 @@ pub enum OpenDataLoaderError {
     MissingPageMetadata,
     #[error("OpenDataLoader output contains invalid page number: {0}")]
     InvalidPageNumber(String),
-    #[error("OpenDataLoader output contains duplicate element id: {0}")]
-    DuplicateElementId(i64),
     #[error("research PDF extraction persistence failed: {0}")]
     Research(#[from] nineprofs_research::ResearchError),
 }
@@ -234,9 +231,8 @@ pub fn normalize_json(json: &str) -> Result<OpenDataLoaderPdfExtraction, OpenDat
             OpenDataLoaderError::InvalidOutput("root kids must be an array".to_owned())
         })?;
     let mut page_texts = vec![Vec::new(); page_count as usize];
-    let mut seen_ids = BTreeSet::new();
     for element in kids {
-        visit_element(element, None, page_count, &mut page_texts, &mut seen_ids)?;
+        visit_element(element, None, page_count, &mut page_texts)?;
     }
     Ok(OpenDataLoaderPdfExtraction {
         extractor_version: None,
@@ -257,7 +253,6 @@ fn visit_element(
     inherited_page: Option<u32>,
     page_count: u32,
     page_texts: &mut [Vec<String>],
-    seen_ids: &mut BTreeSet<i64>,
 ) -> Result<(), OpenDataLoaderError> {
     let object = value.as_object().ok_or_else(|| {
         OpenDataLoaderError::InvalidOutput("element must be an object".to_owned())
@@ -266,16 +261,6 @@ fn visit_element(
         Some(value) => Some(parse_page_number(value, page_count)?),
         None => inherited_page,
     };
-    // Multiple OpenDataLoader elements on one physical page are expected;
-    // duplicate provider records are detected by their element id instead.
-    if let Some(id) = object.get("id") {
-        let id = id.as_i64().ok_or_else(|| {
-            OpenDataLoaderError::InvalidOutput("element id must be an integer".to_owned())
-        })?;
-        if !seen_ids.insert(id) {
-            return Err(OpenDataLoaderError::DuplicateElementId(id));
-        }
-    }
     if let Some(content) = object.get("content") {
         let content = content.as_str().ok_or_else(|| {
             OpenDataLoaderError::InvalidOutput("element content must be a string".to_owned())
@@ -289,7 +274,7 @@ fn visit_element(
                 OpenDataLoaderError::InvalidOutput(format!("{key} must be an array"))
             })?;
             for child in children {
-                visit_element(child, page, page_count, page_texts, seen_ids)?;
+                visit_element(child, page, page_count, page_texts)?;
             }
         }
     }
@@ -522,6 +507,8 @@ mod tests {
     use super::*;
 
     const FIXTURE: &str = include_str!("../tests/fixtures/scanned-regulation.json");
+    const DUPLICATE_TABLE_ROW_IDS_FIXTURE: &str =
+        include_str!("../tests/fixtures/duplicate-table-row-ids.json");
 
     #[derive(Clone)]
     struct FakeExecutor {
@@ -590,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_json_page_numbers_and_duplicate_elements() {
+    fn rejects_invalid_json_and_page_numbers_but_accepts_duplicate_provider_ids() {
         assert!(matches!(
             normalize_json("{"),
             Err(OpenDataLoaderError::InvalidJson(_))
@@ -603,17 +590,9 @@ mod tests {
             normalize_json(&invalid_page.to_string()),
             Err(OpenDataLoaderError::InvalidPageNumber(_))
         ));
-        let duplicate = json!({
-            "number of pages": 1,
-            "kids": [
-                {"type": "paragraph", "id": 1, "page number": 1, "content": "x"},
-                {"type": "paragraph", "id": 1, "page number": 1, "content": "x"}
-            ]
-        });
-        assert!(matches!(
-            normalize_json(&duplicate.to_string()),
-            Err(OpenDataLoaderError::DuplicateElementId(1))
-        ));
+        let extraction = normalize_json(DUPLICATE_TABLE_ROW_IDS_FIXTURE).unwrap();
+        assert_eq!(extraction.page_count, 1);
+        assert_eq!(extraction.pages[0].text, "Dòng thứ nhất\nDòng thứ hai");
     }
 
     #[test]

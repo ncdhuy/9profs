@@ -1,0 +1,56 @@
+{
+  "number of pages": 1,
+  "kids": [
+    {
+      "type": "table",
+      "id": 1,
+      "page number": 1,
+      "number of rows": 2,
+      "number of columns": 1,
+      "rows": [
+        {
+          "type": "table row",
+          "row number": 1,
+          "id": 0,
+          "cells": [
+            {
+              "type": "table cell",
+              "row number": 1,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 10,
+                  "content": "Dòng thứ nhất"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 2,
+          "id": 0,
+          "cells": [
+            {
+              "type": "table cell",
+              "row number": 2,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 11,
+                  "content": "Dòng thứ hai"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
