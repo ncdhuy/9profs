@@ -72,6 +72,7 @@ Return zero claims for headings, transitions, acknowledgements, formatting text,
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 1_024;
+const DEFAULT_REGULATION_MAX_OUTPUT_TOKENS: u32 = 8_192;
 const MAX_REQUEST_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -777,7 +778,7 @@ impl Default for RegulationRequirementCandidateExtractorConfig {
             api_key_env: "OPENAI_API_KEY".to_owned(),
             timeout: DEFAULT_TIMEOUT,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
-            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            max_output_tokens: DEFAULT_REGULATION_MAX_OUTPUT_TOKENS,
         }
     }
 }
@@ -914,8 +915,7 @@ impl ModelRegulationRequirementCandidateExtractor {
             }),
             _ => json!({
                 "model": self.config.model,
-                "temperature": 0,
-                "max_tokens": self.config.max_output_tokens,
+                "max_completion_tokens": self.config.max_output_tokens,
                 "messages": [
                     {"role": "system", "content": REGULATION_REQUIREMENT_EXTRACTION_INSTRUCTION},
                     {"role": "user", "content": prompt}
@@ -1117,10 +1117,19 @@ fn map_wire_regulation_candidate(
         normalized_requirement: candidate.normalized_requirement,
         source_locator,
         authority_locator,
-        applicability: candidate.applicability,
+        applicability: normalize_regulation_applicability(candidate.applicability),
         risk_flags: candidate.risk_flags,
         review_notes: candidate.review_notes,
     })
+}
+
+fn normalize_regulation_applicability(
+    mut applicability: RegulationApplicability,
+) -> RegulationApplicability {
+    applicability
+        .facets
+        .retain(|_facet, values| !values.is_empty());
+    applicability
 }
 
 fn regulation_requirement_extraction_schema() -> Value {
@@ -1577,6 +1586,18 @@ mod tests {
     }
 
     #[test]
+    fn regulation_openai_request_uses_supported_completion_parameters() {
+        let provider = ModelRegulationRequirementCandidateExtractor::new(regulation_config());
+        let body = provider.request_body(&regulation_input()).unwrap();
+        assert_eq!(
+            body.get("max_completion_tokens").and_then(Value::as_u64),
+            Some(8_192)
+        );
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("temperature").is_none());
+    }
+
+    #[test]
     fn regulation_structured_output_preserves_modality_and_unicode() {
         let response = serde_json::json!({
             "choices": [{"message": {"content": serde_json::json!({
@@ -1597,6 +1618,36 @@ mod tests {
                 .map(|output| output.normalized_requirement.as_str())
                 .collect::<Vec<_>>(),
             vec!["phải", "không được", "khoảng", "nên", "có thể", "hạn chế"]
+        );
+    }
+
+    #[test]
+    fn regulation_structured_output_treats_empty_applicability_arrays_as_unset() {
+        let response = serde_json::json!({
+            "choices": [{"message": {"content": serde_json::json!({
+                "candidates": [{
+                    "ocrExcerpt": "must",
+                    "normalizedRequirement": "must",
+                    "sourceLocator": {"kind": "pdf", "page": 2, "endPage": null, "start": null, "end": null},
+                    "authorityLocator": null,
+                    "applicability": {
+                        "language": [],
+                        "research_families": [],
+                        "artifact_types": ["master_thesis"],
+                        "academic_levels": [],
+                        "study_designs": [],
+                        "reporting_guidelines": [],
+                        "organization": []
+                    },
+                    "riskFlags": [],
+                    "reviewNotes": null
+                }]
+            }).to_string()}}]
+        });
+        let outputs = parse_regulation_response("openai", response.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            outputs[0].applicability.facets,
+            BTreeMap::from([("artifact_types".to_owned(), vec!["master_thesis".to_owned()])])
         );
     }
 
