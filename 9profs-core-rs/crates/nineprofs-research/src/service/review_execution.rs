@@ -1,11 +1,21 @@
 use crate::{
-    DocumentMap, ResolvedReviewStack, ReviewExecutionReport, ReviewTask, ReviewTaskExecutionError,
+    DocumentMap, Finding, ResolvedReviewStack, ReviewExecutionReport, ReviewSynthesis,
+    ReviewSynthesisError, ReviewSynthesisExecutor, ReviewTask, ReviewTaskExecutionError,
     ReviewTaskExecutionResult, ReviewTaskExecutor,
 };
 
 use super::ResearchService;
 
 impl ResearchService {
+    pub async fn synthesize_review_findings(
+        &self,
+        findings: &[Finding],
+    ) -> Result<ReviewSynthesis, ReviewSynthesisError> {
+        ReviewSynthesisExecutor::from_env()
+            .synthesize(findings)
+            .await
+    }
+
     pub async fn execute_review_task(
         &self,
         task: &ReviewTask,

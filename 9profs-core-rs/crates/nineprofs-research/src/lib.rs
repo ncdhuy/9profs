@@ -10,6 +10,7 @@ mod model;
 mod repository;
 mod review_execution;
 mod review_planner;
+mod review_synthesis;
 mod service;
 
 pub use artifact::{ArtifactUploadWriter, ResearchArtifactStore};
@@ -109,5 +110,9 @@ pub use review_planner::{
     ReviewAuthorityReference, ReviewExecutorMode, ReviewSectionRole, ReviewTask, ReviewTaskTarget,
     classify_heading_role, load_canonical_authority_packs, plan_review_tasks,
     resolve_authority_packs, resolve_review_stack,
+};
+pub use review_synthesis::{
+    ConsolidatedFinding, REVIEW_SYNTHESIS_CONTRACT_VERSION, ReviewSynthesis, ReviewSynthesisError,
+    ReviewSynthesisExecutor,
 };
 pub use service::ResearchService;
