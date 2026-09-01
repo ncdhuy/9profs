@@ -30,6 +30,76 @@ export type ManuscriptCrossClaimAssessmentItemId = string
 export type ManuscriptResearchReviewRunId = string
 export type ManuscriptResearchReviewClaimItemId = string
 export type ManuscriptResearchReviewConsistencyItemId = string
+
+export interface ResearchContext {
+  readonly language?: string | null
+  readonly researchFamilies: readonly string[]
+  readonly artifactType?: string | null
+  readonly academicLevel?: string | null
+  readonly studyDesigns: readonly string[]
+  readonly reportingGuidelines: readonly string[]
+  readonly organization?: string | null
+}
+
+export interface RunManuscriptReviewInput {
+  readonly documentId: string
+  readonly context: ResearchContext
+}
+
+export interface ManuscriptReviewLocator {
+  readonly documentId: string
+  readonly version: number
+  readonly blockId: string
+  readonly blockOrdinal: number
+  readonly docxIndex?: number | null
+  readonly sectionId?: string | null
+}
+
+export interface ManuscriptReviewEvidence {
+  readonly locator: ManuscriptReviewLocator
+  readonly excerpt: string
+}
+
+export interface ManuscriptReviewAuthorityPackReference {
+  readonly kind: 'authority_pack'
+  readonly packId: string
+  readonly version: string
+  readonly source: Record<string, unknown>
+  readonly contentPaths: readonly string[]
+}
+
+export interface ManuscriptReviewRegulationReference {
+  readonly kind: 'regulation_requirement'
+  readonly reference: Record<string, unknown>
+}
+
+export type ManuscriptReviewAuthorityReference =
+  ManuscriptReviewAuthorityPackReference | ManuscriptReviewRegulationReference
+
+export interface ManuscriptReviewFinding {
+  readonly id: string
+  readonly sourceFindingIds: readonly string[]
+  readonly statement: string
+  readonly explanation: string
+  readonly manuscriptLocators: readonly ManuscriptReviewLocator[]
+  readonly evidence: readonly ManuscriptReviewEvidence[]
+  readonly authorityReferences: readonly ManuscriptReviewAuthorityReference[]
+  readonly priorityRank: number
+}
+
+export interface ManuscriptReviewSummary {
+  readonly taskCount: number
+  readonly rawFindingCount: number
+  readonly rejectedFindingCount: number
+  readonly consolidatedFindingCount: number
+}
+
+export interface ManuscriptReviewResult {
+  readonly documentId: string
+  readonly documentVersion: number
+  readonly synthesizedFindings: readonly ManuscriptReviewFinding[]
+  readonly summary: ManuscriptReviewSummary
+}
 export type ManuscriptReferenceResolutionRunId = string
 export type ManuscriptReferenceResolutionEntryId = string
 export type ManuscriptReferenceResolutionCandidateId = string

@@ -76,6 +76,8 @@ import type {
   StartManuscriptClaimInventoryInput,
   StartManuscriptClaimCoverageInput,
   StartManuscriptResearchReviewInput,
+  ManuscriptReviewResult,
+  RunManuscriptReviewInput,
   CaptureResearchPdfEvidenceInput,
   CaptureResearchPdfExtractionInput,
   CaptureResearchSourceSnapshotInput,
@@ -356,22 +358,37 @@ export interface CoreTransport {
     researchCaseId: ResearchCaseId,
     input: CreateManuscriptCrossClaimCandidatesInput,
   ): Promise<ManuscriptCrossClaimCandidateRun>
-  manuscriptCrossClaimCandidateRun(id: ManuscriptCrossClaimCandidateRunId): Promise<ManuscriptCrossClaimCandidateRun>
-  manuscriptCrossClaimCandidates(id: ManuscriptCrossClaimCandidateRunId): Promise<ManuscriptCrossClaimCandidate[]>
-  manuscriptCrossClaimCandidateWindows(id: ManuscriptCrossClaimCandidateRunId): Promise<ManuscriptCrossClaimComparisonWindow[]>
+  manuscriptCrossClaimCandidateRun(
+    id: ManuscriptCrossClaimCandidateRunId,
+  ): Promise<ManuscriptCrossClaimCandidateRun>
+  manuscriptCrossClaimCandidates(
+    id: ManuscriptCrossClaimCandidateRunId,
+  ): Promise<ManuscriptCrossClaimCandidate[]>
+  manuscriptCrossClaimCandidateWindows(
+    id: ManuscriptCrossClaimCandidateRunId,
+  ): Promise<ManuscriptCrossClaimComparisonWindow[]>
   startManuscriptCrossClaimAssessment(
     researchCaseId: ResearchCaseId,
     input: CreateManuscriptCrossClaimAssessmentInput,
   ): Promise<ManuscriptCrossClaimAssessmentRun>
-  manuscriptCrossClaimAssessment(id: ManuscriptCrossClaimAssessmentRunId): Promise<ManuscriptCrossClaimAssessmentRun>
-  manuscriptCrossClaimAssessmentItems(id: ManuscriptCrossClaimAssessmentRunId): Promise<ManuscriptCrossClaimAssessmentItem[]>
+  manuscriptCrossClaimAssessment(
+    id: ManuscriptCrossClaimAssessmentRunId,
+  ): Promise<ManuscriptCrossClaimAssessmentRun>
+  manuscriptCrossClaimAssessmentItems(
+    id: ManuscriptCrossClaimAssessmentRunId,
+  ): Promise<ManuscriptCrossClaimAssessmentItem[]>
   startManuscriptResearchReview(
     researchCaseId: ResearchCaseId,
     input: StartManuscriptResearchReviewInput,
   ): Promise<ManuscriptResearchReviewRun>
   manuscriptResearchReview(id: ManuscriptResearchReviewRunId): Promise<ManuscriptResearchReviewRun>
-  manuscriptResearchReviewClaims(id: ManuscriptResearchReviewRunId): Promise<ManuscriptResearchReviewClaimItem[]>
-  manuscriptResearchReviewConsistency(id: ManuscriptResearchReviewRunId): Promise<ManuscriptResearchReviewConsistencyItem[]>
+  manuscriptResearchReviewClaims(
+    id: ManuscriptResearchReviewRunId,
+  ): Promise<ManuscriptResearchReviewClaimItem[]>
+  manuscriptResearchReviewConsistency(
+    id: ManuscriptResearchReviewRunId,
+  ): Promise<ManuscriptResearchReviewConsistencyItem[]>
+  runManuscriptReview(input: RunManuscriptReviewInput): Promise<ManuscriptReviewResult>
   citationTargetBindings(citationTargetId: string): Promise<CitationTargetBinding[]>
   citationTargetBinding(id: string): Promise<CitationTargetBinding>
   latestCitationTargetBinding(citationTargetId: string): Promise<CitationTargetBinding>
@@ -923,6 +940,8 @@ export function createCoreTransport(
       get<ManuscriptResearchReviewConsistencyItem[]>(
         `/api/research/manuscript-research-reviews/${encodeURIComponent(id)}/consistency`,
       ),
+    runManuscriptReview: (input) =>
+      trustedRequest<ManuscriptReviewResult>('/api/research/manuscript-reviews', 'POST', input),
     citationTargetBindings: (citationTargetId) =>
       get<CitationTargetBinding[]>(
         `/api/research/citation-targets/${encodeURIComponent(citationTargetId)}/bindings`,

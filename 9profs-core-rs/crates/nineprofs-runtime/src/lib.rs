@@ -47,6 +47,7 @@ use thiserror::Error;
 mod docs_conversation;
 mod docs_profile;
 mod execution;
+mod manuscript_review;
 
 pub use docs_conversation::{
     DocsAgentConversationMetadata, DocsAgentConversationSeed, DocsAgentConversationState,
@@ -57,6 +58,7 @@ pub use docs_profile::{DEFAULT_DOCS_ASSISTANT_ID, REQUIRED_DOCS_AGENT_TOOLS};
 pub use execution::{
     AgentExecutionService, AgentExecutionServiceError, AgentRunStarted, build_system_instructions,
 };
+pub use manuscript_review::ManuscriptReviewRuntimeError;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {

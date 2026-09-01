@@ -11,6 +11,7 @@ mod repository;
 mod review_execution;
 mod review_planner;
 mod review_synthesis;
+mod review_orchestration;
 mod service;
 
 pub use artifact::{ArtifactUploadWriter, ResearchArtifactStore};
@@ -114,5 +115,9 @@ pub use review_planner::{
 pub use review_synthesis::{
     ConsolidatedFinding, REVIEW_SYNTHESIS_CONTRACT_VERSION, ReviewSynthesis, ReviewSynthesisError,
     ReviewSynthesisExecutor,
+};
+pub use review_orchestration::{
+    ManuscriptReviewError, ManuscriptReviewResult, ManuscriptReviewSummary,
+    MANUSCRIPT_REVIEW_RESULT_CONTRACT_VERSION,
 };
 pub use service::ResearchService;

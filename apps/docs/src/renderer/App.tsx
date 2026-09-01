@@ -51,6 +51,7 @@ import { asianCharCount, countWords, nonAsianWordCount } from './word-count'
 import { CommentsPanel } from './components/CommentsPanel'
 import { CitationReviewPanel } from './components/CitationReviewPanel'
 import { WholeResearchReviewPanel } from './components/WholeResearchReviewPanel'
+import { ManuscriptReviewPanel } from './components/ManuscriptReviewPanel'
 import { EquationModal } from './components/EquationModal'
 import { HeaderFooterArea } from './components/HeaderFooterArea'
 import { PageFootnotes, PageEndnotes } from './components/PageNoteAreas'
@@ -591,6 +592,7 @@ export function App() {
   const [showComments, setShowComments] = useState(false)
   const [showCitationReview, setShowCitationReview] = useState(false)
   const [showWholeResearchReview, setShowWholeResearchReview] = useState(false)
+  const [showManuscriptReview, setShowManuscriptReview] = useState(false)
   /** Style definitions pending write-back (key = styleId), saved via SaveOptions.styleUpserts */
   const [styleUpserts, setStyleUpserts] = useState<Record<string, StyleUpsert>>({})
   const [comments, setComments] = useState<CommentInfo[]>([])
@@ -3632,6 +3634,7 @@ export function App() {
     onShowComments: () => {
       setShowCitationReview(false)
       setShowWholeResearchReview(false)
+      setShowManuscriptReview(false)
       setShowComments(true)
     },
     onNewComment: startNewComment,
@@ -3653,6 +3656,7 @@ export function App() {
       setShowComments(false)
       setCompareResult(null)
       setShowWholeResearchReview(false)
+      setShowManuscriptReview(false)
       setShowCitationReview(true)
     },
     onResearchReview: () => {
@@ -3660,7 +3664,8 @@ export function App() {
       setShowComments(false)
       setCompareResult(null)
       setShowCitationReview(false)
-      setShowWholeResearchReview(true)
+      setShowWholeResearchReview(false)
+      setShowManuscriptReview(true)
     },
     onViewMode: setViewMode,
     onReadMode: setReadMode,
@@ -3680,6 +3685,10 @@ export function App() {
 
   const closeWholeResearchReviewPanel = useCallback(() => {
     setShowWholeResearchReview(false)
+  }, [])
+
+  const closeManuscriptReviewPanel = useCallback(() => {
+    setShowManuscriptReview(false)
   }, [])
 
   const hasDoc = !!doc
@@ -4086,6 +4095,15 @@ export function App() {
                 documentId={doc.documentId}
                 transport={coreTransport}
                 onClose={closeWholeResearchReviewPanel}
+              />
+            )}
+            {doc && editor && showManuscriptReview && (
+              <ManuscriptReviewPanel
+                key={doc.documentId}
+                editor={editor}
+                documentId={doc.documentId}
+                transport={coreTransport}
+                onClose={closeManuscriptReviewPanel}
               />
             )}
           </div>

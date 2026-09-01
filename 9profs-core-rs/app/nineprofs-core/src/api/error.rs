@@ -13,6 +13,7 @@ use nineprofs_research_verification::{
     CrossClaimConsistencyAssessmentError, ManuscriptResearchReviewError,
 };
 use nineprofs_runtime::AgentExecutionServiceError;
+use nineprofs_runtime::ManuscriptReviewRuntimeError;
 
 #[derive(Debug)]
 pub(crate) enum ApiError {
@@ -34,6 +35,7 @@ pub(crate) enum ApiError {
     CrossClaimCandidates(CrossClaimCandidateDiscoveryError),
     CrossClaimAssessment(CrossClaimConsistencyAssessmentError),
     ManuscriptResearchReview(ManuscriptResearchReviewError),
+    ManuscriptReview(ManuscriptReviewRuntimeError),
     InvalidRequest(String),
     Unauthorized,
 }
@@ -107,6 +109,12 @@ impl From<CrossClaimConsistencyAssessmentError> for ApiError {
 impl From<ManuscriptResearchReviewError> for ApiError {
     fn from(error: ManuscriptResearchReviewError) -> Self {
         Self::ManuscriptResearchReview(error)
+    }
+}
+
+impl From<ManuscriptReviewRuntimeError> for ApiError {
+    fn from(error: ManuscriptReviewRuntimeError) -> Self {
+        Self::ManuscriptReview(error)
     }
 }
 
@@ -425,6 +433,31 @@ impl IntoResponse for ApiError {
                 };
                 (status, error.code(), error.to_string())
             }
+            Self::ManuscriptReview(error) => match error {
+                ManuscriptReviewRuntimeError::Review(
+                    nineprofs_research::ManuscriptReviewError::Research(
+                        ResearchError::Invalid(_),
+                    ),
+                ) => (
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "The research context is invalid.".to_owned(),
+                ),
+                ManuscriptReviewRuntimeError::MissingDocumentMap
+                | ManuscriptReviewRuntimeError::InvalidDocumentMap
+                | ManuscriptReviewRuntimeError::StaleDocumentMap
+                | ManuscriptReviewRuntimeError::DocumentBridge(_) => (
+                    StatusCode::CONFLICT,
+                    "review_document_unavailable",
+                    "The active document is unavailable for review. Reopen it and try again."
+                        .to_owned(),
+                ),
+                ManuscriptReviewRuntimeError::Review(_) => (
+                    StatusCode::BAD_GATEWAY,
+                    "review_failed",
+                    "Manuscript review failed. Try again.".to_owned(),
+                ),
+            },
             Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,

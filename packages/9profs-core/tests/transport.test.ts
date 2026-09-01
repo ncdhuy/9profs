@@ -22,6 +22,68 @@ describe('Core transport boundary', () => {
     })
   })
 
+  it('maps the thin active-manuscript review endpoint', async () => {
+    const requests: Array<{ input: string; method?: string; body?: string }> = []
+    const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
+      requests.push({
+        input,
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      })
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            documentId: 'doc-1',
+            documentVersion: 7,
+            synthesizedFindings: [],
+            summary: {
+              taskCount: 0,
+              rawFindingCount: 0,
+              rejectedFindingCount: 0,
+              consolidatedFindingCount: 0,
+            },
+          },
+        }),
+      }
+    })
+
+    await expect(
+      transport.runManuscriptReview({
+        documentId: 'doc-1',
+        context: {
+          language: 'vi',
+          researchFamilies: ['MED'],
+          artifactType: 'master_thesis',
+          academicLevel: 'master',
+          studyDesigns: [],
+          reportingGuidelines: [],
+          organization: 'hiu',
+        },
+      }),
+    ).resolves.toMatchObject({ documentId: 'doc-1', documentVersion: 7 })
+
+    expect(requests).toEqual([
+      {
+        input: 'http://127.0.0.1:39761/api/research/manuscript-reviews',
+        method: 'POST',
+        body: JSON.stringify({
+          documentId: 'doc-1',
+          context: {
+            language: 'vi',
+            researchFamilies: ['MED'],
+            artifactType: 'master_thesis',
+            academicLevel: 'master',
+            studyDesigns: [],
+            reportingGuidelines: [],
+            organization: 'hiu',
+          },
+        }),
+      },
+    ])
+  })
+
   it('maps manuscript citation review start and read-model endpoints', async () => {
     const requests: Array<{ input: string; method?: string; body?: string }> = []
     const transport = createCoreTransport('http://127.0.0.1:39761', async (input, init) => {
