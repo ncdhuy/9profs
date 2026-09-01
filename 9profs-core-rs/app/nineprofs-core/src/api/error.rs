@@ -443,6 +443,51 @@ impl IntoResponse for ApiError {
                     "invalid_request",
                     "The research context is invalid.".to_owned(),
                 ),
+                ManuscriptReviewRuntimeError::Review(
+                    nineprofs_research::ManuscriptReviewError::Execution(
+                        nineprofs_research::ReviewTaskExecutionError::Transport(message),
+                    ),
+                ) if message.contains("provider is unavailable") => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "review_model_unavailable",
+                    "Research Review could not reach the model provider. Try again later."
+                        .to_owned(),
+                ),
+                ManuscriptReviewRuntimeError::Review(
+                    nineprofs_research::ManuscriptReviewError::Execution(
+                        nineprofs_research::ReviewTaskExecutionError::Transport(message),
+                    ),
+                ) if message.contains("timed out") => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "review_task_timeout",
+                    "Research Review timed out while reviewing the manuscript. Try again."
+                        .to_owned(),
+                ),
+                ManuscriptReviewRuntimeError::Review(
+                    nineprofs_research::ManuscriptReviewError::Execution(_),
+                ) => (
+                    StatusCode::BAD_GATEWAY,
+                    "review_task_failed",
+                    "Research Review could not complete one manuscript review pass. Try again."
+                        .to_owned(),
+                ),
+                ManuscriptReviewRuntimeError::Review(
+                    nineprofs_research::ManuscriptReviewError::Synthesis(
+                        nineprofs_research::ReviewSynthesisError::Transport(message),
+                    ),
+                ) if message.contains("timed out") => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "review_synthesis_timeout",
+                    "Research Review timed out while consolidating findings. Try again.".to_owned(),
+                ),
+                ManuscriptReviewRuntimeError::Review(
+                    nineprofs_research::ManuscriptReviewError::Synthesis(_),
+                ) => (
+                    StatusCode::BAD_GATEWAY,
+                    "review_synthesis_failed",
+                    "Findings were generated, but final consolidation failed. Try again."
+                        .to_owned(),
+                ),
                 ManuscriptReviewRuntimeError::MissingDocumentMap
                 | ManuscriptReviewRuntimeError::InvalidDocumentMap
                 | ManuscriptReviewRuntimeError::StaleDocumentMap
@@ -455,7 +500,8 @@ impl IntoResponse for ApiError {
                 ManuscriptReviewRuntimeError::Review(_) => (
                     StatusCode::BAD_GATEWAY,
                     "review_failed",
-                    "Manuscript review failed. Try again.".to_owned(),
+                    "Research Review could not complete. Check Research Core and try again."
+                        .to_owned(),
                 ),
             },
             Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),

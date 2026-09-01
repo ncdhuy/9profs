@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::{
     DocumentMap, Finding, ResolvedReviewStack, ReviewExecutionReport, ReviewSynthesis,
     ReviewSynthesisError, ReviewSynthesisExecutor, ReviewTask, ReviewTaskExecutionError,
@@ -36,7 +38,38 @@ impl ResearchService {
         let executor = ReviewTaskExecutor::from_env();
         let mut results = Vec::with_capacity(tasks.len());
         for task in tasks {
-            results.push(executor.execute(task, map, stack).await?);
+            let started = Instant::now();
+            let started_at_ms = crate::review_orchestration::review_diagnostic_now_ms();
+            match executor.execute(task, map, stack).await {
+                Ok(result) => {
+                    crate::review_orchestration::emit_review_diagnostic(
+                        "review_task",
+                        started_at_ms,
+                        started,
+                        "success",
+                        Some(&result.task_id),
+                        Some(&result.task_kind),
+                        Some(&format!("{:?}", result.executor_mode)),
+                        None,
+                        Some(result.rejections.len()),
+                    );
+                    results.push(result);
+                }
+                Err(error) => {
+                    crate::review_orchestration::emit_review_diagnostic(
+                        "review_task",
+                        started_at_ms,
+                        started,
+                        "failure",
+                        Some(&task.id),
+                        Some(&task.kind),
+                        Some(&format!("{:?}", task.executor_mode)),
+                        Some(error.diagnostic_category()),
+                        None,
+                    );
+                    return Err(error);
+                }
+            }
         }
         Ok(ReviewExecutionReport {
             task_results: results,

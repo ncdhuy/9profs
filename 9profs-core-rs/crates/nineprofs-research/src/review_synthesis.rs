@@ -57,6 +57,21 @@ pub enum ReviewSynthesisError {
     Serialization(String),
 }
 
+impl ReviewSynthesisError {
+    pub(crate) fn diagnostic_category(&self) -> &'static str {
+        match self {
+            Self::MalformedResponse | Self::InvalidStructuredOutput(_) => {
+                "synthesis_parsing_validation"
+            }
+            Self::NotConfigured | Self::InvalidConfiguration(_) => "model_configuration",
+            Self::Transport(message) if message.contains("timed out") => "synthesis_timeout",
+            Self::Transport(_) => "synthesis_transport",
+            Self::RequestTooLarge => "synthesis_input_too_large",
+            Self::Serialization(_) => "synthesis_serialization",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ReviewSynthesisExecutor {
     config: StructuredModelConfig,

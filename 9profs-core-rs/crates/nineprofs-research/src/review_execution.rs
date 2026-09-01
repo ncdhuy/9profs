@@ -130,6 +130,30 @@ pub enum ReviewTaskExecutionError {
     Serialization(String),
 }
 
+impl ReviewTaskExecutionError {
+    pub(crate) fn diagnostic_category(&self) -> &'static str {
+        match self {
+            Self::InvalidTask(_) => "review_task_validation",
+            Self::MalformedResponse | Self::InvalidStructuredOutput(_) => "structured_response",
+            Self::UnsupportedExecutorMode(_) => "review_task_validation",
+            Self::NotConfigured | Self::InvalidConfiguration(_) => "model_configuration",
+            Self::Transport(message) if message.contains("timed out") => "model_timeout",
+            Self::Transport(message) if message.contains("authorization") => "model_authentication",
+            Self::Transport(message) if message.contains("rate limit") => "model_rate_limited",
+            Self::Transport(message) if message.contains("provider is unavailable") => {
+                "model_provider_unavailable"
+            }
+            Self::Transport(message) if message.contains("response exceeded") => {
+                "model_response_too_large"
+            }
+            Self::Transport(message) if message.contains("configuration") => "model_configuration",
+            Self::Transport(_) => "model_transport",
+            Self::RequestTooLarge => "structured_response",
+            Self::Serialization(_) => "structured_response",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ReviewTaskExecutor {
     config: StructuredModelConfig,
@@ -176,6 +200,13 @@ impl ReviewTaskExecutor {
             .validate(Some(&credential))
             .map_err(|error| ReviewTaskExecutionError::InvalidConfiguration(error.to_string()))?;
         let body = request_body(&self.config, &assembly.input)?;
+        let request_bytes = serde_json::to_vec(&body)
+            .map_err(|error| ReviewTaskExecutionError::Serialization(error.to_string()))?
+            .len();
+        eprintln!(
+            "review_run_diagnostic stage=review_task_request task_id={} task_kind={} request_bytes={request_bytes}",
+            task.id, task.kind
+        );
         let response = self
             .client
             .execute_json(&body, &credential)
@@ -890,5 +921,26 @@ fn map_transport_error(error: StructuredModelTransportError) -> ReviewTaskExecut
         | StructuredModelTransportError::Transport => {
             ReviewTaskExecutionError::Transport(error.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn categorizes_provider_connectivity_failure_separately() {
+        assert_eq!(
+            ReviewTaskExecutionError::Transport(
+                "structured model provider is unavailable".to_owned()
+            )
+            .diagnostic_category(),
+            "model_provider_unavailable"
+        );
+        assert_eq!(
+            ReviewTaskExecutionError::Transport("structured model request timed out".to_owned())
+                .diagnostic_category(),
+            "model_timeout"
+        );
     }
 }

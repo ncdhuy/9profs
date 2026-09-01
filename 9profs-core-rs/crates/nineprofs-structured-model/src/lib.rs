@@ -236,6 +236,11 @@ impl StructuredModelClient {
         let status = response.status();
         let bytes = read_bounded_response(response, self.config.max_response_bytes).await?;
         if !status.is_success() {
+            eprintln!(
+                "structured_model_diagnostic result=failure status={} error_category={}",
+                status.as_u16(),
+                normalize_status(status)
+            );
             return Err(normalize_status(status));
         }
         Ok(bytes)
@@ -258,10 +263,13 @@ async fn read_bounded_response(
 
 fn map_request_error(error: reqwest::Error) -> StructuredModelTransportError {
     if error.is_timeout() {
+        eprintln!("structured_model_diagnostic result=failure failure_kind=timeout");
         StructuredModelTransportError::Timeout
     } else if error.is_connect() {
+        eprintln!("structured_model_diagnostic result=failure failure_kind=connect");
         StructuredModelTransportError::ProviderUnavailable
     } else {
+        eprintln!("structured_model_diagnostic result=failure failure_kind=transport");
         StructuredModelTransportError::Transport
     }
 }

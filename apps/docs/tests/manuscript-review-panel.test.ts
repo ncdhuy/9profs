@@ -186,6 +186,23 @@ describe('ManuscriptReviewPanel', () => {
     rendered.cleanup()
   })
 
+  it('renders a safe model-provider failure message', async () => {
+    const editor = editorFor()
+    const error = Object.assign(new Error('provider unavailable'), {
+      code: 'review_model_unavailable',
+    })
+    const transport = transportFor(Promise.reject(error))
+    const rendered = renderPanel(transport, editor)
+
+    await clickReview(rendered.container)
+
+    expect(rendered.container.textContent).toContain(
+      'Research Review could not reach the model provider. Try again later.',
+    )
+    expect(rendered.container.textContent).not.toContain('provider unavailable')
+    rendered.cleanup()
+  })
+
   it('expands explanation, evidence, authority, and multiple locations', async () => {
     const editor = editorFor()
     const finding = result().synthesizedFindings[0]
@@ -284,7 +301,9 @@ describe('ManuscriptReviewPanel', () => {
     const failing = transportFor(Promise.reject(new Error('provider failure')))
     const failed = renderPanel(failing, editor)
     await clickReview(failed.container)
-    expect(failed.container.textContent).toContain('The Research Review run failed.')
+    expect(failed.container.textContent).toContain(
+      'Research Review could not complete. Check Research Core and try again.',
+    )
     expect(failed.container.textContent).not.toContain('provider failure')
     failed.cleanup()
   })

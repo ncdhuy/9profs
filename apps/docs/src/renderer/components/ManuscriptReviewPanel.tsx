@@ -22,7 +22,7 @@ type ReviewState =
   | { kind: 'idle' }
   | { kind: 'running' }
   | { kind: 'loaded'; result: ManuscriptReviewResult }
-  | { kind: 'error' }
+  | { kind: 'error'; message: string }
 
 // The product has no stored project context seam yet. Keep the invocation
 // explicit and generic; this is the known manuscript context for the MVP dogfood.
@@ -194,8 +194,24 @@ export function ManuscriptReviewPanel({
       })
       setCurrentVersion(nextResult.documentVersion)
       setReview({ kind: 'loaded', result: nextResult })
-    } catch {
-      setReview({ kind: 'error' })
+    } catch (error) {
+      const code =
+        error instanceof Error && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : undefined
+      const message =
+        code === 'review_model_unavailable'
+          ? t('researchReviewModelUnavailable')
+          : code === 'review_task_timeout'
+            ? t('researchReviewTaskTimeout')
+            : code === 'review_synthesis_timeout'
+              ? t('researchReviewSynthesisTimeout')
+              : code === 'review_synthesis_failed'
+                ? t('researchReviewSynthesisFailed')
+                : code === 'review_task_failed'
+                  ? t('researchReviewTaskFailed')
+                  : t('researchReviewRunFailed')
+      setReview({ kind: 'error', message })
     }
   }
 
@@ -250,7 +266,7 @@ export function ManuscriptReviewPanel({
         )}
         {review.kind === 'error' && (
           <section className="manuscript-review-start">
-            <p className="manuscript-review-error">{t('researchReviewRunFailed')}</p>
+            <p className="manuscript-review-error">{review.message}</p>
             <button
               type="button"
               className="btn-primary"

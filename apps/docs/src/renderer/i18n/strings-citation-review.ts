@@ -34,7 +34,7 @@ const shared = {
   researchReviewLocationUnavailable: 'This finding location is unavailable. Rerun the review.',
   researchReviewContextMvp: 'Using the active manuscript research context.',
   researchReviewRerun: 'Re-run Research Review',
-  researchReviewLoading: 'Reviewing manuscript…',
+  researchReviewLoading: 'Reviewing manuscript in multiple passes; this may take several minutes…',
   researchReviewAnalyzing:
     'Analyzing claims, citation/evidence coverage, and internal consistency.',
   researchReviewCoreUnavailable: 'Research Core is unavailable. Research review cannot start.',
@@ -46,7 +46,16 @@ const shared = {
   researchReviewCreateFailed: 'The Research context could not be created.',
   researchReviewNoCases: 'Create a ResearchCase to choose a review context.',
   researchReviewNoSources: 'Create a manuscript ResearchSource for this case.',
-  researchReviewRunFailed: 'The Research Review run failed.',
+  researchReviewRunFailed: 'Research Review could not complete. Check Research Core and try again.',
+  researchReviewModelUnavailable:
+    'Research Review could not reach the model provider. Try again later.',
+  researchReviewTaskTimeout: 'Research Review timed out while reviewing the manuscript. Try again.',
+  researchReviewSynthesisTimeout:
+    'Research Review timed out while consolidating findings. Try again.',
+  researchReviewTaskFailed:
+    'Research Review could not complete one manuscript review pass. Try again.',
+  researchReviewSynthesisFailed:
+    'Findings were generated, but final consolidation failed. Try again.',
   researchReviewRunRunning: 'Running',
   researchReviewRunCompleted: 'Completed',
   researchReviewRunStatusFailed: 'Failed',
