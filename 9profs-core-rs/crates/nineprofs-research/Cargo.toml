@@ -10,6 +10,7 @@ async-trait.workspace = true
 nineprofs-api-types = { path = "../nineprofs-api-types" }
 nineprofs-common = { path = "../nineprofs-common" }
 nineprofs-realtime = { path = "../nineprofs-realtime" }
+nineprofs-structured-model = { path = "../nineprofs-structured-model" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"

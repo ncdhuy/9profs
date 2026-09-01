@@ -8,6 +8,7 @@ mod document_map;
 mod extraction;
 mod model;
 mod repository;
+mod review_execution;
 mod review_planner;
 mod service;
 
@@ -97,6 +98,11 @@ pub use model::{
     validate_metadata,
 };
 pub use repository::{ResearchRepository, SqliteResearchRepository};
+pub use review_execution::{
+    Finding, FindingEvidence, FindingValidationFailure, REVIEW_TASK_EXECUTION_CONTRACT_VERSION,
+    ReviewExecutionReport, ReviewTaskExecutionError, ReviewTaskExecutionResult, ReviewTaskExecutor,
+    ReviewTaskValidation, validate_review_task_response,
+};
 pub use review_planner::{
     AuthorityPack, AuthorityPackDocument, AuthorityPackLoader, AuthorityPackSource,
     REVIEW_TASK_CONTRACT_VERSION, RegulationRequirementReference, ResolvedReviewStack,

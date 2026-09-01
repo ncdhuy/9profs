@@ -618,7 +618,7 @@ pub fn plan_review_tasks(
         tasks.push(make_task(
             "review.vi.terminology",
             "Review Vietnamese terminology, abbreviations, numbers, units, and usage consistency.",
-            ReviewExecutorMode::Hybrid,
+            ReviewExecutorMode::Semantic,
             "review.vi.terminology",
             document_scope.clone(),
             pack_references(stack, &["editorial.vi", "artifact.master-thesis"]),
@@ -629,7 +629,7 @@ pub fn plan_review_tasks(
         tasks.push(make_task(
             "review.regulation.presentation",
             "Review manuscript presentation against applicable institutional requirements.",
-            ReviewExecutorMode::Hybrid,
+            ReviewExecutorMode::Semantic,
             "review.regulation.presentation",
             document_scope,
             regulation_references(stack),

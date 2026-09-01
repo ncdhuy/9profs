@@ -369,7 +369,7 @@ fn planner_routes_deterministically_to_small_coarse_tasks_with_provenance() {
         .iter()
         .find(|task| task.id == "review.regulation.presentation")
         .unwrap();
-    assert_eq!(regulation.executor_mode, ReviewExecutorMode::Hybrid);
+    assert_eq!(regulation.executor_mode, ReviewExecutorMode::Semantic);
     assert!(matches!(
         regulation.authority_references.as_slice(),
         [ReviewAuthorityReference::RegulationRequirement { reference }] if reference.requirement_id.as_str() == "format-1"

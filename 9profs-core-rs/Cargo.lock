@@ -2300,6 +2300,7 @@ dependencies = [
  "nineprofs-common",
  "nineprofs-db",
  "nineprofs-realtime",
+ "nineprofs-structured-model",
  "serde",
  "serde_json",
  "serde_yaml",
